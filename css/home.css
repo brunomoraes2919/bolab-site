@@ -951,3 +951,14 @@
     object-position: center 18% !important;
   }
 }
+
+@media (min-width: 640px) and (max-width: 899px) {
+  /* No tablet a foto fica em faixa larga, para o título e o botão caberem na primeira tela. */
+  .hero__photo {
+    aspect-ratio: 2 / 1;
+  }
+
+  .hero__photo img {
+    object-position: center 30% !important;
+  }
+}
