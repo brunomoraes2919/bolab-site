@@ -5,10 +5,12 @@ import { pageHead } from '../components.js';
 import { auth, orders, favs, addresses, cards, prefs, store } from '../store.js';
 import { navigate } from '../router.js';
 import { COUPONS, WALLET_COUPONS, SITE } from '../data/site.js';
+import { demoNote } from './auth.js';
 
 /* ───────── Utilitários compartilhados ───────── */
 export function firstName(user) {
-  return String(user?.name || '').trim().split(/\s+/)[0] || '';
+  const first = String(user?.name || '').trim().split(/\s+/)[0] || '';
+  return first.length > 24 ? `${first.slice(0, 24)}…` : first; // primeiro nome gigante não vira parede de texto
 }
 
 const MONTH_YEAR = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' });
@@ -35,7 +37,7 @@ export function addToWallet(code) {
 /** O cupom pode ser usado por esta pessoa agora? → { usable, why } (mesmas regras da loja). */
 export function couponStatus(coupon) {
   if (coupon.expires && toDate(coupon.expires) < new Date()) return { usable: false, why: 'Expirado' };
-  if (coupon.firstOrderOnly && orders.list().some((o) => !o.canceled)) return { usable: false, why: 'Só na 1ª encomenda' };
+  if (coupon.firstOrderOnly && orders.list().some((o) => !o.canceled)) return { usable: false, why: 'Só no 1º pedido' };
   return { usable: true, why: '' };
 }
 
@@ -162,7 +164,7 @@ function menuRows() {
   const card = cards.default();
   const nCoupons = usableCoupons().length;
   const desc = {
-    pedidos: nOrders ? `${plural(nOrders, 'encomenda', 'encomendas')} até agora` : 'Acompanhe suas encomendas',
+    pedidos: nOrders ? `${plural(nOrders, 'pedido', 'pedidos')} até agora` : 'Acompanhe seus pedidos',
     favoritos: nFavs ? `${plural(nFavs, 'item salvo', 'itens salvos')}` : 'O que você salvar e montar no 3D',
     dados: 'Nome, contato, aniversário e senha',
     enderecos: addr ? `${addr.label}: ${[addr.street, addr.number].filter(Boolean).join(', ')}` : 'Cadastre para agilizar a entrega',
@@ -233,7 +235,7 @@ export default {
               ? html`
                   <a class="card acc-gift" href="#/conta/cupons">
                     <span class="acc-gift__icon">${icon('gift')}</span>
-                    <span><strong>Seu presente de boas-vindas</strong>10% OFF na primeira encomenda com o cupom BOLAB10.</span>
+                    <span><strong>Seu presente de boas-vindas</strong>${COUPONS.BOLAB10.label} com o cupom BOLAB10.</span>
                     ${icon('chevron-right')}
                   </a>
                 `
@@ -250,10 +252,14 @@ export default {
               </button>
             </div>
 
-            <div class="acc-hub__foot">
-              <button class="acc-reset" type="button" data-reset>Apagar dados de demonstração deste aparelho</button>
-              <small>Loja em modo demonstração: conta, pedidos e carrinho ficam salvos só neste aparelho.</small>
-            </div>
+            ${SITE.demo
+              ? html`<div class="acc-hub__foot">
+                  ${demoNote(
+                    html`conta, pedidos e carrinho ficam salvos só neste aparelho.
+                      <button class="acc-reset" type="button" data-reset>Apagar dados de demonstração deste aparelho</button>`,
+                  )}
+                </div>`
+              : ''}
           </div>
         </div>
       </div>

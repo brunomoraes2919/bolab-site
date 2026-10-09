@@ -5,7 +5,7 @@ import { photo, notice } from '../components.js';
 import { auth, cart, store } from '../store.js';
 import { navigate, goBack } from '../router.js';
 import { GOOGLE_LOGO } from '../icons.js';
-import { SITE } from '../data/site.js';
+import { SITE, COUPONS } from '../data/site.js';
 
 /* ───────── Campo de senha (compartilhado) ───────── */
 
@@ -88,25 +88,75 @@ export function clearErrorsOnInput(root) {
 }
 
 export function firstNameOf(user) {
-  return String(user?.name || '').trim().split(/\s+/)[0] || '';
+  const first = String(user?.name || '').trim().split(/\s+/)[0] || '';
+  return first.length > 24 ? `${first.slice(0, 24)}…` : first; // primeiro nome gigante não vira parede de texto
 }
 
 /* ───────── Tela ───────── */
 const BENEFITS = [
   { icon: 'package', title: 'Acompanhe cada pedido', text: 'Da confirmação à entrega, em tempo real.' },
-  { icon: 'layers', title: 'Salve os bolos criados no 3D', text: 'Monte hoje, peça quando a data chegar.' },
-  { icon: 'map-pin', title: 'Endereços e pagamento salvos', text: 'Feche a próxima encomenda em poucos toques.' },
+  { icon: 'layers', title: 'Salve os bolos montados em 3D', text: 'Monte hoje, peça quando a data chegar.' },
+  { icon: 'map-pin', title: 'Endereços e pagamento salvos', text: 'Feche o próximo pedido em poucos toques.' },
   { icon: 'ticket', title: 'Cupons exclusivos', text: 'Descontos que só quem tem conta recebe.' },
 ];
 
-const mounted = new WeakMap(); // root → { setMode }
+const WELCOME = COUPONS.BOLAB10; // cupom de boas-vindas (o texto vem de js/data/site.js)
 
-const modeOf = (query) => (query.modo === 'cadastro' ? 'signup' : 'signin');
+const mounted = new WeakMap(); // root → { setMode, setNext }
 
 /** Só aceitamos caminhos internos como destino depois do login. */
 function safeNext(query) {
   const next = String(query.next || '');
   return next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/entrar') ? next : '';
+}
+
+const fromCheckout = (next) => next.startsWith('/checkout');
+
+/** Quem vem fechar o pedido e nunca criou conta neste aparelho precisa de "Criar conta", não de "Entrar". */
+function defaultMode(query) {
+  return fromCheckout(safeNext(query)) && !auth.hasAccounts() ? 'signup' : 'signin';
+}
+
+/** ?modo=cadastro | ?modo=entrar escolhem a aba; sem isso, vale o padrão da situação. */
+function modeOf(query) {
+  if (query.modo === 'cadastro') return 'signup';
+  if (query.modo === 'entrar') return 'signin';
+  return defaultMode(query);
+}
+
+/**
+ * Aviso de demonstração, sempre no mesmo formato e só enquanto SITE.demo estiver ligado:
+ * some sozinho, em todas as telas, no dia em que a loja abrir para vendas.
+ */
+export function demoNote(text) {
+  return SITE.demo ? notice(html`<strong>Modo demonstração:</strong> ${text}`, { tone: 'amber', iconName: 'info' }) : '';
+}
+
+/**
+ * Convite do cupom de boas-vindas. Com destino marcado (a pessoa veio do carrinho) o convite
+ * "use no carrinho" não faz sentido: some, ou vira a confirmação de que o cupom já está aplicado.
+ */
+function couponHtml(next, place) {
+  if (next) {
+    const applied = cart.isEmpty() ? null : cart.totals().coupon;
+    return applied ? html`<p class="auth-applied">${icon('check-circle')}<span>Seu cupom ${applied.code} já está aplicado.</span></p>` : '';
+  }
+  if (!WELCOME) return '';
+  if (place === 'brand') {
+    return html`
+      <button class="auth-brand__coupon" type="button" data-copy-coupon="${WELCOME.code}">
+        <span class="auth-gift__icon">${icon('gift')}</span>
+        <span><strong>${WELCOME.label}</strong>Use o cupom <code>${WELCOME.code}</code> no carrinho</span>
+        ${icon('copy')}
+      </button>
+    `;
+  }
+  return html`
+    <button class="auth-gift" type="button" data-copy-coupon="${WELCOME.code}">
+      <span class="auth-gift__icon">${icon('gift')}</span>
+      <span><strong>${WELCOME.label}</strong><br />Use o cupom <code>${WELCOME.code}</code> no carrinho. Toque para copiar.</span>
+    </button>
+  `;
 }
 
 function emailField(value) {
@@ -140,12 +190,12 @@ function signInForm({ email, password }) {
   `;
 }
 
-function signUpForm({ name = '', email, phone = '', password, terms = false }) {
+function signUpForm({ name = '', email, phone = '', password }) {
   return html`
     <form class="auth-form" novalidate data-form="signup">
       <div class="field">
         <label for="auth-name">Nome completo</label>
-        <input class="input" id="auth-name" name="name" type="text" autocomplete="name" autocapitalize="words" placeholder="Nome e sobrenome" value="${name}" />
+        <input class="input" id="auth-name" name="name" type="text" autocomplete="name" autocapitalize="words" maxlength="80" placeholder="Nome e sobrenome" value="${name}" />
       </div>
       ${emailField(email)}
       <div class="field">
@@ -154,36 +204,40 @@ function signUpForm({ name = '', email, phone = '', password, terms = false }) {
         <div class="field__hint">Só para falar do seu pedido e avisar quando ele sair para entrega.</div>
       </div>
       ${passwordField({ id: 'auth-password', label: 'Crie uma senha', autocomplete: 'new-password', value: password, meter: true })}
-      <div class="field">
-        <label class="check auth-check">
-          <input type="checkbox" name="terms" value="1" ${terms ? raw('checked') : ''} />
-          <span>
-            Li e aceito os <button class="link" type="button" data-legal="termos">Termos de uso</button> e a
-            <button class="link" type="button" data-legal="privacidade">Política de privacidade</button>.
-          </span>
-        </label>
-      </div>
       <button class="btn btn--block" type="submit">Criar minha conta</button>
+      <p class="auth-terms">
+        Ao criar a conta, você concorda com os <button class="auth-textlink" type="button" data-legal="termos">Termos de uso</button> e a
+        <button class="auth-textlink" type="button" data-legal="privacidade">Política de privacidade</button>.
+      </p>
     </form>
     <p class="auth-switch">Já tem conta? <button class="auth-textlink" type="button" data-mode="signin">Entrar</button></p>
   `;
 }
 
-function cardHtml(mode, { name = '', email = '', phone = '', password = '', terms = false, next = '' } = {}) {
+function cardHtml(mode, { name = '', email = '', phone = '', password = '', next = '' } = {}) {
   const signup = mode === 'signup';
+  const checkout = fromCheckout(next);
+  const kept = cart.isEmpty() ? '' : ' Seu carrinho está guardado.';
   return html`
     <div class="auth-card__dyn">
-      ${next.startsWith('/checkout')
+      ${checkout
         ? html`<div class="auth-context">
-            ${notice(`Falta pouco para fechar seu pedido. Entre ou crie sua conta para continuar${cart.isEmpty() ? '.' : ': seu carrinho está guardado.'}`, { iconName: 'bag' })}
+            ${notice(
+              signup
+                ? `Falta pouco! Crie sua conta para a gente saber onde entregar.${kept}`
+                : `Falta pouco! Entre na sua conta para a gente saber onde entregar.${kept}`,
+              { iconName: 'bag' },
+            )}
           </div>`
         : ''}
       <h1 class="auth-card__title">${signup ? 'Crie sua conta em 1 minuto' : 'Que bom te ver por aqui'}</h1>
-      <p class="auth-card__sub">
-        ${signup
-          ? 'Acompanhe pedidos, salve seus bolos 3D e ganhe 10% OFF na primeira encomenda.'
-          : 'Entre para acompanhar pedidos, rever seus bolos salvos e usar seus cupons.'}
-      </p>
+      ${checkout
+        ? '' /* vindo do carrinho, o aviso acima já diz tudo: o formulário sobe na tela */
+        : html`<p class="auth-card__sub">
+            ${signup
+              ? `Acompanhe pedidos, salve seus bolos 3D e ganhe ${WELCOME ? WELCOME.label : 'cupons exclusivos'}.`
+              : 'Entre para acompanhar pedidos, rever seus bolos salvos e usar seus cupons.'}
+          </p>`}
 
       <div class="tabs" role="tablist" aria-label="Entrar ou criar conta">
         <button type="button" role="tab" data-mode="signin" data-tab aria-selected="${signup ? 'false' : 'true'}">Entrar</button>
@@ -191,24 +245,25 @@ function cardHtml(mode, { name = '', email = '', phone = '', password = '', term
       </div>
 
       <button class="btn btn--secondary btn--block auth-google" type="button" data-google>${raw(GOOGLE_LOGO)} Continuar com Google</button>
-      <p class="auth-demo">Demonstração: entra com uma conta de exemplo</p>
+      ${SITE.demo ? html`<div class="auth-demo">${demoNote('o Google usa uma conta de exemplo e tudo fica só neste aparelho.')}</div>` : ''}
 
       <div class="auth-or"><span>${signup ? 'ou cadastre com e-mail' : 'ou entre com e-mail'}</span></div>
 
-      ${signup ? signUpForm({ name, email, phone, password, terms }) : signInForm({ email, password })}
+      ${signup ? signUpForm({ name, email, phone, password }) : signInForm({ email, password })}
     </div>
   `;
 }
 
+/** Textos legais resumidos. As frases sobre a demonstração só entram enquanto SITE.demo estiver ligado. */
 const LEGAL = {
   termos: {
     title: 'Termos de uso',
-    body: html`
+    body: () => html`
       <div class="auth-legal">
-        ${notice('Resumo de demonstração. Os termos definitivos serão publicados quando a loja abrir para vendas.', { iconName: 'info' })}
+        ${demoNote('este é um resumo. Os termos definitivos serão publicados quando a loja abrir para vendas.')}
         <div>
-          <h3>Encomendas</h3>
-          <p>Nossos bolos são feitos sob encomenda. No fechamento do pedido você escolhe o dia e a janela de horário entre as datas disponíveis.</p>
+          <h3>Pedidos</h3>
+          <p>Nossos bolos são feitos sob encomenda. Ao fechar o pedido você escolhe o dia e a janela de horário entre as datas disponíveis.</p>
         </div>
         <div>
           <h3>Alterações e cancelamento</h3>
@@ -216,27 +271,29 @@ const LEGAL = {
         </div>
         <div>
           <h3>Pagamento</h3>
-          <p>Aceitamos Pix e cartão de crédito. Nesta versão de demonstração os pagamentos são simulados: nada é cobrado de verdade.</p>
+          <p>Aceitamos Pix e cartão de crédito.${SITE.demo ? ' Nesta demonstração os pagamentos são simulados: nada é cobrado de verdade.' : ''}</p>
         </div>
       </div>
     `,
   },
   privacidade: {
     title: 'Política de privacidade',
-    body: html`
+    body: () => html`
       <div class="auth-legal">
-        ${notice('Resumo de demonstração. A política definitiva será publicada quando a loja abrir para vendas.', { iconName: 'info' })}
-        <div>
-          <h3>Onde ficam os seus dados</h3>
-          <p>Nesta demonstração, conta, endereços, pedidos e carrinho ficam guardados apenas neste aparelho. Nada é enviado para um servidor da loja.</p>
-        </div>
+        ${demoNote('este é um resumo. A política definitiva será publicada quando a loja abrir para vendas.')}
+        ${SITE.demo
+          ? html`<div>
+              <h3>Onde ficam os seus dados</h3>
+              <p>Nesta demonstração, conta, endereços, pedidos e carrinho ficam guardados apenas neste aparelho. Nada é enviado para um servidor da loja.</p>
+            </div>`
+          : ''}
         <div>
           <h3>Para que usamos</h3>
           <p>Nome, e-mail e WhatsApp servem para identificar você e falar sobre o seu pedido. Não enviamos propaganda sem a sua autorização.</p>
         </div>
         <div>
           <h3>Você no controle</h3>
-          <p>Em Minha conta você pode corrigir seus dados e apagar tudo o que foi salvo neste aparelho quando quiser.</p>
+          <p>Em Minha conta você pode corrigir seus dados${SITE.demo ? ' e apagar tudo o que foi salvo neste aparelho' : ''} quando quiser.</p>
         </div>
       </div>
     `,
@@ -244,23 +301,19 @@ const LEGAL = {
 };
 
 export default {
-  title: (ctx) => (ctx.query.modo === 'cadastro' ? 'Criar conta' : 'Entrar'),
+  title: (ctx) => (modeOf(ctx.query) === 'signup' ? 'Criar conta' : 'Entrar'),
   layout: 'focus',
 
   render(ctx) {
     // Quem já está na conta não precisa ver esta tela: o mount redireciona.
     if (auth.isLogged()) return html`<div class="auth"></div>`;
+    const next = safeNext(ctx.query);
     return html`
       <div class="auth">
         <div class="container auth__grid">
-          <section class="auth-card" data-auth-card>${cardHtml(modeOf(ctx.query), { next: safeNext(ctx.query) })}</section>
+          <section class="auth-card" data-auth-card>${cardHtml(modeOf(ctx.query), { next })}</section>
 
-          <button class="auth-gift" type="button" data-copy-coupon="BOLAB10">
-            <span class="auth-gift__icon">${icon('gift')}</span>
-            <span><strong>10% OFF na primeira encomenda</strong><br />Use o cupom <code>BOLAB10</code> no carrinho. Toque para copiar.</span>
-          </button>
-
-          <p class="auth-foot">${icon('lock')}<span>Loja em demonstração: sua conta fica salva apenas neste aparelho.</span></p>
+          <div class="auth-below" data-auth-coupon="card">${couponHtml(next, 'card')}</div>
 
           <aside class="auth-brand" aria-label="Vantagens de ter uma conta BOLAB">
             ${photo('celebration', { w: 900, alt: '', cls: 'auth-brand__img', sizes: '(min-width: 1000px) 50vw, 1px' })}
@@ -276,11 +329,7 @@ export default {
                 `,
               )}
             </ul>
-            <button class="auth-brand__coupon" type="button" data-copy-coupon="BOLAB10">
-              <span class="auth-gift__icon">${icon('gift')}</span>
-              <span><strong>10% OFF na primeira encomenda</strong>Use o cupom <code>BOLAB10</code> no carrinho</span>
-              ${icon('copy')}
-            </button>
+            <div class="auth-brand__slot" data-auth-coupon="brand">${couponHtml(next, 'brand')}</div>
           </aside>
         </div>
       </div>
@@ -303,7 +352,7 @@ export default {
     const desktop = () => window.matchMedia('(min-width: 1000px) and (pointer: fine)').matches;
 
     // O que a pessoa já digitou: trocar de aba nunca apaga nada.
-    const draft = { name: '', email: '', phone: '', password: '', terms: false };
+    const draft = { name: '', email: '', phone: '', password: '' };
     function remember() {
       const f = formEl()?.elements;
       if (!f) return;
@@ -311,12 +360,14 @@ export default {
         if (f[key]) draft[key] = f[key].value.trim();
       });
       if (f.password) draft.password = f.password.value;
-      if (f.terms) draft.terms = f.terms.checked;
     }
 
     function draw() {
       cardEl.innerHTML = String(cardHtml(mode, { ...draft, next }));
       bindMasks(cardEl);
+      root.querySelectorAll('[data-auth-coupon]').forEach((slot) => {
+        slot.innerHTML = String(couponHtml(next, slot.dataset.authCoupon));
+      });
       document.title = `${mode === 'signup' ? 'Criar conta' : 'Entrar'} · BOLAB`;
     }
 
@@ -332,7 +383,9 @@ export default {
       if (focus === 'tab') cardEl.querySelector('[data-tab][aria-selected="true"]')?.focus();
       else if (focus) formEl()?.elements[focus]?.focus();
       if (sync && modeOf(ctx.query) !== mode) {
-        navigate('/entrar', { replace: true, query: { ...ctx.query, modo: mode === 'signup' ? 'cadastro' : '' } });
+        // A aba padrão da situação não precisa aparecer no endereço; a outra, sim.
+        const modo = mode === defaultMode(ctx.query) ? '' : mode === 'signup' ? 'cadastro' : 'entrar';
+        navigate('/entrar', { replace: true, query: { ...ctx.query, modo } });
       }
     }
 
@@ -410,7 +463,6 @@ export default {
       if (!data.phone) errors.phone = 'Digite seu WhatsApp com DDD.';
       else if (!validators.phone(data.phone)) errors.phone = 'O número parece incompleto. Use DDD + número.';
       if (password.length < 6) errors.password = 'A senha precisa ter pelo menos 6 caracteres.';
-      if (!data.terms) errors.terms = 'Para criar a conta, é preciso aceitar os termos.';
       form.querySelectorAll('.auth-suggest').forEach((el) => el.remove());
       if (!applyErrors(form, errors)) return;
 
@@ -455,9 +507,7 @@ export default {
               />
             </div>
             ${passwordField({ id: 'auth-forgot-pass', name: 'next', label: 'Nova senha', autocomplete: 'new-password', meter: true, autofocus: Boolean(typed) })}
-            ${notice('Em uma loja no ar você receberia um link por e-mail. Como esta é uma demonstração, a senha nova passa a valer na hora.', {
-              iconName: 'info',
-            })}
+            ${demoNote('com a loja no ar você receberia um link por e-mail. Aqui, a senha nova passa a valer na hora.')}
           </form>
         `,
         footer: html`
@@ -527,7 +577,7 @@ export default {
     on(root, 'click', '[data-legal]', (_ev, btn) => {
       const doc = LEGAL[btn.dataset.legal];
       if (!doc) return;
-      openDialog({ title: doc.title, body: doc.body, footer: html`<button class="btn" type="button" data-dialog-close>Entendi</button>` });
+      openDialog({ title: doc.title, body: doc.body(), footer: html`<button class="btn" type="button" data-dialog-close>Entendi</button>` });
     });
 
     root.addEventListener('submit', (ev) => {

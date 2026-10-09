@@ -69,11 +69,20 @@
 }
 
 .auth-demo {
-  margin-top: 8px;
-  color: var(--text-3);
+  margin-top: 10px;
+}
+
+.auth-demo .notice {
+  gap: 8px;
+  padding: 9px 12px;
   font-size: var(--fs-xs);
-  font-weight: 700;
-  text-align: center;
+  line-height: 1.45;
+}
+
+.auth-demo .notice svg {
+  width: 16px;
+  height: 16px;
+  margin-top: 0;
 }
 
 .auth-or {
@@ -105,23 +114,23 @@
   margin-top: var(--s-1);
 }
 
-.auth-forgot {
-  justify-self: end;
-  margin-top: -6px;
-}
-
-.field > label.auth-check {
-  color: var(--text-2);
-  font-weight: 600;
-}
-
+/* Links de texto: a área de toque tem 42 px de altura, mas o desenho continua o de um link comum
+   (o respiro extra é compensado por margem negativa, então nada sai do lugar). */
 .auth-textlink {
+  display: inline-block;
+  margin: -10px -4px;
+  padding: 10px 4px;
   color: var(--rose-700);
   font-size: var(--fs-sm);
   font-weight: 800;
   text-decoration: underline;
   text-decoration-color: var(--rose-300);
   text-underline-offset: 3px;
+}
+
+.auth-forgot {
+  justify-self: end;
+  margin-top: -16px;
 }
 
 .auth-textlink:hover {
@@ -188,7 +197,7 @@
   align-items: center;
   gap: 6px;
   align-self: flex-start;
-  min-height: 38px;
+  min-height: 40px;
   padding: 0 14px;
   border-radius: var(--r-pill);
   background: var(--rose-100);
@@ -207,15 +216,25 @@
   height: 16px;
 }
 
-.auth-check .link {
-  font-weight: 800;
-}
-
 /* Com erro no campo, a dica dá lugar à mensagem de erro. */
 .auth-form .field.is-invalid .field__hint,
 .acc .field.is-invalid .field__hint,
 .acc-addr-form .field.is-invalid .field__hint {
   display: none;
+}
+
+.auth-terms {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.auth-terms .auth-textlink {
+  margin-block: -12px;
+  padding-block: 12px;
+  font-size: inherit;
 }
 
 .auth-switch {
@@ -271,23 +290,29 @@
   white-space: nowrap;
 }
 
-.auth-foot {
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 8px;
-  padding-inline: var(--s-2);
-  color: var(--text-3);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-align: center;
+/* Espaço sob o cartão (celular): convite do cupom ou a confirmação de que ele já está aplicado. */
+.auth-below:empty,
+.auth-brand__slot:empty {
+  display: none;
 }
 
-.auth-foot svg {
+.auth-applied {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: var(--r-pill);
+  background: var(--green-soft);
+  color: #1E5A3A;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+
+.auth-applied svg {
   flex: none;
-  width: 14px;
-  height: 14px;
-  margin-top: 2px;
+  width: 18px;
+  height: 18px;
 }
 
 /* Painel da marca (só no desktop) */
@@ -309,7 +334,7 @@
 }
 
 @media (min-width: 1000px) {
-  .auth-gift {
+  .auth-below {
     display: none;
   }
 
@@ -319,8 +344,7 @@
 
   .auth__grid {
     grid-template-columns: minmax(0, 460px) minmax(0, 1fr);
-    grid-template-areas: "card brand" "foot brand";
-    grid-template-rows: auto 1fr;
+    grid-template-areas: "card brand";
     gap: var(--s-4) var(--s-8);
     align-items: start;
     max-width: calc(1080px + var(--gutter) * 2);
@@ -329,10 +353,6 @@
   .auth-card {
     grid-area: card;
     padding: var(--s-10);
-  }
-
-  .auth-foot {
-    grid-area: foot;
   }
 
   .auth-brand {
@@ -444,12 +464,15 @@
     height: 20px;
   }
 
+  .auth-brand__slot {
+    margin-top: var(--s-8);
+  }
+
   .auth-brand__coupon {
     display: flex;
     align-items: center;
     gap: 14px;
     width: 100%;
-    margin-top: var(--s-8);
     padding: 14px 18px;
     border-radius: var(--r-lg);
     background: rgba(255, 255, 255, 0.96);
@@ -488,15 +511,27 @@
   padding-bottom: var(--s-10);
 }
 
+/* minmax(0, 1fr): a coluna nunca cresce por causa de um nome ou e-mail comprido. */
 .acc-shell {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--s-5);
 }
 
 .acc-main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--s-5);
   min-width: 0;
+}
+
+.acc .page-head > div {
+  min-width: 0;
+}
+
+.acc .page-head h1,
+.acc .page-head p {
+  overflow-wrap: anywhere;
 }
 
 .acc-card__head {
@@ -568,13 +603,16 @@ section > .acc-subtitle {
 
 .acc-side {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--s-3);
+  min-width: 0;
 }
 
 .acc-side__me {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
   padding: 14px;
   border-radius: var(--r-lg);
   background: var(--surface);
@@ -593,6 +631,7 @@ section > .acc-subtitle {
 }
 
 .acc-side__me div {
+  flex: 1;
   min-width: 0;
 }
 
@@ -663,6 +702,7 @@ section > .acc-subtitle {
 }
 
 @media (min-width: 900px) {
+  /* De propósito mais estreitas (1080px) que carrinho e checkout: são telas de formulário e leitura. */
   .acc {
     max-width: calc(1080px + var(--gutter) * 2);
     padding-bottom: var(--s-16);
@@ -687,11 +727,13 @@ section > .acc-subtitle {
 /* ───────── Visão geral (#/conta) ───────── */
 .acc-hub {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--s-5);
 }
 
 .acc-hub__col {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--s-4);
   align-content: start;
   min-width: 0;
@@ -730,7 +772,12 @@ section > .acc-subtitle {
   min-width: 0;
 }
 
+/* Nome muito comprido: no máximo duas linhas, com reticências. */
 .acc-profile__info h2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   font-size: var(--fs-xl);
   overflow-wrap: anywhere;
 }
@@ -935,44 +982,24 @@ section > .acc-subtitle {
 }
 
 .acc-hub__foot {
-  display: grid;
-  justify-items: center;
-  gap: 6px;
   padding-top: var(--s-2);
-  text-align: center;
 }
 
 .acc-reset {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 6px 14px;
-  text-wrap: balance;
-  border-radius: var(--r-pill);
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  font-weight: 700;
+  display: block;
+  min-height: 36px;
+  margin-top: 4px;
+  padding-block: 6px;
+  color: inherit;
+  font-weight: 800;
+  text-align: left;
   text-decoration: underline;
-  text-decoration-color: var(--line);
+  text-decoration-color: currentColor;
   text-underline-offset: 3px;
 }
 
 .acc-reset:hover {
-  background: var(--rose-100);
-  color: var(--rose-800);
-}
-
-.acc-reset svg {
-  width: 16px;
-  height: 16px;
-}
-
-.acc-hub__foot small {
-  max-width: 44ch;
-  color: var(--text-3);
-  font-size: var(--fs-xs);
-  font-weight: 600;
+  text-decoration-thickness: 2px;
 }
 
 @media (min-width: 900px) {
@@ -1130,8 +1157,9 @@ section > .acc-subtitle {
   grid-column: span 4;
 }
 
-.acc-addr-form label .field__hint {
-  font-weight: 600;
+.acc-optional {
+  color: var(--text-3);
+  font-weight: 400;
 }
 
 .acc-cep {
@@ -1698,9 +1726,15 @@ section > .acc-subtitle {
 }
 
 .acc-refer__share {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: var(--s-4);
+}
+
+/* Cada botão tem pelo menos a largura do próprio texto; o que sobra na linha é dividido entre eles. */
+.acc-refer__share .btn {
+  flex: 1 1 auto;
 }
 
 .acc-refer__share .btn--wa {
@@ -1827,10 +1861,6 @@ section > .acc-subtitle {
   .acc-refer {
     padding: var(--s-8);
   }
-
-  .acc-refer__share {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
 }
 
 @media (min-width: 1000px) {
@@ -1849,8 +1879,28 @@ section > .acc-subtitle {
   flex-direction: column;
   height: calc(100dvh - var(--header-h) - var(--tabbar-h) - var(--safe-bottom));
   min-height: 440px;
-  /* folga para o botão "Criar" da barra inferior, que sobe 30px acima dela */
+  /* só para navegadores sem :has(): folga para o botão redondo da barra inferior, que sobe 30px */
   padding-bottom: 38px;
+}
+
+/* No celular a conversa ocupa a tela inteira. Mesma regra do produto e do carrinho: tela que tem
+   barra de ação própria (aqui, o campo de mensagem) não mostra a barra de navegação; a seta de
+   voltar e o cabeçalho continuam lá. */
+@media (max-width: 899px) {
+  @supports selector(body:has(.sup)) {
+    body:has(.sup) {
+      padding-bottom: 0;
+    }
+
+    body:has(.sup) .tabbar {
+      display: none;
+    }
+
+    .sup {
+      height: calc(100dvh - var(--header-h));
+      padding-bottom: calc(var(--s-3) + var(--safe-bottom));
+    }
+  }
 }
 
 .sup .page-head {
@@ -2183,8 +2233,8 @@ a.sup-contact__item:hover {
 
 .sup-quick {
   display: flex;
-  gap: 8px;
-  padding: 10px 12px 2px;
+  gap: 0 8px;
+  padding: 6px 12px 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -2193,15 +2243,23 @@ a.sup-contact__item:hover {
   display: none;
 }
 
-.sup-quick .chip {
+/* O botão (área de toque) tem 44 px; a pílula desenhada dentro dele continua com 36 px. */
+.sup-chip {
+  display: flex;
+  align-items: center;
   flex: none;
+  min-height: 44px;
+  border-radius: var(--r-pill);
+}
+
+.sup-chip .chip {
   min-height: 36px;
   padding: 0 14px;
   box-shadow: inset 0 0 0 1.5px var(--rose-200);
   color: var(--rose-800);
 }
 
-.sup-quick .chip:hover {
+.sup-chip:hover .chip {
   background: var(--rose-100);
 }
 
@@ -2209,7 +2267,7 @@ a.sup-contact__item:hover {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px 12px;
+  padding: 8px 12px 12px;
 }
 
 .sup-chat__form .input {
@@ -2289,11 +2347,11 @@ a.sup-contact__item:hover {
 
   .sup-quick {
     flex-wrap: wrap;
-    padding: 12px 18px 2px;
+    padding: 8px 18px 0;
   }
 
   .sup-chat__form {
-    padding: 12px 18px 16px;
+    padding: 10px 18px 16px;
   }
 
   .sup-contact {

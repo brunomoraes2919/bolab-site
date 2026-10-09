@@ -76,7 +76,7 @@ function openAddressForm(current = null) {
           <input class="input" id="ad-number" name="number" type="text" inputmode="numeric" autocomplete="off" value="${noNumber ? '' : a.number || ''}" ${noNumber ? raw('disabled') : ''} />
         </div>
         <div class="field acc-col-4">
-          <label for="ad-complement">Complemento <span class="field__hint">(opcional)</span></label>
+          <label for="ad-complement">Complemento <span class="acc-optional">(opcional)</span></label>
           <input class="input" id="ad-complement" name="complement" type="text" autocomplete="address-line2" placeholder="Apto, bloco, casa…" value="${a.complement || ''}" />
         </div>
         <label class="check">
@@ -94,7 +94,7 @@ function openAddressForm(current = null) {
           <input class="input" id="ad-city" name="city" type="text" autocomplete="address-level2" value="${a.city || ''}" />
         </div>
         <div class="field acc-col-2">
-          <label for="ad-uf">UF</label>
+          <label for="ad-uf">Estado</label>
           <select class="select" id="ad-uf" name="uf" autocomplete="address-level1">
             <option value="">—</option>
             ${UFS.map((uf) => html`<option value="${uf}" ${(a.uf || '') === uf ? raw('selected') : ''}>${uf}</option>`)}
@@ -102,7 +102,7 @@ function openAddressForm(current = null) {
         </div>
 
         <div class="field">
-          <label for="ad-reference">Ponto de referência <span class="field__hint">(opcional)</span></label>
+          <label for="ad-reference">Ponto de referência <span class="acc-optional">(opcional)</span></label>
           <input class="input" id="ad-reference" name="reference" type="text" autocomplete="off" placeholder="Ex.: portão azul, ao lado da padaria" value="${a.reference || ''}" />
         </div>
 
@@ -254,7 +254,7 @@ export default {
               <div class="empty acc-empty">
                 <div class="empty__art">${icon('map-pin')}</div>
                 <h2>Nenhum endereço por aqui</h2>
-                <p>Salve o endereço de entrega uma vez e feche as próximas encomendas em poucos toques. Atendemos ${SITE.region}.</p>
+                <p>Salve o endereço de entrega uma vez e feche os próximos pedidos em poucos toques. Atendemos ${SITE.region}.</p>
                 <button class="btn" type="button" data-add>${icon('plus')} Adicionar endereço</button>
               </div>
             </div>

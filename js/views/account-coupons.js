@@ -1,5 +1,5 @@
 // BOLAB — carteira de cupons (#/conta/cupons).
-// As regras (validade, mínimo, primeira encomenda) são as da loja: aqui só mostramos.
+// As regras (validade, mínimo, primeiro pedido) são as da loja: aqui só mostramos.
 import { html, icon, on, toast, money, toDate, setFieldError } from '../ui.js';
 import { notice } from '../components.js';
 import { cart } from '../store.js';
@@ -40,7 +40,7 @@ function ticket(code) {
           ${!st.usable ? html`<span class="badge">${st.why}</span>` : applied ? html`<span class="badge badge--green">${icon('check')} No carrinho</span>` : ''}
         </div>
         <ul class="acc-ticket__rules">
-          <li>${icon('check')}<span>${c.firstOrderOnly ? 'Válido só na primeira encomenda' : 'Vale em qualquer encomenda'}</span></li>
+          <li>${icon('check')}<span>${c.firstOrderOnly ? 'Válido só no primeiro pedido' : 'Vale em qualquer pedido'}</span></li>
           <li>${icon('check')}<span>${c.minSubtotal ? `Para compras a partir de ${money(c.minSubtotal)}` : 'Sem valor mínimo'}</span></li>
           <li>${icon('check')}<span>${c.expires ? `Válido até ${lastValidDay(c)}` : 'Sem data de validade'}</span></li>
         </ul>

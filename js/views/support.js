@@ -1,11 +1,15 @@
 // BOLAB — atendimento (#/atendimento): chat com o Assistente BOLAB + canais de contato.
-// O assistente é automático e responde com base em js/data (site.js, products.js),
-// então as respostas mudam sozinhas quando o dono ajusta preços, prazos ou horários.
+// O assistente é automático e responde com base em js/data (site.js, products.js) e nas regras
+// do personalizador (js/customizer/pricing.js), então as respostas mudam sozinhas quando o dono
+// ajusta preços, prazos ou horários.
 import { html, raw, icon, on, money, dateLong, toDate, isoDate, confirmDialog } from '../ui.js';
 import { pageHead } from '../components.js';
 import { auth, orders, chat, schedule } from '../store.js';
 import { SITE, COUPONS, WALLET_COUPONS, CATEGORIES } from '../data/site.js';
 import { PRODUCTS, SIZES, isCake } from '../data/products.js';
+import { SIZES as CUSTOM_SIZES, MAX_LAYERS, DECORS } from '../data/customizer.js';
+import { defaultConfig, prepHoursOf } from '../customizer/pricing.js';
+import { firstNameOf } from './auth.js';
 
 const TIME = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
 const WEEKDAYS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
@@ -19,8 +23,6 @@ const norm = (s) =>
     .toLowerCase()
     .normalize('NFD')
     .replace(/\p{Diacritic}/gu, '');
-
-const firstNameOf = (user) => String(user?.name || '').trim().split(/\s+/)[0] || '';
 
 /* ───────── Respostas (sempre montadas a partir dos dados da loja) ───────── */
 function prepRange() {
@@ -39,13 +41,73 @@ function productsMentioned(text) {
   return PRODUCTS.filter((p) => isCake(p) && [p.name, ...(p.tags || [])].some((tag) => norm(tag).length > 3 && t.includes(norm(tag)))).slice(0, 3);
 }
 
+/** "glúten, leite e ovos" */
+function listPt(items) {
+  return items.length > 1 ? `${items.slice(0, -1).join(', ')} e ${items[items.length - 1]}` : items[0] || '';
+}
+
+/**
+ * O que os bolos à venda contêm, lido do cadastro de produtos (campo `allergens`):
+ * "Todos os bolos do cardápio levam glúten, leite e ovos. Alguns também levam coco. "
+ */
+function allergenSummary() {
+  const cakes = PRODUCTS.filter(isCake);
+  const count = new Map();
+  cakes.forEach((p) => (p.allergens || []).forEach((a) => count.set(a, (count.get(a) || 0) + 1)));
+  const inAll = [...count].filter(([, n]) => n === cakes.length).map(([a]) => a.toLowerCase());
+  const inSome = [...count].filter(([, n]) => n < cakes.length).map(([a]) => a.toLowerCase());
+  if (inAll.length) return `Todos os bolos do cardápio levam ${listPt(inAll)}. ${inSome.length ? `Alguns também levam ${listPt(inSome)}. ` : ''}`;
+  return inSome.length ? `Conforme o sabor, os bolos podem levar ${listPt(inSome)}. ` : '';
+}
+
+/**
+ * Prazo do bolo montado em 3D, tirado das mesmas regras que o personalizador usa:
+ * do mais simples ao mais elaborado. → [mínimo, máximo] em horas
+ */
+function customPrepRange() {
+  try {
+    const base = defaultConfig();
+    const simple = { ...base, size: CUSTOM_SIZES[0].id, layers: base.layers.slice(0, 1), fillings: [], decor: { ...base.decor, items: [], message: '' } };
+    const elaborate = {
+      ...base,
+      size: CUSTOM_SIZES[CUSTOM_SIZES.length - 1].id,
+      layers: Array.from({ length: MAX_LAYERS }, () => base.layers[0]),
+      decor: { ...base.decor, items: DECORS.map((d) => d.id), message: 'Parabéns!' },
+    };
+    const hours = [simple, base, elaborate].map(prepHoursOf);
+    return [Math.min(...hours), Math.max(...hours)];
+  } catch {
+    const [, max] = prepRange();
+    return [max, max];
+  }
+}
+
+const daysOf = (hours) => Math.max(1, Math.ceil(hours / 24));
+
+/** Prazo sempre em dias: "1 dia", "2 dias". */
+function inDays(hours) {
+  const d = daysOf(hours);
+  return d === 1 ? '1 dia' : `${d} dias`;
+}
+
+/** "2 dias" quando o prazo é um só; "2 a 3 dias" quando varia. */
+function daysRange(minHours, maxHours) {
+  return daysOf(minHours) === daysOf(maxHours) ? inDays(maxHours) : `${daysOf(minHours)} a ${daysOf(maxHours)} dias`;
+}
+
 const ANSWERS = {
+  // Convenção da loja: primeiro a DATA em que dá para receber; a duração vem só como complemento.
   prazo() {
     const [min, max] = prepRange();
+    const [min3d, max3d] = customPrepRange();
     const first = dateLong(schedule.earliest(min)).toLowerCase();
+    const first3d = dateLong(schedule.earliest(min3d)).toLowerCase();
     return (
-      `A maioria dos nossos bolos fica pronta em ${min} horas. Os decorados e os personalizados no 3D pedem até ${max} horas de antecedência.\n\n` +
-      `Pedindo agora, a primeira data disponível é ${first}. Você escolhe o dia e a janela de horário ao fechar o pedido, e dá para agendar com até ${SITE.scheduleDaysAhead} dias de antecedência.`
+      `Pedindo agora, você recebe a partir de ${first}.` +
+      (first3d !== first ? ` Bolos montados em 3D, a partir de ${first3d}.` : '') +
+      `\n\nCada bolo é feito sob encomenda: os do cardápio levam ${daysRange(min, max)}; os montados em 3D, ${daysRange(min3d, max3d)}, conforme o tamanho e a decoração. ` +
+      `Você escolhe o dia e a janela de horário ao fechar o pedido, e dá para agendar com até ${SITE.scheduleDaysAhead} dias de antecedência.` +
+      `\n\nPrecisa para antes? Chame a equipe no ${WA_LINK}.`
     );
   },
 
@@ -54,7 +116,7 @@ const ANSWERS = {
       `Você paga aqui mesmo no site, ao fechar o pedido:\n` +
       `• Pix, com ${SITE.pix.discountPct}% de desconto e aprovação na hora\n` +
       `• Cartão de crédito em até ${SITE.card.maxInstallments}x sem juros (parcela mínima de ${money(SITE.card.minInstallment)})` +
-      (SITE.demo ? `\n\nUm aviso sincero: esta loja está em demonstração, então os pagamentos são simulados e nada é cobrado.` : '')
+      (SITE.demo ? `\n\nModo demonstração: os pagamentos são simulados e nada é cobrado.` : '')
     );
   },
 
@@ -74,20 +136,31 @@ const ANSWERS = {
     );
   },
 
-  alergenicos() {
+  // A loja só fala de bolos para restrições alimentares quando a categoria existe em js/data/site.js.
+  // Sem categoria ativa, a resposta diz com clareza que hoje não há essas opções.
+  alergenicos(text = '') {
     const has = (id) => CATEGORIES.some((c) => c.id === id);
     const options = [has('veg') ? '[bolos veganos](#/cardapio?cat=veg)' : '', has('sg') ? '[bolos sem glúten](#/cardapio?cat=sg)' : ''].filter(Boolean).join(' e ');
+    const offer = options
+      ? `Temos ${options} no cardápio.`
+      : `No momento não temos bolos específicos para restrições alimentares (veganos, sem glúten ou sem lactose).`;
+    const contains = `${allergenSummary()}A página de cada produto lista os ingredientes e os alergênicos.`;
+    // Quem perguntou por uma dieta lê primeiro se temos ou não; quem perguntou pelos alergênicos, a lista.
+    const askedDiet = /vegan|gluten|lactose|restric|intoler|celiac|diabet|sem acucar/.test(norm(text));
     return (
-      `${options ? `Temos ${options} no cardápio, e a` : 'A'} página de cada produto lista os ingredientes e os alergênicos.\n\n` +
+      `${askedDiet ? `${offer} ${contains}` : `${contains}\n\n${offer}`}\n\n` +
       `Importante: nossa cozinha manipula trigo, leite, ovos e castanhas, então pode haver traços em qualquer bolo. Em caso de alergia grave, converse com a equipe antes de pedir: ${WA_LINK}.`
     );
   },
 
   bolo3d() {
-    const [, max] = prepRange();
+    const [min3d, max3d] = customPrepRange();
+    const varies = daysOf(min3d) !== daysOf(max3d);
     return (
-      `No [Monte seu bolo](#/monte-seu-bolo) você escolhe formato, andares, massa, recheio, cobertura e decoração, e vê o bolo girando na tela a cada escolha. O preço atualiza na hora, sem surpresa.\n\n` +
-      `Gostou do resultado? É só mandar para o carrinho, ou salvar na sua conta para pedir depois. Bolos personalizados pedem ${max} horas de antecedência.`
+      `No Monte seu bolo você escolhe formato, andares, massa, recheio, cobertura e decoração, e vê o bolo girando na tela a cada escolha. O preço atualiza na hora, sem surpresa.\n\n` +
+      `Gostou do resultado? É só mandar para o carrinho, ou salvar na sua conta para pedir depois. ` +
+      `Bolos montados em 3D pedem ${daysRange(min3d, max3d)} de antecedência${varies ? ', conforme o tamanho e a decoração' : ''}. A primeira data de entrega aparece na tela enquanto você monta.\n\n` +
+      `[Montar meu bolo em 3D](#/monte-seu-bolo)`
     );
   },
 
@@ -97,7 +170,7 @@ const ANSWERS = {
     }
     const list = orders.list();
     if (!list.length) {
-      return `Ainda não encontrei pedidos na sua conta. Quando você fizer uma encomenda, eu consigo dizer em que etapa ela está.\n\n[Ver cardápio](#/cardapio)`;
+      return `Ainda não encontrei pedidos na sua conta. Quando você fizer um pedido, eu consigo dizer em que etapa ele está.\n\n[Ver cardápio](#/cardapio)`;
     }
     const o = list[0];
     const st = orders.statusOf(o);
@@ -224,11 +297,11 @@ function replyTo(text, forced) {
 }
 
 const QUICK = [
-  { id: 'prazo', label: 'Prazo de encomenda', ask: 'Qual é o prazo para encomendar?' },
+  { id: 'prazo', label: 'Prazo para pedir', ask: 'Com quanta antecedência preciso pedir?' },
   { id: 'pagamento', label: 'Formas de pagamento', ask: 'Quais são as formas de pagamento?' },
   { id: 'entrega', label: 'Área de entrega', ask: 'Vocês entregam em qual região?' },
   { id: 'cancelar', label: 'Alterar ou cancelar pedido', ask: 'Como altero ou cancelo um pedido?' },
-  { id: 'alergenicos', label: 'Alergênicos', ask: 'Vocês têm opções para quem tem alergia ou restrição?' },
+  { id: 'alergenicos', label: 'Alergênicos', ask: 'Quais alergênicos os bolos contêm?' },
   { id: 'bolo3d', label: 'Como funciona o bolo 3D', ask: 'Como funciona o bolo personalizado em 3D?' },
 ];
 
@@ -288,7 +361,7 @@ function introHtml() {
       from: 'bolab',
       text:
         `Oi${name ? `, ${name}` : ''}! Eu sou o Assistente BOLAB, o atendimento automático da loja.\n\n` +
-        `Respondo na hora as dúvidas mais comuns sobre encomendas. O que eu não souber, passo para a nossa equipe.`,
+        `Respondo na hora às dúvidas mais comuns sobre pedidos e entregas. O que eu não souber, passo para a nossa equipe.`,
     },
     { still: true },
   );
@@ -360,8 +433,10 @@ export default {
 
             <div class="sup-chat__bottom">
               <div class="sup-quick" role="group" aria-label="Perguntas frequentes">
-                ${hasOrders ? html`<button class="chip" type="button" data-quick="pedido" data-ask="Como está o meu pedido?">${icon('package')} Meu pedido</button>` : ''}
-                ${QUICK.map((q) => html`<button class="chip" type="button" data-quick="${q.id}" data-ask="${q.ask}">${q.label}</button>`)}
+                ${hasOrders
+                  ? html`<button class="sup-chip" type="button" data-quick="pedido" data-ask="Como está o meu pedido?"><span class="chip">${icon('package')} Meu pedido</span></button>`
+                  : ''}
+                ${QUICK.map((q) => html`<button class="sup-chip" type="button" data-quick="${q.id}" data-ask="${q.ask}"><span class="chip">${q.label}</span></button>`)}
               </div>
               <form class="sup-chat__form" data-chat-form autocomplete="off">
                 <label class="sr-only" for="sup-input">Sua mensagem</label>

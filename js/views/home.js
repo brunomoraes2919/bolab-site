@@ -1,7 +1,9 @@
 // BOLAB — página inicial.
 import { html, icon, money, observeReveal } from '../ui.js';
 import { photo, productCard, stars } from '../components.js';
-import { PRODUCTS, REVIEWS, isCake } from '../data/products.js';
+import { PRODUCTS, REVIEWS, isCake, ratingSummary } from '../data/products.js';
+
+const SCORE = ratingSummary();
 import { CATEGORIES, SITE } from '../data/site.js';
 import { schedule } from '../store.js';
 import { dateLong } from '../ui.js';
@@ -41,10 +43,6 @@ const FAQ = [
     q: 'Posso cancelar ou alterar meu pedido?',
     a: 'Sim, sem custo, enquanto o bolo não entrou em produção. Depois disso, fale com a gente pelo atendimento que encontramos a melhor solução.',
   },
-  {
-    q: 'Têm opções para restrições alimentares?',
-    a: 'Temos bolos veganos e sem glúten no cardápio, e cada produto lista os alergênicos. Nossa cozinha manipula trigo, leite, ovos e castanhas.',
-  },
 ];
 
 function hero() {
@@ -55,17 +53,19 @@ function hero() {
         <div class="hero__copy">
           <span class="eyebrow">${icon('sparkles')} Confeitaria artesanal sob encomenda</span>
           <h1 class="hero__title display">O bolo que você imaginou, <em>do jeitinho que imaginou.</em></h1>
-          <p class="hero__lead">
+          <p class="hero__lead only-desktop">
             Escolha um dos nossos clássicos ou monte o seu em 3D — massa, recheio, cobertura e decoração — e receba em casa com hora marcada.
           </p>
+          <p class="hero__lead only-mobile">Escolha um clássico ou monte o seu em 3D. A gente entrega com hora marcada.</p>
           <div class="hero__cta">
             <a class="btn btn--lg" href="#/monte-seu-bolo">${icon('sparkles')} Montar meu bolo em 3D</a>
-            <a class="btn btn--lg btn--secondary" href="#/cardapio">Ver cardápio</a>
+            <a class="btn btn--lg btn--secondary only-desktop" href="#/cardapio">Ver cardápio</a>
+            <a class="link-arrow hero__alt only-mobile" href="#/cardapio">ou ver o cardápio ${icon('arrow-right')}</a>
           </div>
           <ul class="hero__trust">
             <li>
               <span class="hero__stars">★★★★★</span>
-              <span><strong>4,9</strong> em mais de 1.200 avaliações</span>
+              <span><strong>${SCORE.avg}</strong> em ${SCORE.countLabel} avaliações</span>
             </li>
             <li>${icon('calendar')}<span>Peça hoje, receba a partir de <strong>${dateLong(first).toLowerCase()}</strong></span></li>
           </ul>
@@ -127,7 +127,7 @@ function bestSellers() {
           </div>
           <a class="link-arrow only-desktop" href="#/cardapio">Ver todo o cardápio ${icon('arrow-right')}</a>
         </div>
-        <div class="product-grid">${list.map((p, i) => html`<div class="reveal" style="--reveal-delay:${(i % 4) * 60}ms">${productCard(p)}</div>`)}</div>
+        <div class="product-grid product-grid--teaser">${list.map((p, i) => html`<div class="reveal" style="--reveal-delay:${(i % 4) * 60}ms">${productCard(p)}</div>`)}</div>
         <div class="section-foot only-mobile">
           <a class="btn btn--secondary btn--block" href="#/cardapio">Ver todo o cardápio</a>
         </div>
@@ -149,7 +149,7 @@ function customizerSpotlight() {
         <div class="spot__visual reveal">
           <a class="spot__stage" href="#/monte-seu-bolo" aria-label="Abrir o personalizador 3D">
             <img class="spot__cake spot__cake--left" src="assets/img/cz-belga.webp" alt="" width="760" height="760" loading="lazy" decoding="async" />
-            <img class="spot__cake spot__cake--right" src="assets/img/cz-amor.webp" alt="" width="760" height="760" loading="lazy" decoding="async" />
+            <img class="spot__cake spot__cake--right" src="assets/img/cz-festa.webp" alt="" width="760" height="760" loading="lazy" decoding="async" />
             <img
               class="spot__cake spot__cake--main"
               src="assets/img/cz-morango.webp"
@@ -178,8 +178,8 @@ function customizerSpotlight() {
             ${bullets.map((b) => html`<li>${icon('check')}<span>${b}</span></li>`)}
           </ul>
           <div class="spot__cta">
-            <a class="btn btn--lg" href="#/monte-seu-bolo">${icon('sparkles')} Começar a criar</a>
-            <span class="spot__price">a partir de <strong>${money(69)}</strong></span>
+            <a class="btn btn--lg" href="#/monte-seu-bolo">${icon('sparkles')} Montar meu bolo em 3D</a>
+            <span class="spot__price">bolos a partir de <strong>${money(69)}</strong></span>
           </div>
         </div>
       </div>
@@ -250,10 +250,11 @@ function reviews() {
           <div>
             <span class="eyebrow">Quem pediu, aprovou</span>
             <h2 class="section-title">Histórias <em>doces de verdade</em></h2>
+            <p class="reviews__inline only-mobile">${stars(5)} <strong>${SCORE.avg}</strong> · ${SCORE.countLabel} avaliações</p>
           </div>
           <div class="reviews__score only-desktop">
-            <strong>4,9</strong>
-            <div>${stars(5)}<span>mais de 1.200 avaliações</span></div>
+            <strong>${SCORE.avg}</strong>
+            <div>${stars(5)}<span>${SCORE.countLabel} avaliações</span></div>
           </div>
         </div>
         <div class="reviews" data-reviews>
@@ -287,11 +288,11 @@ function partyAddOns() {
         <div class="section-head">
           <div>
             <span class="eyebrow">Para a mesa do bolo</span>
-            <h2 class="section-title">Os detalhes que <em>completam a festa</em></h2>
+            <h2 class="section-title">Complete <em>a festa</em></h2>
           </div>
           <a class="link-arrow only-desktop" href="#/cardapio?cat=acess">Ver todos ${icon('arrow-right')}</a>
         </div>
-        <div class="product-grid">${list.map((p) => html`<div class="reveal">${productCard(p)}</div>`)}</div>
+        <div class="product-grid product-grid--rail">${list.map((p) => html`<div class="reveal">${productCard(p)}</div>`)}</div>
       </div>
     </section>
   `;
@@ -331,7 +332,7 @@ function finalCta() {
           <div class="final-cta__photo">${photo('celebration', { w: 900, sizes: '100vw', alt: '' })}</div>
           <div class="final-cta__body">
             <h2 class="section-title">Tem uma data especial chegando?</h2>
-            <p>Garanta o seu bolo agora e escolha o dia da entrega. Na primeira encomenda, 10% OFF com o cupom <strong>BOLAB10</strong>.</p>
+            <p>Garanta o seu bolo agora e escolha o dia da entrega. No primeiro pedido, 10% OFF com o cupom <strong>BOLAB10</strong>.</p>
             <div class="hero__cta">
               <a class="btn btn--lg" href="#/monte-seu-bolo">${icon('sparkles')} Montar meu bolo</a>
               <a class="btn btn--lg btn--secondary" href="#/cardapio">Escolher no cardápio</a>
@@ -347,7 +348,7 @@ export default {
   layout: 'default',
   render() {
     return html`
-      ${hero()} ${categories()} ${bestSellers()} ${customizerSpotlight()} ${howItWorks()} ${perks()} ${reviews()} ${partyAddOns()} ${faq()} ${finalCta()}
+      ${hero()} ${categories()} ${bestSellers()} ${customizerSpotlight()} ${reviews()} ${howItWorks()} ${perks()} ${partyAddOns()} ${faq()} ${finalCta()}
     `;
   },
   mount(root) {

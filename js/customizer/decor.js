@@ -993,7 +993,8 @@ const CANDLE_COLORS = ['#f08fb0', '#f6c453', '#6fcfa8', '#6fb6f2', '#b497f0'];
 function buildCandles(ctx, part) {
   const { config, m, lib, layout } = ctx;
   const n = config.decor.candles;
-  const h = 0.5;
+  // com plaquinha, velas um pouco mais baixas: as chamas não cobrem a mensagem
+  const h = layout.message ? 0.4 : 0.5;
   const y0 = layout.topY - 0.03;
   const spots = [];
   const cx = m.center.x;
@@ -1049,8 +1050,8 @@ function buildCandles(ctx, part) {
 function plaqueSize(text, rho) {
   const lines = splitMessage(text);
   const longest = Math.max(...lines.map((l) => l.length));
-  const w = Math.min(rho * 1.75, Math.max(0.46, 0.2 + longest * 0.078));
-  const h = lines.length > 1 ? 0.42 : 0.29;
+  const w = Math.min(rho * 1.9, Math.max(0.58, 0.25 + longest * 0.097));
+  const h = lines.length > 1 ? 0.52 : 0.36;
   return { w, h, lines };
 }
 
@@ -1118,7 +1119,7 @@ function buildMessageAndTopper(ctx, part) {
     const { w, h, lines } = plaqueSize(text, layout.rho);
     plaqueHalf = w / 2;
     const group = new THREE.Group();
-    const lift = 0.3;
+    const lift = 0.34;
     const shape = roundedRectShape(w, h, 0.05);
     const body = new THREE.ExtrudeGeometry(shape, { depth: 0.014, bevelEnabled: true, bevelThickness: 0.005, bevelSize: 0.005, bevelSegments: 2, curveSegments: 10 });
     body.translate(0, 0, -0.007);
@@ -1150,6 +1151,7 @@ function buildMessageAndTopper(ctx, part) {
     });
     group.position.set(cx, y0, backZ);
     part.addObject(group, m, 0.14); // fica atrás do centro: só some se a fatia retirada chegar até ela
+    part.plaque = { x: cx, y: y0 + lift + h / 2, z: backZ, w, h }; // para a câmera encarar a plaquinha enquanto a pessoa digita
     part.owned.push(body, faceGeo, faceMat, map);
   }
 
@@ -1210,7 +1212,7 @@ export function decorHeight(config) {
   if (items.includes('flores')) h = Math.max(h, 0.16);
   if (items.includes('raspas')) h = Math.max(h, 0.14);
   if (items.includes('velas')) h = Math.max(h, 0.66);
-  if (config.decor.message) h = Math.max(h, config.decor.message.length > 14 && config.decor.message.includes(' ') ? 0.78 : 0.65);
+  if (config.decor.message) h = Math.max(h, config.decor.message.length > 14 && config.decor.message.includes(' ') ? 0.94 : 0.78);
   if (items.includes('topo')) h = Math.max(h, 1.02);
   return h;
 }

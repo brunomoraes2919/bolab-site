@@ -4,7 +4,8 @@ Site e aplicativo da BOLAB em um único código: no celular tem cara de app (bar
 
 - **Sem etapa de build.** HTML, CSS e JavaScript (módulos ES) servidos como arquivos estáticos. Publicar = enviar a pasta.
 - **Modo demonstração.** Não há servidor: carrinho, conta e pedidos ficam no `localStorage` do navegador (`js/store.js`). Pagamento e login social são simulados.
-- **Rodar localmente:** `python ../tools/dev_server.py 5173` e abrir `http://localhost:5173`.
+- **Rodar localmente:** dentro desta pasta, `python -m http.server 5173` e abrir `http://localhost:5173` (qualquer servidor de arquivos estáticos serve; abrir o `index.html` direto do disco não funciona por causa dos módulos).
+- **Publicado em:** GitHub Pages deste repositório (Settings → Pages → branch `main`).
 
 ## Estrutura
 

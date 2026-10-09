@@ -40,11 +40,11 @@
     </script>
   </head>
   <body data-layout="default">
-    <a class="skip-link" href="#app">Pular para o conteúdo</a>
+    <a class="skip-link" href="#/" data-skip>Pular para o conteúdo</a>
     <div id="announce" class="announce"></div>
     <header id="header" class="header"></header>
     <main id="app" tabindex="-1">
-      <div class="boot">
+      <div class="boot" id="boot">
         <img src="assets/logo-mark.webp" alt="" width="60" height="92" />
       </div>
     </main>
@@ -54,6 +54,19 @@
     <noscript>
       <p style="padding: 24px; text-align: center">Para usar a loja BOLAB, ative o JavaScript no seu navegador.</p>
     </noscript>
-    <script type="module" src="js/app.js"></script>
+    <script>
+      // Se algum arquivo essencial não chegar (rede instável), a pessoa vê um aviso com
+      // "Tentar de novo" em vez de ficar olhando a logo para sempre.
+      function bolabBootFail() {
+        var boot = document.getElementById('boot');
+        if (!boot || window.__bolabReady) return;
+        boot.innerHTML =
+          '<div class="boot__fail"><img src="assets/logo-mark.webp" alt="" width="48" height="74" />' +
+          '<h1>Não conseguimos abrir a loja</h1><p>Confira sua conexão com a internet e tente de novo.</p>' +
+          '<button class="btn" type="button" onclick="location.reload()">Tentar de novo</button></div>';
+      }
+      setTimeout(bolabBootFail, 12000);
+    </script>
+    <script type="module" src="js/app.js" onerror="bolabBootFail()"></script>
   </body>
 </html>

@@ -4,6 +4,7 @@ import { html, icon, on, toast, money, copyText } from '../ui.js';
 import { auth } from '../store.js';
 import { SITE } from '../data/site.js';
 import { accountPage, firstName } from './account.js';
+import { demoNote } from './auth.js';
 
 const REWARD = 20; // crédito para quem indica (R$)
 const FRIEND_PCT = 10; // desconto para quem foi indicado (%)
@@ -26,12 +27,12 @@ function referralCode(user) {
 const siteUrl = () => `${location.origin}${location.pathname}`;
 
 function inviteText(code) {
-  return `Encomendei meu bolo na ${SITE.name} e amei! Use meu código ${code} e ganhe ${FRIEND_PCT}% OFF na sua primeira encomenda: ${siteUrl()}`;
+  return `Pedi meu bolo na ${SITE.name} e amei! Use meu código ${code} e ganhe ${FRIEND_PCT}% OFF no seu primeiro pedido: ${siteUrl()}`;
 }
 
 const STEPS = [
   { title: 'Envie o seu código', text: 'Mande para as amigas, a família, o grupo do trabalho: quem tiver uma data especial chegando.' },
-  { title: `Sua amiga ganha ${FRIEND_PCT}% OFF`, text: 'O desconto vale na primeira encomenda dela, usando o seu código.' },
+  { title: `Sua amiga ganha ${FRIEND_PCT}% OFF`, text: 'O desconto vale no primeiro pedido dela, usando o seu código.' },
   { title: `Você ganha ${money(REWARD).replace(/,00$/, '')}`, text: 'O crédito entra na sua conta assim que ela receber o bolo.' },
 ];
 
@@ -52,7 +53,7 @@ export default {
         <section class="acc-refer">
           <span class="eyebrow">${icon('gift')} Bolo bom a gente divide</span>
           <h2>Indique uma amiga e <em>ganhe ${money(REWARD).replace(/,00$/, '')}.</em></h2>
-          <p>Ela ganha ${FRIEND_PCT}% OFF na primeira encomenda. Você ganha ${money(REWARD).replace(/,00$/, '')} em créditos a cada amiga que receber o bolo.</p>
+          <p>Ela ganha ${FRIEND_PCT}% OFF no primeiro pedido. Você ganha ${money(REWARD).replace(/,00$/, '')} em créditos a cada amiga que receber o bolo.</p>
 
           <div class="acc-refer__code">
             <div>
@@ -95,9 +96,7 @@ export default {
             <div><strong>0</strong><span>indicações até agora</span></div>
             <div><strong>${money(0)}</strong><span>em créditos</span></div>
           </div>
-          <p class="acc-note">
-            ${icon('info')}<span>Loja em demonstração: as indicações ainda não são contabilizadas e o código não vale como cupom no carrinho. Quando o programa entrar no ar, tudo aparece nesta tela.</span>
-          </p>
+          ${demoNote('as indicações ainda não são contabilizadas e o código não vale como cupom no carrinho. Quando o programa entrar no ar, tudo aparece nesta tela.')}
         </section>
       `,
     });

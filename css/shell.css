@@ -32,6 +32,27 @@
   animation: boot-pulse 1.2s var(--ease) infinite alternate;
 }
 
+.boot__fail {
+  display: grid;
+  justify-items: center;
+  gap: var(--s-3);
+  max-width: 32ch;
+  padding: var(--s-6);
+  text-align: center;
+}
+
+.boot__fail img {
+  animation: none;
+}
+
+.boot__fail h1 {
+  font-size: var(--fs-xl);
+}
+
+.boot__fail p {
+  color: var(--text-2);
+}
+
 @keyframes boot-pulse {
   from {
     opacity: 0.35;
@@ -74,6 +95,8 @@
 }
 
 .announce button {
+  min-height: 36px;
+  padding-inline: 6px;
   color: inherit;
   font-weight: 700;
 }
@@ -311,6 +334,13 @@
     color: var(--rose-700);
   }
 
+  /* Primeiro nome muito longo não empurra o cabeçalho. */
+  .header__account span:last-child {
+    max-width: 16ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .header__account svg {
     width: 20px;
     height: 20px;
@@ -318,11 +348,26 @@
 }
 
 @media (min-width: 900px) and (max-width: 1080px) {
+  /* Pouco espaço: a busca vira ícone (leva ao cardápio, onde há o campo completo). */
   .header__search {
-    max-width: 200px;
+    display: none;
+  }
+
+  .header__search-link {
+    display: inline-grid !important;
+  }
+
+  .header__actions {
+    margin-left: auto;
   }
 
   .header__account span:last-child {
+    display: none;
+  }
+}
+
+@media (min-width: 900px) {
+  .header__search-link {
     display: none;
   }
 }
@@ -413,6 +458,20 @@ body {
   }
 }
 
+/* Tela com barra de ação própria (produto, carrinho) não mostra a barra de navegação:
+   uma faixa só no rodapé, nunca duas empilhadas. Cada tela reserva a altura da sua barra. */
+@media (max-width: 899px) {
+  body:has(.pd-sticky) .tabbar,
+  body:has(.cart-bar) .tabbar {
+    display: none;
+  }
+
+  body:has(.pd-sticky),
+  body:has(.cart-bar) {
+    padding-bottom: 0;
+  }
+}
+
 /* ───────── Rodapé ───────── */
 .footer {
   margin-top: var(--s-16);
@@ -467,6 +526,11 @@ body {
 .footer li {
   padding-block: 5px;
   color: #C9AAB3;
+}
+
+.footer li a {
+  display: inline-block;
+  padding-block: 6px; /* área de toque confortável no celular */
 }
 
 .footer li a:hover {

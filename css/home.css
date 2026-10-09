@@ -688,11 +688,24 @@
   line-height: 1;
 }
 
-.reviews__score span {
+.reviews__score .stars + span {
   display: block;
   margin-top: 4px;
   color: var(--text-2);
   font-size: var(--fs-sm);
+}
+
+.reviews__inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--s-2);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.reviews__inline strong {
+  color: var(--text);
 }
 
 @media (min-width: 900px) {
@@ -765,5 +778,176 @@
     flex-direction: column;
     justify-content: center;
     padding: var(--s-16);
+  }
+}
+
+/* ───────── Ajustes para celular e tablet ───────── */
+.hero__alt {
+  justify-content: center;
+  min-height: 44px;
+}
+
+@media (max-width: 899px) {
+  /* A foto vem antes do texto: em confeitaria, o apetite chega antes da leitura. */
+  .hero {
+    padding-top: var(--s-4);
+  }
+
+  .hero__grid {
+    gap: var(--s-5);
+  }
+
+  .hero__visual {
+    order: -1;
+    max-width: none;
+  }
+
+  .hero__photo {
+    aspect-ratio: 4 / 3;
+    border-radius: var(--r-xl);
+    box-shadow: var(--shadow-2);
+  }
+
+  .hero__card {
+    display: none;
+  }
+
+  .hero__title {
+    margin-top: var(--s-2);
+    font-size: clamp(2rem, 8.4vw, 2.5rem);
+  }
+
+  .hero__lead {
+    margin-top: var(--s-3);
+  }
+
+  .hero__cta {
+    margin-top: var(--s-5);
+    gap: 4px;
+  }
+
+  .hero__trust {
+    margin-top: var(--s-4);
+  }
+
+  /* "Como funciona" vira lista compacta em vez de quatro cartões de tela cheia. */
+  .how {
+    gap: 0;
+    padding: var(--s-2) var(--s-5);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-1);
+  }
+
+  .how__step {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    column-gap: 14px;
+    align-items: start;
+    padding: var(--s-4) 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+
+  .how__step + .how__step {
+    border-top: 1px solid var(--line-soft);
+  }
+
+  .how__num {
+    display: none;
+  }
+
+  .how__icon {
+    grid-row: span 2;
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+  }
+
+  .how__icon svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .how__step h3 {
+    margin-top: 0;
+    font-family: var(--font-body);
+    font-size: var(--fs-md);
+    font-weight: 800;
+    letter-spacing: 0;
+  }
+
+  .how__step p {
+    margin-top: 2px;
+    font-size: var(--fs-sm);
+  }
+
+  /* Acessórios em fileira que desliza, como os depoimentos. */
+  .product-grid--rail {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin-inline: calc(var(--gutter) * -1);
+    padding: 4px var(--gutter) 12px;
+    scroll-snap-type: x proximity;
+  }
+
+  .product-grid--rail::-webkit-scrollbar {
+    display: none;
+  }
+
+  .product-grid--rail > * {
+    flex: none;
+    width: min(44vw, 220px);
+    scroll-snap-align: start;
+  }
+}
+
+/* "Mais pedidos": 4 no celular (2 colunas), 6 no tablet (3 colunas), 8 no desktop. */
+@media (max-width: 639px) {
+  .product-grid--teaser > :nth-child(n + 5) {
+    display: none;
+  }
+}
+
+@media (min-width: 640px) and (max-width: 1099px) {
+  .product-grid--teaser > :nth-child(n + 7) {
+    display: none;
+  }
+}
+
+@media (min-width: 640px) and (max-width: 899px) {
+  .how {
+    grid-template-columns: 1fr 1fr;
+    column-gap: var(--s-8);
+  }
+
+  .how__step:nth-child(2) {
+    border-top: 0;
+  }
+
+  .cat-row {
+    justify-content: center;
+  }
+}
+
+@media (min-width: 900px) {
+  /* A linha "Peça hoje, receba a partir de…" precisa caber na primeira tela em 1366×800. */
+  .hero {
+    padding-block: var(--s-10) var(--s-16);
+  }
+
+  .hero__card--a {
+    left: -48px;
+    top: 8%;
+  }
+}
+
+@media (max-width: 899px) {
+  /* No recorte horizontal do celular, mostra o topo decorado do bolo. */
+  .hero__photo img {
+    object-position: center 18% !important;
   }
 }

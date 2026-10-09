@@ -2,9 +2,12 @@
 // A tela só orquestra: as opções vêm de js/data/customizer.js, preço e resumo de js/customizer/pricing.js
 // e o desenho 3D de js/customizer/engine.js. Nada aqui redesenha a tela inteira: cada mudança
 // atualiza o painel no lugar e chama cake.setConfig().
-import { html, raw, icon, money, on, toast, openDialog, confirmDialog, debounce } from '../ui.js';
+//
+// Entradas pelo endereço:  ?bolo=<id salvo>  ·  ?base=<id do produto>  ·  ?linha=<id da linha do carrinho>
+// (esta última abre o bolo que já está no carrinho para editar; o botão final vira "Salvar alterações").
+import { html, raw, icon, money, dateLong, on, toast, openDialog, confirmDialog, debounce, confetti } from '../ui.js';
 import { qtyStepper } from '../components.js';
-import { cart, savedCakes, prefs } from '../store.js';
+import { cart, savedCakes, prefs, schedule } from '../store.js';
 import { navigate } from '../router.js';
 import { SITE } from '../data/site.js';
 import {
@@ -28,7 +31,6 @@ import {
   getFlavor,
   getFilling,
   getCovering,
-  getShape,
   colorName,
 } from '../data/customizer.js';
 import {
@@ -37,11 +39,12 @@ import {
   cleanMessage,
   breakdownOf,
   priceOf,
+  minPrice,
   deltaOf,
   sizeOf,
   servesOf,
   prepHoursOf,
-  prepLabelOf,
+  partsOf,
   summaryOf,
   autoName,
   displayName,
@@ -57,11 +60,11 @@ const STEPS = [
   { id: 'cobertura', label: 'Cobertura', title: 'Cobertura', sub: 'O tipo, a cor e, se quiser, aquela calda escorrendo.' },
   { id: 'acabamento', label: 'Acabamento', title: 'Acabamento', sub: 'O confeitado de bico que contorna o bolo.' },
   { id: 'decoracao', label: 'Decoração', title: 'Decoração', sub: 'Os toques finais. Combine até 3.' },
-  { id: 'resumo', label: 'Resumo', title: 'Seu bolo ficou lindo', sub: 'Confira cada detalhe antes de pedir.' },
+  { id: 'resumo', label: 'Resumo', title: 'Seu bolo está pronto', sub: 'Confira e peça: a gente começa a fazer assim que você fechar o pedido.' },
 ];
 const STEP_INDEX = Object.fromEntries(STEPS.map((s, i) => [s.id, i]));
 const AUTO_CUT_STEPS = new Set(['massa', 'recheio']);
-const THUMBS_VERSION = 'v5';
+const THUMBS_VERSION = 'v7';
 
 /** Recheio sugerido quando o bolo ganha a primeira camada extra. */
 const FIRST_FILLING = { baunilha: 'morango', chocolate: 'brigadeiro', redvelvet: 'ninho', cenoura: 'brigadeiro', limao: 'limao', morango: 'ninho' };
@@ -181,17 +184,25 @@ function tipFor(stepId, c) {
     if (!items.length) return 'Sem decoração também é uma escolha: o acabamento e a cor já falam por si. Se quiser, comece pelas frutas.';
     return 'Decorações de tipos diferentes combinam melhor: uma no centro, uma em volta e um detalhe como pérolas ou confete.';
   }
-  return `Pedidos personalizados ficam prontos em ${prepLabelOf(c)}. O dia e o horário da entrega você escolhe na finalização.`;
+  return 'O dia e o horário da entrega você escolhe ao fechar o pedido.';
 }
 
 /* ───────── Pedaços do painel ───────── */
+/** "R$ 123" quando o valor é redondo (frases), "R$ 122,55" quando não é. */
+const brl = (v) => money(v).replace(/,00$/, '');
+
+/** Primeira data de entrega possível para este bolo, por extenso e em minúsculas. */
+const firstDate = (c) => dateLong(schedule.earliest(prepHoursOf(c))).toLowerCase();
+
 function isLight(hex) {
   const n = parseInt(hex.slice(1), 16);
   return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255 > 0.7;
 }
 
-function priceTag(value) {
-  return value > 0 ? html`<span class="cz-opt__price">+ ${money(value)}</span>` : html`<span class="cz-opt__price is-free">incluso</span>`;
+/** "+ R$ 12,40" (com "por camada" quando o valor se repete em cada camada) ou "incluso". */
+function priceTag(value, per = '') {
+  if (!(value > 0)) return html`<span class="cz-opt__price is-free">incluso</span>`;
+  return html`<span class="cz-opt__price"><b>+ ${money(value)}</b>${per ? html` <small>${per}</small>` : ''}</span>`;
 }
 
 function optCard({ set, value, on: isOn, name, desc = '', price = null, artwork = '', tile = false, role = 'radio', act = '', disabled = false }) {
@@ -245,13 +256,18 @@ function segmented(set, current, options, label) {
   </div>`;
 }
 
-function tipBox(stepId, c) {
-  return html`<aside class="cz-tip">
-    <span class="cz-tip__icon">${ICON.chef}</span>
-    <div><strong>Dica da chef</strong>${tipFor(stepId, c)}</div>
+/** Dica da chef: no celular fica recolhida em uma linha (toque para abrir); no computador, sempre aberta. */
+function tipBox(stepId, c, open) {
+  return html`<aside class="cz-tip ${open ? 'is-open' : ''}">
+    <button type="button" class="cz-tip__btn" data-act="tip" aria-expanded="${open ? 'true' : 'false'}" data-k="tip:toggle">
+      <span class="cz-tip__icon">${ICON.chef}</span>
+      <span class="cz-tip__body"><strong>Dica da chef</strong><span class="cz-tip__text">${tipFor(stepId, c)}</span></span>
+      <span class="cz-tip__chev">${icon('chevron-down')}</span>
+    </button>
   </aside>`;
 }
 
+/** Título da etapa: só no computador (no celular, o chip escuro da etapa já diz onde a pessoa está). */
 function stepHead(i) {
   const s = STEPS[i];
   return html`<header class="cz-head">
@@ -264,14 +280,26 @@ function stepHead(i) {
 const ordinal = (n) => `${n}ª`;
 
 /* ───────── Etapas ───────── */
-function stepFormato(c) {
+function stepFormato(c, ui) {
+  const price = priceOf(c);
+  const min = minPrice();
   return html`
-    <section class="cz-sec">
+    <p class="cz-anchor">
+      ${price > min
+        ? html`Este modelo sai por <strong>${brl(price)}</strong>. Bolos a partir de <strong>${brl(min)}</strong>.`
+        : html`Este é o nosso bolo mais em conta: <strong>${brl(min)}</strong>.`}
+    </p>
+
+    <section class="cz-sec cz-sec--presets">
       <div class="cz-sec__head">
-        <h3>Inspirações <small>para começar</small></h3>
+        <h3>Inspirações</h3>
         <button type="button" class="cz-linkbtn cz-linkbtn--solid" data-act="surprise">${icon('shuffle')} Surpreenda-me</button>
       </div>
-      <div class="cz-presets">
+      <div class="cz-presets" role="group" aria-label="Inspirações para começar">
+        <button type="button" class="cz-preset cz-preset--surprise" data-act="surprise" aria-label="Surpreenda-me: montar um bolo surpresa">
+          <span class="cz-preset__img">${icon('shuffle')}</span>
+          <span class="cz-preset__text"><strong>Surpreenda-me</strong></span>
+        </button>
         ${PRESETS.map(
           (p) => html`<button type="button" class="cz-preset" data-act="preset" data-value="${p.id}" aria-label="Começar pela inspiração ${p.name}: ${p.tag}">
             <span class="cz-preset__img" data-thumb="${p.id}">
@@ -310,13 +338,15 @@ function stepFormato(c) {
             on: c.size === s.id,
             name: s.diameter,
             desc: s.serves,
-            price: html`<span class="cz-opt__price">${money(priceOf({ ...c, size: s.id }))}</span>`,
+            price: html`<span class="cz-opt__price"><b>${money(priceOf({ ...c, size: s.id }))}</b></span>`,
             artwork: html`<span class="cz-opt__big">${s.label}</span>`,
             tile: true,
           }),
         )}
       </div>
     </section>
+
+    ${tipBox('formato', c, ui.tipOpen)}
   `;
 }
 
@@ -325,6 +355,7 @@ function stepMassa(c, ui) {
   const each = ui.flavorMode === 'each' && n > 1;
   const active = each ? Math.min(ui.layer, n - 1) : n - 1;
   const current = c.layers[active];
+  const per = !each && n > 1 ? 'por camada' : '';
   return html`
     <section class="cz-sec">
       <div class="cz-row">
@@ -337,9 +368,7 @@ function stepMassa(c, ui) {
     </section>
 
     <section class="cz-sec">
-      ${n > 1
-        ? segmented('flavorMode', each ? 'each' : 'all', [{ id: 'all', name: 'Mesmo sabor em todas' }, { id: 'each', name: 'Um sabor por camada' }], 'Como escolher o sabor')
-        : ''}
+      ${n > 1 ? segmented('flavorMode', each ? 'each' : 'all', [{ id: 'all', name: 'Um só sabor' }, { id: 'each', name: 'Um por camada' }], 'Como escolher o sabor da massa') : ''}
       ${each
         ? html`<div class="cz-stack" role="radiogroup" aria-label="Camada que você está editando">
             ${c.layers
@@ -370,7 +399,7 @@ function stepMassa(c, ui) {
             on: each ? current === f.id : c.layers.every((x) => x === f.id),
             name: f.name,
             desc: f.desc,
-            price: priceTag(deltaOf(c, f.price * (each ? 1 : n))),
+            price: priceTag(deltaOf(c, f.price), per),
             artwork: html`<i class="cz-swatch cz-swatch--crumb" style="--c:${f.color}"></i>`,
           }),
         )}
@@ -393,9 +422,10 @@ function stepRecheio(c, ui) {
   const each = ui.fillMode === 'each' && gaps > 1;
   const active = each ? Math.min(ui.gap, gaps - 1) : gaps - 1;
   const current = c.fillings[active];
+  const per = !each && gaps > 1 ? 'por camada' : '';
   return html`
     <section class="cz-sec">
-      ${gaps > 1 ? segmented('fillMode', each ? 'each' : 'all', [{ id: 'all', name: 'Mesmo recheio em tudo' }, { id: 'each', name: 'Um recheio por camada' }], 'Como escolher o recheio') : ''}
+      ${gaps > 1 ? segmented('fillMode', each ? 'each' : 'all', [{ id: 'all', name: 'Um só recheio' }, { id: 'each', name: 'Um por camada' }], 'Como escolher o recheio') : ''}
       ${each
         ? html`<div class="cz-stack" role="radiogroup" aria-label="Recheio que você está editando">
             ${c.fillings
@@ -425,7 +455,7 @@ function stepRecheio(c, ui) {
             on: each ? current === f.id : c.fillings.every((x) => x === f.id),
             name: f.name,
             desc: f.desc,
-            price: priceTag(deltaOf(c, f.price * (each ? 1 : gaps))),
+            price: priceTag(deltaOf(c, f.price), per),
             artwork: html`<i class="cz-swatch ${f.gloss > 0.5 ? 'cz-swatch--gloss' : 'cz-swatch--satin'}" style="--c:${f.color}"></i>`,
           }),
         )}
@@ -466,16 +496,16 @@ function stepCobertura(c, ui) {
       <button type="button" class="cz-switch" role="switch" aria-checked="${c.drip.on ? 'true' : 'false'}" data-act="drip" data-k="drip:toggle">
         <span class="cz-switch__knob"></span>
         <span class="cz-opt__body">
-          <span class="cz-opt__name">Calda escorrendo</span>
+          <span class="cz-opt__name">Calda escorrendo <span class="cz-optional">(opcional)</span></span>
           <span class="cz-opt__desc">Aquele efeito de calda descendo pela borda</span>
         </span>
-        <span class="cz-opt__price">+ ${money(deltaOf(c, DRIP_PRICE))}</span>
+        <span class="cz-opt__price"><b>+ ${money(deltaOf(c, DRIP_PRICE))}</b></span>
       </button>
       ${c.drip.on
         ? html`<div class="cz-sub">
             <span class="cz-sub__label">Cor da calda</span>
             ${colorPicker('dripColor', c.drip.color, dripList, 'Cor da calda')}
-            ${dripList.length < COLORS.length ? html`<button type="button" class="cz-linkbtn" data-act="more-drip" style="margin:4px 0 -6px -12px">${icon('palette')} Ver todas as cores</button>` : ''}
+            ${dripList.length < COLORS.length ? html`<button type="button" class="cz-linkbtn cz-linkbtn--inset" data-act="more-drip">${icon('palette')} Ver todas as cores</button>` : ''}
           </div>`
         : ''}
     </section>
@@ -522,10 +552,10 @@ function stepDecoracao(c) {
   return html`
     <section class="cz-sec">
       <div class="cz-sec__head">
-        <h3>Decorações <small>${items.length} de ${MAX_DECORS}</small></h3>
-        ${items.length ? html`<button type="button" class="cz-linkbtn" data-act="clear-decor">Tirar todas</button>` : html`<span class="cz-sec__note">Opcional</span>`}
+        <h3>Decorações <span class="cz-optional">(opcional)</span></h3>
+        ${items.length ? html`<button type="button" class="cz-linkbtn" data-act="clear-decor">Tirar todas</button>` : html`<span class="cz-sec__note">Escolha até ${MAX_DECORS}</span>`}
       </div>
-      <div class="cz-grid cz-grid--2" role="group" aria-label="Decorações do bolo">
+      <div class="cz-grid cz-grid--2" role="group" aria-label="Decorações do bolo: ${items.length} de ${MAX_DECORS} escolhidas">
         ${DECORS.map((d) => {
           const isOn = items.includes(d.id);
           return optCard({
@@ -534,7 +564,7 @@ function stepDecoracao(c) {
             on: isOn,
             name: d.name,
             desc: d.id === 'velas' && isOn ? `${c.decor.candles} ${c.decor.candles === 1 ? 'vela' : 'velas'}` : d.desc,
-            price: html`<span class="cz-opt__price">+ ${money(deltaOf(c, d.price, d.scales))}</span>`,
+            price: html`<span class="cz-opt__price"><b>+ ${money(deltaOf(c, d.price, d.scales))}</b></span>`,
             artwork: html`<span class="cz-opt__art">${DECOR_ART[d.id]}</span>`,
             role: 'checkbox',
             disabled: full && !isOn,
@@ -542,7 +572,7 @@ function stepDecoracao(c) {
         })}
       </div>
       ${items.includes('velas')
-        ? html`<div class="cz-row" style="margin-top:10px">
+        ? html`<div class="cz-row cz-row--gap">
             <div class="cz-row__text"><strong>Quantas velas?</strong><span>De 1 a ${MAX_CANDLES}, coloridas e listradas</span></div>
             ${qtyStepper(c.decor.candles, { min: 1, max: MAX_CANDLES, id: 'candles' })}
           </div>`
@@ -552,10 +582,14 @@ function stepDecoracao(c) {
     <section class="cz-sec">
       <div class="cz-field">
         <div class="cz-field__top">
-          <label for="cz-message">Plaquinha com mensagem <small class="muted">· opcional, + ${money(MESSAGE_PRICE)}</small></label>
-          <span data-count="message">${c.decor.message.length}/${MESSAGE_MAX}</span>
+          <label for="cz-message">Plaquinha com mensagem <span class="cz-optional">(opcional)</span></label>
+          <span class="cz-field__price">+ ${money(MESSAGE_PRICE)}</span>
         </div>
-        <input class="input" id="cz-message" type="text" maxlength="${MESSAGE_MAX}" placeholder="Ex.: Parabéns, Ana!" value="${c.decor.message}" data-field="message" autocomplete="off" enterkeyhint="done" />
+        <input class="input" id="cz-message" type="text" maxlength="${MESSAGE_MAX}" placeholder="Ex.: Parabéns, Ana!" value="${c.decor.message}" data-field="message" autocomplete="off" enterkeyhint="done" aria-describedby="cz-message-count" />
+        <div class="cz-field__foot">
+          <span>A plaquinha aparece no bolo enquanto você escreve.</span>
+          <span id="cz-message-count" data-count="message">${c.decor.message.length}/${MESSAGE_MAX}</span>
+        </div>
         <div class="cz-ideas" aria-label="Sugestões de mensagem">
           ${MESSAGE_IDEAS.map((m) => html`<button type="button" data-act="idea" data-value="${m}">${m}</button>`)}
           <button type="button" class="cz-ideas__clear" data-act="idea" data-value="" data-clear-message ${c.decor.message ? '' : raw('hidden')}>Sem plaquinha</button>
@@ -574,24 +608,47 @@ function billLines(c) {
   `;
 }
 
+/** Nome do bolo no resumo: título com "renomear" ou, durante a edição, o campo de texto. */
+function nameBox(c, renaming) {
+  if (renaming) {
+    return html`<label class="sr-only" for="cz-name">Nome do bolo (opcional)</label>
+      <input class="input cz-offer__input" id="cz-name" type="text" maxlength="40" placeholder="${autoName(c)}" value="${c.name}" data-field="name" autocomplete="off" enterkeyhint="done" />`;
+  }
+  return html`<h2>${displayName(c)}</h2>
+    <button type="button" class="cz-rename" data-act="rename" data-k="rename:toggle">${icon('edit')} renomear</button>`;
+}
+
+/** Linha de pagamento da oferta: "ou R$ 256,69 no Pix · até 6x sem juros". */
+function payLine(total) {
+  const { maxInstallments, minInstallment } = SITE.card;
+  const parcels = Math.max(1, Math.min(maxInstallments, Math.floor(total / minInstallment)));
+  return html`ou <strong>${money(total * (1 - SITE.pix.discountPct / 100))}</strong> no Pix${parcels > 1 ? ` · até ${parcels}x sem juros` : ' · ou no cartão'}`;
+}
+
+/** Etapa final: a revelação. Nome, preço e entrega no alto; os detalhes ficam a um toque. */
 function stepResumo(c, ui) {
-  const lines = summaryOf(c);
+  const parts = partsOf(c);
   const rows = [
-    { step: 'formato', iconName: 'cube', label: 'Formato e tamanho', text: `${getShape(c.shape).name} · ${sizeOf(c).label} (${sizeOf(c).diameter})` },
-    { step: 'massa', iconName: 'layers', label: 'Massa', text: lines[1].replace(/^Massa[^:]*: /, '') },
-    { step: 'recheio', iconName: 'utensils', label: 'Recheio', text: lines[2].replace(/^Recheio[^:]*: /, '') },
-    { step: 'cobertura', iconName: 'palette', label: 'Cobertura', text: lines[3].replace(/^Cobertura: /, '') },
-    { step: 'acabamento', iconName: 'wand', label: 'Acabamento', text: lines[4].replace(/^Acabamento: /, '') },
-    { step: 'decoracao', iconName: 'sparkles', label: 'Decoração', text: [lines[5].replace(/^Decoração: /, ''), c.decor.message ? `plaquinha “${c.decor.message}”` : ''].filter(Boolean).join(' · ') },
+    { step: 'formato', iconName: 'cube', label: 'Formato e tamanho', text: parts.formato },
+    { step: 'massa', iconName: 'layers', label: 'Massa', text: parts.massa },
+    { step: 'recheio', iconName: 'utensils', label: 'Recheio', text: parts.recheio },
+    { step: 'cobertura', iconName: 'palette', label: 'Cobertura', text: parts.cobertura },
+    { step: 'acabamento', iconName: 'wand', label: 'Acabamento', text: parts.acabamento },
+    { step: 'decoracao', iconName: 'sparkles', label: 'Decoração', text: parts.decoracao },
   ];
   const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+  const total = priceOf(c);
   return html`
-    <section class="cz-sec" style="margin-top:14px">
-      <div class="cz-field">
-        <div class="cz-field__top"><label for="cz-name">Dê um nome ao seu bolo <small class="muted">· opcional</small></label></div>
-        <input class="input" id="cz-name" type="text" maxlength="40" placeholder="${autoName(c)}" value="${c.name}" data-field="name" autocomplete="off" enterkeyhint="done" />
-      </div>
-    </section>
+    <header class="cz-offer">
+      ${ui.editing
+        ? html`<span class="badge badge--gold">${icon('edit')} Editando o bolo do carrinho</span>`
+        : html`<span class="eyebrow">${icon('sparkles')} Seu bolo está pronto</span>`}
+      <div class="cz-offer__name" data-cz-namebox>${nameBox(c, ui.renaming)}</div>
+      <div class="cz-offer__price"><strong data-cz-price>${money(total)}</strong></div>
+      <p class="cz-offer__pay" data-cz-pay>${payLine(total)}</p>
+      <p class="cz-offer__ship">${icon('calendar')}<span>Rende ${sizeOf(c).serves} · receba a partir de <strong>${firstDate(c)}</strong></span></p>
+      <p class="cz-offer__sub">Confira e peça: a gente começa a fazer assim que você fechar o pedido.</p>
+    </header>
 
     <div class="cz-sum">
       ${rows.map(
@@ -603,33 +660,24 @@ function stepResumo(c, ui) {
       )}
     </div>
 
-    <div class="cz-facts">
-      <div class="cz-fact">${icon('users')}<div><small>Rende</small><strong>${sizeOf(c).serves}</strong></div></div>
-      <div class="cz-fact">${icon('clock')}<div><small>Fica pronto em</small><strong>${prepLabelOf(c)}</strong></div></div>
-    </div>
-
-    <div class="cz-bill">
-      <h3>Como chegamos ao valor</h3>
-      ${billLines(c)}
-    </div>
-
-    <div class="cz-final">
-      <button type="button" class="btn btn--dark btn--block" data-act="buy">${icon('credit-card')} Comprar agora</button>
-      <div class="cz-final__more">
-        <button type="button" class="cz-chipbtn" data-act="save" aria-pressed="${ui.savedId ? 'true' : 'false'}" data-k="save:toggle">${icon('heart')} ${ui.savedId ? 'Salvo' : 'Salvar'}</button>
-        <button type="button" class="cz-chipbtn" data-act="share">${icon('share')} Enviar</button>
-        <button type="button" class="cz-chipbtn" data-act="download">${icon('download')} Baixar</button>
+    <div class="cz-after">
+      <button type="button" class="cz-linkbtn cz-linkbtn--solid" data-act="breakdown">${icon('receipt')} Ver detalhes do preço</button>
+      <div class="cz-quiet" role="group" aria-label="Guardar ou mostrar este bolo">
+        <button type="button" class="cz-quiet__btn" data-act="save" aria-pressed="${ui.savedId ? 'true' : 'false'}" data-k="save:toggle" aria-label="${ui.savedId ? 'Tirar dos favoritos' : 'Salvar nos favoritos'}" title="${ui.savedId ? 'Salvo nos favoritos' : 'Salvar nos favoritos'}">${icon('heart')}<span>${ui.savedId ? 'Salvo' : 'Salvar'}</span></button>
+        <button type="button" class="cz-quiet__btn" data-act="share" aria-label="Enviar a foto do bolo" title="Enviar a foto do bolo">${icon('share')}<span>Enviar</span></button>
+        <button type="button" class="cz-quiet__btn" data-act="download" aria-label="Baixar a foto do bolo" title="Baixar a foto do bolo">${icon('download')}<span>Baixar</span></button>
       </div>
     </div>
-    <p class="cz-trust">${icon('shield-check')}<span>Garantia BOLAB: se o seu bolo não chegar perfeito, a gente refaz ou devolve o dinheiro. Você escolhe o dia e o horário da entrega na finalização.</span></p>
+    <p class="cz-trust">${icon('shield-check')}<span>Garantia BOLAB: se o seu bolo não chegar perfeito, a gente refaz ou devolve o dinheiro. O dia e o horário da entrega você escolhe ao fechar o pedido.</span></p>
   `;
 }
 
 function renderStep(i, c, ui) {
   const id = STEPS[i].id;
-  const body =
-    id === 'formato' ? stepFormato(c) : id === 'massa' ? stepMassa(c, ui) : id === 'recheio' ? stepRecheio(c, ui) : id === 'cobertura' ? stepCobertura(c, ui) : id === 'acabamento' ? stepAcabamento(c) : id === 'decoracao' ? stepDecoracao(c) : stepResumo(c, ui);
-  return html`${stepHead(i)}${tipBox(id, c)}${body}`;
+  if (id === 'resumo') return stepResumo(c, ui);
+  if (id === 'formato') return html`${stepHead(i)}${stepFormato(c, ui)}`;
+  const body = id === 'massa' ? stepMassa(c, ui) : id === 'recheio' ? stepRecheio(c, ui) : id === 'cobertura' ? stepCobertura(c, ui) : id === 'acabamento' ? stepAcabamento(c) : stepDecoracao(c);
+  return html`${stepHead(i)}${tipBox(id, c, ui.tipOpen)}${body}`;
 }
 
 function stepChips(current, c, visited) {
@@ -656,15 +704,15 @@ export default {
 
   render() {
     return html`
-      <div class="cz" data-cz>
+      <div class="cz" data-cz data-step="formato">
         <section class="cz-stage" aria-label="Seu bolo em 3D">
           <header class="cz-top">
             <button type="button" class="cz-round" data-back="/" aria-label="Voltar para a loja">${icon('arrow-left')}</button>
-            <a class="cz-brand" href="#/" aria-label="BOLAB — página inicial">
-              <img src="assets/logo-mark.webp" alt="BOLAB" width="28" height="43" />
-              <span class="cz-brand__text"><strong>Monte seu bolo</strong><span data-cz-name></span></span>
-            </a>
-            <button type="button" class="cz-round cz-round--surface" data-act="restart" aria-label="Recomeçar do zero" title="Recomeçar">${icon('undo')}</button>
+            <div class="cz-brand">
+              <a class="cz-brand__mark" href="#/" aria-label="BOLAB — página inicial"><img src="assets/logo-mark.webp" alt="" width="28" height="43" /></a>
+              <div class="cz-brand__text"><h1>Monte seu bolo</h1><span data-cz-name></span></div>
+            </div>
+            <button type="button" class="cz-restart" data-act="restart" aria-label="Recomeçar do zero" title="Recomeçar do zero">${icon('refresh')}<span>Recomeçar</span></button>
             <button type="button" class="cz-price" data-act="breakdown" aria-label="Ver detalhes do preço">
               <small>Total</small><strong data-cz-price></strong><span class="cz-price__more">${icon('chevron-down')}</span>
             </button>
@@ -681,7 +729,7 @@ export default {
           <div class="cz-hint" data-cz-hint>${ICON.swipe} Arraste para girar</div>
           <div class="cz-meta" data-cz-meta></div>
           <div class="cz-tools" data-cz-tools>
-            <button type="button" class="cz-tool cz-tool--label" data-act="cutaway" aria-pressed="false">${ICON.slice}<span>Ver por dentro</span></button>
+            <button type="button" class="cz-tool cz-tool--label" data-act="cutaway" aria-pressed="false" aria-label="Ver por dentro" title="Ver por dentro">${ICON.slice}<span>Ver por dentro</span></button>
             <button type="button" class="cz-tool cz-tool--icon" data-act="rotate" aria-pressed="false" aria-label="Giro automático" title="Giro automático">${ICON.spin}</button>
             <button type="button" class="cz-tool" data-act="reset" aria-label="Centralizar o bolo" title="Centralizar">${icon('expand')}</button>
           </div>
@@ -715,6 +763,7 @@ export default {
       live: $('[data-cz-live]'),
     };
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const desktop = window.matchMedia('(min-width: 900px)');
     const timers = new Set();
     const later = (fn, ms) => {
       const t = setTimeout(() => {
@@ -729,8 +778,9 @@ export default {
     /* ── estado ── */
     let config = defaultConfig();
     let step = 0;
+    let editLineId = null; // editando um bolo que já está no carrinho (?linha=<id>)
     const visited = new Set([0]);
-    const ui = { flavorMode: 'all', fillMode: 'all', layer: 0, gap: 0, moreDrip: false, colorChosen: false, savedId: null, savedKey: '' };
+    const ui = { flavorMode: 'all', fillMode: 'all', layer: 0, gap: 0, moreDrip: false, colorChosen: false, tipOpen: false, renaming: false, editing: false, celebrated: false, savedId: null, savedKey: '' };
     let cake = null;
     let cutaway = false;
     let autoCut = true; // enquanto a pessoa não mexer no botão, o corte abre sozinho nas etapas de massa e recheio
@@ -739,6 +789,7 @@ export default {
     let priceAnim = 0;
 
     const configKey = () => JSON.stringify(config);
+    const clone = (o) => JSON.parse(JSON.stringify(o));
 
     function syncModes() {
       ui.flavorMode = config.layers.every((x) => x === config.layers[0]) ? 'all' : 'each';
@@ -748,8 +799,25 @@ export default {
       ui.colorChosen = config.covering.color !== getCovering(config.covering.type).defaultColor;
     }
 
-    /** Ponto de partida: bolo salvo (?bolo=), produto do cardápio (?base=) ou o rascunho guardado. */
+    /**
+     * Ponto de partida: bolo do carrinho (?linha=), bolo salvo (?bolo=), produto do cardápio (?base=)
+     * ou o rascunho guardado.
+     */
     function loadInitial(query) {
+      editLineId = null;
+      ui.editing = false;
+      if (query.linha) {
+        const line = cart.line(query.linha);
+        if (line?.kind === 'custom' && line.config) {
+          config = normalizeConfig(line.config);
+          if (!config.name && line.name && line.name !== autoName(config)) config.name = String(line.name).slice(0, 40);
+          editLineId = line.lineId;
+          ui.editing = true;
+          step = STEP_INDEX.resumo;
+          return 'line';
+        }
+        toast('Esse bolo não está mais no carrinho. Que tal montar um novo?');
+      }
       if (query.bolo) {
         const saved = savedCakes.get(query.bolo);
         if (saved?.config) {
@@ -759,7 +827,7 @@ export default {
           step = STEP_INDEX.resumo;
           return 'saved';
         }
-        toast('Não encontramos esse bolo salvo. Que tal criar um novo?', { type: 'info' });
+        toast('Não encontramos esse bolo salvo. Que tal criar um novo?');
       }
       if (query.base) {
         const preset = presetForProduct(query.base);
@@ -782,15 +850,21 @@ export default {
     syncModes();
     for (let i = 0; i <= step; i++) visited.add(i);
 
-    const saveDraft = debounce(() => {
+    /** Guarda o rascunho — menos quando a pessoa está editando um bolo do carrinho. */
+    function storeDraft() {
+      if (editLineId) return;
       prefs.set('customizerDraft', config);
-      prefs.set('customizerStep', step);
-    }, 350);
+      prefs.set('customizerStep', Math.max(0, step));
+    }
+    const saveDraft = debounce(() => alive && storeDraft(), 350);
 
     /* ── 3D ── */
+    /** Espaço que os botões flutuantes ocupam no palco e quanto do resto o bolo pode preencher. */
+    const stageInsets = () => (desktop.matches ? { top: 4, bottom: 84, fill: 0.78 } : { top: 14, bottom: 58, fill: 0.9 });
+
     function makeThumb(size = 360) {
       try {
-        const url = cake?.snapshot({ size, quality: 0.8 });
+        const url = cake?.snapshot({ size, quality: 0.8, fill: 0.86 });
         if (url && url.length > 200) return url;
       } catch (err) {
         console.error('[personalizador] falha ao fotografar o bolo', err);
@@ -813,15 +887,18 @@ export default {
       if (cake) cake.setConfig(config);
       else drawCake2D(el.fallback.querySelector('canvas'), config, { background: false });
     }
-    const sceneUpdateSoon = debounce(sceneUpdate, 220);
+    const sceneUpdateSoon = debounce(() => alive && sceneUpdate(), 220);
 
     function setCutaway(on, manual) {
       cutaway = on;
       if (manual) autoCut = false;
       cake?.setCutaway(on);
       const btn = el.tools.querySelector('[data-act="cutaway"]');
+      const label = on ? 'Fechar o bolo' : 'Ver por dentro';
       btn.setAttribute('aria-pressed', String(on));
-      btn.querySelector('span').textContent = on ? 'Fechar o bolo' : 'Ver por dentro';
+      btn.setAttribute('aria-label', label); // no celular estreito o texto some: o nome continua existindo
+      btn.title = label;
+      btn.querySelector('span').textContent = label;
     }
 
     function setRotating(on, remember) {
@@ -848,7 +925,7 @@ export default {
       PRESETS.forEach((p) => {
         if (presetThumbs.has(p.id)) return;
         try {
-          const url = cake ? cake.thumbOf(p.config, { size: 200, quality: 0.78 }) : thumb2D(p.config, 200);
+          const url = cake ? cake.thumbOf(p.config, { size: 200, quality: 0.78, fill: 0.88 }) : thumb2D(p.config, 200);
           if (url) presetThumbs.set(p.id, url);
         } catch (err) {
           console.error('[personalizador] miniatura da inspiração', p.id, err);
@@ -860,6 +937,7 @@ export default {
     function startScene() {
       try {
         cake = createCakeScene(el.canvas, {
+          insets: stageInsets,
           onInteract: hideHint,
           onContextLost: () => (el.lost.hidden = false),
           onContextRestored: () => {
@@ -927,6 +1005,11 @@ export default {
       if (focusKey) el.body.querySelector(`[data-k="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
     }
 
+    function renderNameBox() {
+      const box = root.querySelector('[data-cz-namebox]');
+      if (box) box.innerHTML = String(nameBox(config, ui.renaming));
+    }
+
     function renderFoot() {
       const last = step === STEPS.length - 1;
       el.foot.innerHTML = String(html`
@@ -935,17 +1018,14 @@ export default {
           <small>Total ${icon('chevron-up')}</small><strong data-cz-price>${money(shownPrice ?? priceOf(config))}</strong>
         </button>
         ${last
-          ? html`<button type="button" class="btn cz-next" data-act="add">${icon('bag')} Adicionar ao carrinho</button>`
+          ? html`<button type="button" class="btn cz-next" data-act="add">${icon(editLineId ? 'check' : 'bag')} ${editLineId ? 'Salvar alterações' : 'Adicionar ao carrinho'}</button>`
           : html`<button type="button" class="btn cz-next" data-act="next">${step === STEPS.length - 2 ? 'Ver resumo' : 'Continuar'} ${icon('arrow-right')}</button>`}
       `);
-      // no celular, o botão final é largo: o "voltar" sai (as etapas no topo continuam clicáveis)
-      const prev = el.foot.querySelector('[data-last]');
-      if (prev && window.matchMedia('(max-width: 899px)').matches) prev.hidden = true;
     }
 
     function renderMeta() {
-      el.meta.innerHTML = String(html`<span>${icon('users')} ${sizeOf(config).serves}</span><span>${icon('clock')} Pronto em ${prepLabelOf(config)}</span>`);
-      el.name.textContent = displayName(config);
+      el.meta.innerHTML = String(html`<span>${icon('users')} ${sizeOf(config).serves}</span><span>${icon('calendar')} Receba a partir de ${firstDate(config)}</span>`);
+      el.name.textContent = editLineId ? 'Editando o bolo do carrinho' : displayName(config);
     }
 
     function setPriceText(value) {
@@ -990,8 +1070,22 @@ export default {
       if (rerender) {
         renderBody({ still: true });
         renderSteps();
+        // o painel refeito nasce com o preço final; o número animado segue por cima
+        if (shownPrice !== null) setPriceText(shownPrice);
       }
       saveDraft();
+    }
+
+    /** A revelação do resumo: bolo fechado, uma volta completa e (uma única vez) confete. */
+    function reveal() {
+      if (cutaway) setCutaway(false, false);
+      if (!cake) return;
+      cake.playIntro();
+      cake.spin();
+      if (!ui.celebrated && !editLineId) {
+        ui.celebrated = true;
+        later(() => alive && STEPS[step]?.id === 'resumo' && confetti({ count: 80 }), 500);
+      }
     }
 
     function goto(i, { focus = true } = {}) {
@@ -999,19 +1093,30 @@ export default {
       if (next === step) return;
       step = next;
       visited.add(step);
+      ui.tipOpen = false;
+      ui.renaming = false;
+      const id = STEPS[step].id;
+      el.cz.dataset.step = id;
       renderSteps();
       renderBody();
       renderFoot();
       if (focus) el.body.focus({ preventScroll: true });
+      cake?.focusPlaque(false);
       cake?.setView(viewFor(step));
-      if (autoCut) {
-        const want = AUTO_CUT_STEPS.has(STEPS[step].id);
+      if (id === 'resumo') reveal();
+      else if (autoCut) {
+        const want = AUTO_CUT_STEPS.has(id);
         if (want !== cutaway) setCutaway(want, false);
       }
       saveDraft();
     }
 
-    function replaceConfig(next, { keepSize = false, message = '' } = {}) {
+    /**
+     * Troca o bolo inteiro (inspiração, surpresa, recomeço). Com `undo`, o aviso leva um "Desfazer"
+     * que devolve o bolo anterior.
+     */
+    function replaceConfig(next, { keepSize = false, message = '', undo = false } = {}) {
+      const before = undo ? { config: clone(config), savedId: ui.savedId, savedKey: ui.savedKey } : null;
       const size = config.size;
       config = normalizeConfig(next);
       if (keepSize) config.size = size;
@@ -1019,7 +1124,25 @@ export default {
       syncModes();
       commit();
       renderFoot();
-      if (message) toast(message, { type: 'success' });
+      if (!message) return;
+      toast(message, {
+        type: 'success',
+        duration: before ? 7000 : 3200,
+        action: before
+          ? {
+              label: 'Desfazer',
+              onClick: () => {
+                if (!alive) return;
+                config = normalizeConfig(before.config);
+                ui.savedId = before.savedId;
+                ui.savedKey = before.savedKey;
+                syncModes();
+                commit();
+                renderFoot();
+              },
+            }
+          : undefined,
+      });
     }
 
     /* ── ações finais ── */
@@ -1028,26 +1151,32 @@ export default {
         name: displayName(config),
         price: priceOf(config),
         thumb: makeThumb(360),
-        config: JSON.parse(JSON.stringify(config)),
+        config: clone(config),
         summary: summaryOf(config),
       };
     }
 
-    function addToCart(buyNow) {
+    function addToCart() {
       const p = cakePayload();
-      cart.addCustom({ ...p, serves: servesOf(config), prepHours: prepHoursOf(config) });
-      if (buyNow) {
+      const extra = { serves: servesOf(config), prepHours: prepHoursOf(config) };
+      if (editLineId) {
+        // editando um bolo do carrinho: atualiza a mesma linha e volta para lá
+        const updated = cart.replaceCustom(editLineId, { ...p, ...extra });
+        if (!updated) cart.addCustom({ ...p, ...extra });
         navigate('/carrinho');
+        toast(updated ? 'Bolo atualizado no carrinho' : 'Seu bolo foi para o carrinho', { type: 'success' });
         return;
       }
-      toast(`${p.name} foi para o carrinho`, { type: 'success' });
+      cart.addCustom({ ...p, ...extra });
+      el.live.textContent = `${p.name} foi para o carrinho`;
       const dlg = openDialog({
         title: 'Está no carrinho!',
         body: html`<div class="cz-added">
           <img src="${p.thumb}" alt="Seu bolo personalizado" width="104" height="104" />
           <div>
             <h3>${p.name}</h3>
-            <p>${servesOf(config)} · pronto em ${prepLabelOf(config)}</p>
+            <p>${servesOf(config)}</p>
+            <p>Receba a partir de ${firstDate(config)}</p>
             <div class="price">${money(p.price)}</div>
           </div>
         </div>`,
@@ -1069,7 +1198,7 @@ export default {
         ui.savedId = null;
         toast('Removido dos seus favoritos');
       } else {
-        const item = savedCakes.add(cakePayload());
+        const item = savedCakes.add({ ...cakePayload(), serves: servesOf(config), prepHours: prepHoursOf(config) });
         ui.savedId = item.id;
         ui.savedKey = configKey();
         toast('Bolo salvo nos seus favoritos', { type: 'success', action: { label: 'Ver', href: '#/favoritos' } });
@@ -1092,7 +1221,7 @@ export default {
       const H = 1350;
       let shot = null;
       try {
-        shot = cake?.snapshotCanvas({ width: W, height: H, scale: 1.5 });
+        shot = cake?.snapshotCanvas({ width: W, height: H, scale: 1.5, fill: 0.7 });
       } catch (err) {
         console.error('[personalizador] falha ao gerar a foto', err);
       }
@@ -1165,6 +1294,7 @@ export default {
         const what = ev.target.closest('[data-do]')?.dataset.do;
         if (what === 'download') {
           download(canvas);
+          dlg.close();
           toast('Foto do bolo baixada', { type: 'success' });
         }
         if (what === 'share') {
@@ -1203,7 +1333,7 @@ export default {
     function showBreakdown() {
       openDialog({
         title: 'Detalhes do preço',
-        body: html`<div class="cz-bill" style="margin-top:0">${billLines(config)}</div>
+        body: html`<div class="cz-bill">${billLines(config)}</div>
           <p class="cz-trust">${icon('info')}<span>Os valores acompanham o tamanho ${sizeOf(config).label}. Velas, topo de festa e plaquinha têm preço fixo.</span></p>`,
         footer: html`<button type="button" class="btn btn--block" data-dialog-close>Entendi</button>`,
       });
@@ -1277,6 +1407,13 @@ export default {
       return true;
     }
 
+    /** Mostra a plaquinha de frente por um instante (ao escolher uma mensagem pronta). */
+    function peekPlaque() {
+      if (!cake || !config.decor.message) return;
+      cake.focusPlaque(true);
+      later(() => alive && !root.querySelector('[data-field="message"]:focus') && cake?.focusPlaque(false), 2600);
+    }
+
     const actions = {
       next() {
         let to = step + 1;
@@ -1297,13 +1434,19 @@ export default {
       cutaway: () => setCutaway(!cutaway, true),
       rotate: () => setRotating(!rotating, true),
       reset: () => cake?.resetView(),
+      tip(_v, btn) {
+        ui.tipOpen = !ui.tipOpen;
+        const box = btn.closest('.cz-tip');
+        box.classList.toggle('is-open', ui.tipOpen);
+        btn.setAttribute('aria-expanded', String(ui.tipOpen));
+      },
       surprise() {
-        replaceConfig(randomConfig(config), { keepSize: true });
+        replaceConfig(randomConfig(config), { keepSize: true, undo: true, message: 'Bolo surpresa montado. Gostou?' });
         el.live.textContent = `Bolo surpresa: ${summaryOf(config).join('. ')}`;
       },
       preset(v) {
         const p = getPreset(v);
-        if (p) replaceConfig(p.config, { keepSize: true, message: `Inspiração “${p.name}” aplicada. Agora deixe do seu jeito!` });
+        if (p) replaceConfig(p.config, { keepSize: true, undo: true, message: `Inspiração “${p.name}” aplicada. Agora deixe do seu jeito!` });
       },
       'add-layer'() {
         setLayers(2);
@@ -1327,9 +1470,16 @@ export default {
       idea(v) {
         config.decor.message = cleanMessage(v);
         commit();
+        peekPlaque();
       },
-      add: () => addToCart(false),
-      buy: () => addToCart(true),
+      rename() {
+        ui.renaming = true;
+        renderNameBox();
+        const input = root.querySelector('#cz-name');
+        input?.focus();
+        input?.select();
+      },
+      add: addToCart,
       save: toggleSave,
       share: () => shareCake(false),
       download: () => shareCake(true),
@@ -1344,7 +1494,7 @@ export default {
 
     on(root, 'click', '[data-act]', (_ev, btn) => {
       const fn = actions[btn.dataset.act];
-      if (fn) fn(btn.dataset.value);
+      if (fn) fn(btn.dataset.value, btn);
     });
 
     root.addEventListener('qty', (ev) => {
@@ -1355,9 +1505,22 @@ export default {
       commit();
     });
 
+    /** O campo mostra exatamente o que será guardado (sem "<", ">" nem espaços repetidos). */
+    function writeBack(input, clean) {
+      const caret = clean(input.value.slice(0, input.selectionStart ?? input.value.length)).length;
+      input.value = clean(input.value);
+      try {
+        input.setSelectionRange(caret, caret);
+      } catch {
+        // alguns teclados não deixam mover o cursor: tudo bem
+      }
+    }
+    const cleanName = (v) => String(v).replace(/[<>]/g, '').replace(/^\s+/, '').slice(0, 40);
+
     on(root, 'input', '[data-field]', (_ev, input) => {
       if (input.dataset.field === 'message') {
         const had = Boolean(config.decor.message);
+        if (input.value !== cleanMessage(input.value)) writeBack(input, cleanMessage);
         config.decor.message = cleanMessage(input.value);
         const count = root.querySelector('[data-count="message"]');
         if (count) count.textContent = `${config.decor.message.length}/${MESSAGE_MAX}`;
@@ -1365,7 +1528,8 @@ export default {
         if (clear) clear.hidden = !config.decor.message;
         commit({ rerender: false, scene: had === Boolean(config.decor.message) ? 'soon' : 'now' });
       } else if (input.dataset.field === 'name') {
-        config.name = input.value.replace(/[<>]/g, '').slice(0, 40);
+        if (input.value !== cleanName(input.value)) writeBack(input, cleanName);
+        config.name = cleanName(input.value);
         commit({ rerender: false, scene: 'none' });
       }
     });
@@ -1374,12 +1538,60 @@ export default {
       if (ev.key === 'Enter') input.blur();
     });
 
+    /* ── digitando: a câmera encara a plaquinha e a tela se ajusta ao teclado do celular ── */
+    const vv = window.visualViewport;
+    function syncKeyboard() {
+      const typing = Boolean(root.querySelector('[data-field]:focus'));
+      const open = typing && vv && vv.scale < 1.05 && window.innerHeight - vv.height > 140;
+      el.cz.classList.toggle('is-typing', Boolean(open));
+      if (open) {
+        el.cz.style.setProperty('--cz-vh', `${Math.round(vv.height)}px`);
+        el.cz.style.setProperty('--cz-vtop', `${Math.round(vv.offsetTop)}px`);
+        root.querySelector('[data-field]:focus')?.scrollIntoView({ block: 'nearest' });
+      } else {
+        el.cz.style.removeProperty('--cz-vh');
+        el.cz.style.removeProperty('--cz-vtop');
+      }
+    }
+    vv?.addEventListener('resize', syncKeyboard);
+    vv?.addEventListener('scroll', syncKeyboard);
+
+    on(root, 'focusin', '[data-field]', (_ev, input) => {
+      if (input.dataset.field === 'message') cake?.focusPlaque(true);
+      syncKeyboard();
+    });
+
+    on(root, 'focusout', '[data-field]', (_ev, input) => {
+      const field = input.dataset.field;
+      later(() => {
+        if (!alive) return;
+        if (field === 'message' && !root.querySelector('[data-field="message"]:focus')) {
+          cake?.focusPlaque(false);
+          // espaço sobrando no fim não vira parte da mensagem
+          if (config.decor.message !== config.decor.message.trim()) {
+            config.decor.message = config.decor.message.trim();
+            const box = root.querySelector('[data-field="message"]');
+            if (box) box.value = config.decor.message;
+            const count = root.querySelector('[data-count="message"]');
+            if (count) count.textContent = `${config.decor.message.length}/${MESSAGE_MAX}`;
+            commit({ rerender: false });
+          }
+        }
+        if (field === 'name' && ui.renaming && !root.querySelector('[data-field="name"]:focus')) {
+          ui.renaming = false;
+          renderNameBox();
+        }
+        syncKeyboard();
+      }, 60);
+    });
+
     // ganchos de teste: só existem com ?czdebug no endereço (antes do #)
     if (new URLSearchParams(location.search).has('czdebug')) {
       window.__cz = { cake: () => cake, config: () => config, set: (next) => replaceConfig(next), goto };
     }
 
     /* ── primeira pintura ── */
+    el.cz.dataset.step = STEPS[step].id;
     renderSteps();
     renderBody();
     renderFoot();
@@ -1391,33 +1603,33 @@ export default {
     if (origin === 'base') toast('Partimos de um bolo do cardápio. Mude o que quiser!', { type: 'success' });
     if (origin === 'draft' && step > 0) toast('Continuando de onde você parou');
 
-    // entrada por ?bolo= ou ?base=: depois de aplicar, tira o parâmetro do endereço (recarregar mantém o rascunho)
-    if (origin === 'saved' || origin === 'base' || ctx.query?.bolo || ctx.query?.base) {
-      saveDraft();
+    // entrada por ?bolo= ou ?base=: depois de aplicar, tira o parâmetro do endereço (recarregar mantém o rascunho).
+    // ?linha= fica: recarregar continua editando o bolo do carrinho.
+    const q = ctx.query || {};
+    if (origin !== 'line' && (q.bolo || q.base || q.linha)) {
+      storeDraft();
       later(() => alive && navigate('/monte-seu-bolo', { replace: true }), 0);
     }
 
     root.__czLoad = (query) => {
-      // outro bolo pedido com a tela já aberta (ex.: link de favorito)
-      if (!query?.bolo && !query?.base) return;
-      const before = configKey();
+      // outro bolo pedido com a tela já aberta (ex.: link de favorito ou "Editar bolo" do carrinho)
+      if (!query?.bolo && !query?.base && !query?.linha) return;
+      if (query.linha && query.linha === editLineId) return;
       const res = loadInitial(query);
-      if (res === 'saved' || res === 'base') {
-        syncModes();
-        commit({ rerender: false });
-        const to = step;
-        step = -1;
-        goto(to);
-        cake?.resetView();
-      } else if (before !== configKey()) commit();
-      later(() => alive && navigate('/monte-seu-bolo', { replace: true }), 0);
+      syncModes();
+      commit({ rerender: false });
+      const to = res === 'base' ? 0 : step;
+      step = -1;
+      goto(to);
+      cake?.resetView();
+      if (res !== 'line') later(() => alive && navigate('/monte-seu-bolo', { replace: true }), 0);
     };
 
     return () => {
       alive = false;
-      saveDraft();
-      prefs.set('customizerDraft', config);
-      prefs.set('customizerStep', Math.max(0, step));
+      storeDraft();
+      vv?.removeEventListener('resize', syncKeyboard);
+      vv?.removeEventListener('scroll', syncKeyboard);
       timers.forEach(clearTimeout);
       cancelAnimationFrame(priceAnim);
       try {

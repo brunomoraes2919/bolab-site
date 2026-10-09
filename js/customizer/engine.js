@@ -26,6 +26,12 @@ const VIEW = {
   top: { az: 26 * DEG, polar: 52 * DEG },
   inside: { az: 34 * DEG, polar: 63 * DEG },
 };
+// O coração só se lê como coração visto mais de cima e com a ponta voltada para a câmera.
+const HEART_VIEW = {
+  default: { az: 0, polar: 37 * DEG },
+  top: { az: 0, polar: 31 * DEG },
+  inside: { az: 30 * DEG, polar: 50 * DEG },
+};
 
 const easeOut = (t) => 1 - (1 - t) ** 3;
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
@@ -60,13 +66,13 @@ const COVERING_LOOK = {
   buttercream: { roughness: 0.56, clearcoat: 0.05, clearcoatRoughness: 0.5, sheen: 0.45, normal: 'streak', normalScale: 0.26, topNormal: 'swirl', topScale: 0.3, env: 0.95 },
   chantilly: { roughness: 0.82, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.8, normal: 'soft', normalScale: 0.5, topNormal: 'soft', topScale: 0.5, env: 1 },
   ganache: { roughness: 0.2, clearcoat: 0.75, clearcoatRoughness: 0.14, sheen: 0, normal: 'soft', normalScale: 0.07, topNormal: 'soft', topScale: 0.07, env: 1.15 },
-  glace: { roughness: 0.07, clearcoat: 1, clearcoatRoughness: 0.03, sheen: 0, normal: null, normalScale: 0, topNormal: null, topScale: 0, env: 1.3 },
+  glace: { roughness: 0.1, clearcoat: 1, clearcoatRoughness: 0.05, sheen: 0, normal: 'soft', normalScale: 0.045, topNormal: 'soft', topScale: 0.045, env: 1.2 },
   chocolate: { roughness: 0.4, clearcoat: 0.28, clearcoatRoughness: 0.32, sheen: 0, normal: 'streak', normalScale: 0.5, topNormal: 'swirl', topScale: 0.5, env: 1 },
   mousse: { roughness: 0.76, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.5, normal: 'pore', normalScale: 0.45, topNormal: 'pore', topScale: 0.45, env: 0.95 },
   naked: { roughness: 0.74, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.6, normal: 'soft', normalScale: 0.45, topNormal: 'swirl', topScale: 0.35, env: 1 },
 };
 
-export function createCakeScene(canvas, { onContextLost, onContextRestored, onInteract } = {}) {
+export function createCakeScene(canvas, { onContextLost, onContextRestored, onInteract, insets } = {}) {
   if (!isWebGLAvailable()) throw new Error('WebGL indisponível');
 
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -211,6 +217,8 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   let viewName = 'default';
   let fitDist = 6;
   let flying = null;
+  let focus = false; // câmera parada na plaquinha enquanto a pessoa digita a mensagem
+  let holdUntil = 0; // giro automático em pausa até este instante
   let swayT = 0;
   let swayBase = VIEW.inside.az;
   let running = false;
@@ -335,9 +343,11 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       });
       m.fillY.forEach((_, i) => bodyGroup.add(mesh(buildFillingBand(m, i), bandMat(i))));
       bodyGroup.add(mesh(buildTopCream(m), [frostSide, frostTop]));
-      const coat = mesh(buildScrapeCoat(m), scrapeMat, { cast: false });
-      coat.renderOrder = 2;
-      bodyGroup.add(coat);
+      m.layerY.forEach((_, i) => {
+        const coat = mesh(buildScrapeCoat(m, i), scrapeMat, { cast: false });
+        coat.renderOrder = 2;
+        bodyGroup.add(coat);
+      });
     }
   }
 
@@ -466,19 +476,88 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     camera.lookAt(controls.target);
   }
 
-  /** Distância e alvo para o bolo inteiro (com boleira e decoração) caber na tela. */
-  function computeFit(aspect, polar) {
-    const top = m.Ht + decorHeight(config) + 0.06;
-    const bottom = stand.floorY;
-    const halfH = (top - bottom) / 2;
-    const halfW = stand.plateRadius + 0.04;
-    const elev = Math.PI / 2 - polar;
+  const anglesOf = (name) => (m?.shape === 'heart' ? HEART_VIEW : VIEW)[name] || VIEW.default;
+
+  /** Margens do palco em frações da altura e quanto do espaço útil o bolo pode ocupar. */
+  function insetsNow() {
+    const i = insets?.() || {};
+    return { top: (i.top || 0) / size.h, bottom: (i.bottom || 0) / size.h, fill: i.fill || 0.78 };
+  }
+
+  const fitCam = new THREE.PerspectiveCamera(30, 1, 0.1, 60);
+  const fitSph = new THREE.Spherical();
+  const fitV = new THREE.Vector3();
+
+  /** Pontos que precisam caber no quadro: prato, pé, borda do topo e o alto da decoração. */
+  function fitPoints() {
+    const pts = [];
+    const ring = (r, y, cz = 0, n = 14) => {
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * TAU;
+        pts.push(Math.cos(a) * r, y, cz + Math.sin(a) * r);
+      }
+    };
+    ring(stand.plateRadius, -0.02);
+    ring(stand.plateRadius * 0.5, stand.floorY);
+    ring(m.bounds.maxR, m.Ht + (layout.pipeTop ? 0.1 : 0.01));
+    ring(Math.min(0.6, m.rMin * 0.7), m.Ht + decorHeight(config), m.center.z, 8);
+    return pts;
+  }
+
+  /**
+   * Distância e alvo para o bolo inteiro (boleira e decoração incluídas) caber no quadro.
+   * Projeta os pontos de verdade, em vez de estimar: o bolo ocupa a fração "fill" do espaço útil,
+   * já descontadas as margens de cima e de baixo (botões que flutuam sobre o palco).
+   */
+  function computeFit(aspect, angles, { top = 0, bottom = 0, fill = 0.78 } = {}) {
+    const pts = fitPoints();
+    fitCam.fov = camera.fov;
+    fitCam.aspect = aspect;
+    fitCam.updateProjectionMatrix();
     const tanV = Math.tan((camera.fov * DEG) / 2);
-    const needV = (halfH * Math.cos(elev) + halfW * Math.sin(elev)) / tanV;
-    const needH = halfW / (tanV * aspect);
+    const elev = Math.PI / 2 - angles.polar;
+    const lo = -1 + 2 * bottom;
+    const hi = 1 - 2 * top;
+    const midY = (lo + hi) / 2;
+    const halfY = ((hi - lo) / 2) * fill;
+    const tz = m.center.z * 0.5;
+    let ty = (m.Ht + decorHeight(config) + stand.floorY) / 2;
+    const measure = (dist) => {
+      fitSph.set(dist, angles.polar, angles.az || 0);
+      fitCam.position.setFromSpherical(fitSph);
+      fitCam.position.y += ty;
+      fitCam.position.z += tz;
+      fitCam.lookAt(0, ty, tz);
+      fitCam.updateMatrixWorld();
+      let minY = Infinity;
+      let maxY = -Infinity;
+      let maxX = 0;
+      for (let i = 0; i < pts.length; i += 3) {
+        fitV.set(pts[i], pts[i + 1], pts[i + 2]).project(fitCam);
+        minY = Math.min(minY, fitV.y);
+        maxY = Math.max(maxY, fitV.y);
+        maxX = Math.max(maxX, Math.abs(fitV.x));
+      }
+      return { minY, maxY, maxX };
+    };
+    let dist = 6;
+    for (let pass = 0; pass < 3; pass++) {
+      let near = 1.2;
+      let far = 40;
+      for (let i = 0; i < 20; i++) {
+        const mid = (near + far) / 2;
+        const e = measure(mid);
+        if ((e.maxY - e.minY) / 2 <= halfY && e.maxX <= fill) far = mid;
+        else near = mid;
+      }
+      dist = far;
+      const e = measure(dist);
+      // centraliza no espaço útil mexendo só na altura do alvo (o eixo de giro continua no bolo)
+      ty += (((e.minY + e.maxY) / 2 - midY) * dist * tanV) / Math.cos(elev);
+    }
     // bolos menores ficam um pouco mais longe: dá para sentir a diferença entre P, M e G
-    const sizeCue = 1 + 0.13 * Math.max(0, 1.25 - m.R);
-    return { dist: (Math.max(needV, needH) * 1.1 + 0.4) * sizeCue, ty: (top + bottom) / 2 - 0.02, tz: m.center.z * 0.5 };
+    const sizeCue = 1 + 0.08 * Math.max(0, 1.25 - m.R);
+    return { dist: dist * sizeCue, ty, tz };
   }
 
   function updateLimits() {
@@ -486,13 +565,16 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     controls.maxDistance = fitDist * 1.45;
   }
 
-  function flyTo(to, dur = 0.7) {
+  function flyTo(to, dur = 0.7, { exact = false } = {}) {
     const from = getSpherical();
-    // gira pelo caminho mais curto
-    let d = (to.az - from.az) % TAU;
-    if (d > Math.PI) d -= TAU;
-    if (d < -Math.PI) d += TAU;
-    const target = { ...to, az: from.az + d };
+    let target = to;
+    if (!exact) {
+      // gira pelo caminho mais curto
+      let d = (to.az - from.az) % TAU;
+      if (d > Math.PI) d -= TAU;
+      if (d < -Math.PI) d += TAU;
+      target = { ...to, az: from.az + d };
+    }
     if (reduceMotion || dur <= 0) {
       applySpherical(target);
       controls.update();
@@ -506,21 +588,68 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   function frame({ view = null, animate = true } = {}) {
     if (!m || !stand) return;
     const cur = getSpherical();
-    const v = view ? VIEW[view] : null;
-    // o coração só se lê bem visto mais de cima
-    const polar = v ? v.polar - (m.shape === 'heart' && view !== 'inside' ? 9 * DEG : 0) : cur.polar;
-    const az = v ? v.az : cur.az;
-    const fit = computeFit(size.w / size.h, polar);
+    const v = view ? anglesOf(view) : null;
+    const angles = v || { az: cur.az, polar: cur.polar };
+    const fit = computeFit(size.w / size.h, angles, insetsNow());
     const zoom = v || !fitDist ? 1 : THREE.MathUtils.clamp(cur.dist / fitDist, 0.5, 1.45);
     fitDist = fit.dist;
     updateLimits();
-    const to = { az, polar, dist: fit.dist * zoom, ty: fit.ty, tz: fit.tz };
+    const to = { az: angles.az, polar: angles.polar, dist: fit.dist * zoom, ty: fit.ty, tz: fit.tz };
     if (animate) flyTo(to, 0.65);
     else {
       flying = null;
       applySpherical(to);
       controls.update();
     }
+    invalidate();
+  }
+
+  /** Uma volta completa em torno do bolo, terminando na vista da etapa (a revelação do resumo). */
+  function spin({ turns = 1, dur = 2.8 } = {}) {
+    if (!m || reduceMotion) return;
+    const v = anglesOf(cutaway ? 'inside' : viewName);
+    const fit = computeFit(size.w / size.h, v, insetsNow());
+    fitDist = fit.dist;
+    updateLimits();
+    const from = getSpherical();
+    let d = (v.az - from.az) % TAU;
+    if (d > Math.PI) d -= TAU;
+    if (d < -Math.PI) d += TAU;
+    flying = { from, to: { az: from.az + d + TAU * turns, polar: v.polar, dist: fit.dist, ty: fit.ty, tz: fit.tz }, t: 0, dur };
+    holdUntil = now + dur + 0.8;
+    invalidate();
+  }
+
+  /** Pausa o giro automático por alguns segundos (ex.: logo depois de trocar o formato). */
+  function holdRotation(ms = 3000) {
+    holdUntil = Math.max(holdUntil, now + ms / 1000);
+  }
+
+  /**
+   * Enquanto a pessoa escreve a mensagem: para o giro e leva a câmera para a frente da plaquinha,
+   * mais perto. focusPlaque(false) volta ao enquadramento da etapa.
+   */
+  function focusPlaque(on) {
+    if (!m) return;
+    if (!on) {
+      if (!focus) return;
+      focus = false;
+      updateLimits();
+      frame({ view: cutaway ? 'inside' : viewName, animate: true });
+      return;
+    }
+    focus = true;
+    const p = decorParts.get('toppers')?.plaque || {
+      y: layout.topY + 0.48,
+      z: m.center.z - Math.min(0.34, layout.rho * 0.36),
+      w: 0.72,
+      h: 0.36,
+    };
+    const tanV = Math.tan((camera.fov * DEG) / 2);
+    const aspect = size.w / size.h;
+    const dist = Math.max(fitDist * 0.36, (p.w * 0.5) / (tanV * aspect * 0.36), (p.h * 0.5) / (tanV * 0.22));
+    controls.minDistance = Math.min(controls.minDistance, dist * 0.9);
+    flyTo({ az: 0, polar: 66 * DEG, dist, ty: p.y - 0.05, tz: p.z }, 0.55);
     invalidate();
   }
 
@@ -625,8 +754,14 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     }
 
     const topChanged = !prevM || Math.abs(prevM.Ht + decorHeight(prev) - (m.Ht + decorHeight(config))) > 0.02;
+    const heartSwitch = prevM && prevM.shape !== m.shape && (m.shape === 'heart' || prevM.shape === 'heart');
     if (first) frame({ view: viewName, animate: false });
-    else if (standChanged || topChanged) frame({ animate: !quiet });
+    else if (focus) focusPlaque(true);
+    else if (heartSwitch) {
+      // o coração tem enquadramento próprio; o giro espera um pouco para a pessoa ver o formato
+      frame({ view: cutaway ? 'inside' : viewName, animate: !quiet });
+      if (m.shape === 'heart') holdRotation(3200);
+    } else if (standChanged || topChanged) frame({ animate: !quiet });
 
     keys = { stand: kStand, body: kBody, drip: kDrip, pipe: kPipe, layers: kLayers, pipeStyle: `${config.piping.style}|${config.piping.where}` };
     invalidate();
@@ -683,11 +818,12 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
         applyWedge();
       }, { ease: easeInOut });
     }
-    if (on) {
-      const fit = computeFit(size.w / size.h, VIEW.inside.polar);
-      swayBase = VIEW.inside.az;
+    if (on && !focus) {
+      const v = anglesOf('inside');
+      const fit = computeFit(size.w / size.h, v, insetsNow());
+      swayBase = v.az;
       swayT = 0;
-      if (!instant) flyTo({ az: VIEW.inside.az, polar: VIEW.inside.polar, dist: fit.dist * 0.94, ty: fit.ty, tz: fit.tz }, 0.8);
+      if (!instant) flyTo({ az: v.az, polar: v.polar, dist: fit.dist * 0.96, ty: fit.ty, tz: fit.tz }, 0.8);
     }
     invalidate();
   }
@@ -702,14 +838,15 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
 
   function setView(name, { animate = true } = {}) {
     viewName = VIEW[name] ? name : 'default';
-    if (m) frame({ view: viewName, animate });
+    if (m && !focus) frame({ view: viewName, animate });
   }
 
   function resetView() {
     if (!m) return;
+    focus = false;
     frame({ view: cutaway ? 'inside' : viewName, animate: true });
     swayT = 0;
-    swayBase = cutaway ? VIEW.inside.az : VIEW[viewName].az;
+    swayBase = anglesOf(cutaway ? 'inside' : viewName).az;
   }
 
   /* ───────── Laço de desenho ───────── */
@@ -766,7 +903,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
         swayBase = b.az;
         swayT = 0;
       }
-    } else if (autoRotate && !userActive) {
+    } else if (autoRotate && !userActive && !focus && now >= holdUntil) {
       active = true;
       const s = getSpherical();
       if (cutaway) {
@@ -829,7 +966,16 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    if (m) frame({ animate: false });
+    if (m) {
+      if (focus) focusPlaque(true);
+      else if (flying) {
+        // o palco mudou de tamanho no meio de um voo da câmera (ex.: revelação do resumo): corrige o destino sem interromper
+        const fit = computeFit(w / h, flying.to, insetsNow());
+        fitDist = fit.dist;
+        updateLimits();
+        Object.assign(flying.to, { dist: fit.dist, ty: fit.ty, tz: fit.tz });
+      } else frame({ animate: false });
+    }
     invalidate();
   }
 
@@ -844,7 +990,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   }
 
   /** Desenha o bolo num <canvas> 2D (vista de catálogo, bolo fechado, sem interferir no que está na tela). */
-  function snapshotCanvas({ size: px = 360, width = px, height = px, background = true, scale = 2 } = {}) {
+  function snapshotCanvas({ size: px = 360, width = px, height = px, background = true, scale = 2, fill = 0.7 } = {}) {
     if (disposed || lost || !m) return null;
     settle();
     const keepCam = getSpherical();
@@ -861,8 +1007,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       renderer.setSize(Math.round(width * ss), Math.round(height * ss), false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
-      const fit = computeFit(width / height, VIEW.default.polar);
-      applySpherical({ az: VIEW.default.az, polar: VIEW.default.polar, dist: fit.dist, ty: fit.ty, tz: fit.tz });
+      const v = anglesOf('default');
+      const fit = computeFit(width / height, v, { fill });
+      applySpherical({ az: v.az, polar: v.polar, dist: fit.dist, ty: fit.ty, tz: fit.tz });
       candleLight.intensity = candleLight.userData.base || 0;
       placeLights();
       renderer.render(scene, camera);
@@ -1022,6 +1169,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     setAutoRotate,
     setView,
     resetView,
+    spin,
+    holdRotation,
+    focusPlaque,
     snapshot,
     snapshotCanvas,
     thumbOf,

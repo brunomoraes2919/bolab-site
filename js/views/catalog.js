@@ -59,9 +59,9 @@ function promoTile(state) {
     <a class="catalog-promo" href="#/monte-seu-bolo">
       <span class="catalog-promo__icon">${icon('cube')}</span>
       <span class="catalog-promo__eyebrow">Exclusivo BOLAB</span>
-      <strong class="catalog-promo__title">${state.cat === 'acess' ? 'Falta o bolo?' : 'Não achou o seu?'} <em>Crie do seu jeito em 3D.</em></strong>
+      <strong class="catalog-promo__title">${state.cat === 'acess' ? 'Falta o bolo?' : 'Não achou o seu?'} <em>Monte do seu jeito em 3D.</em></strong>
       <span class="catalog-promo__text">Massa, recheio, cobertura e decoração: você escolhe tudo.</span>
-      <span class="catalog-promo__cta">Criar meu bolo ${icon('arrow-right')}</span>
+      <span class="catalog-promo__cta">Montar meu bolo ${icon('arrow-right')}</span>
     </a>
   `;
 }
@@ -84,13 +84,13 @@ function emptyHtml(state) {
       <p>
         ${elsewhere
           ? `Não encontramos em ${cat.label}, mas há ${plural(elsewhere, 'resultado', 'resultados')} em outras categorias.`
-          : 'Tente outro sabor ou limpe os filtros. E se o bolo que você imaginou ainda não existe, dá para criar o seu em 3D.'}
+          : 'Tente outro sabor ou limpe os filtros. E se o bolo que você imaginou ainda não existe, dá para montar o seu em 3D.'}
       </p>
       <div class="catalog-empty__actions">
         ${elsewhere
           ? html`<button class="btn" type="button" data-catalog-all>Buscar em todo o cardápio</button>`
           : html`<button class="btn" type="button" data-catalog-clear>Limpar filtros</button>`}
-        <a class="btn btn--secondary" href="#/monte-seu-bolo">${icon('sparkles')} Criar meu bolo em 3D</a>
+        <a class="btn btn--secondary" href="#/monte-seu-bolo">${icon('sparkles')} Montar meu bolo em 3D</a>
       </div>
       <div class="catalog-empty__hints">
         <span>Que tal buscar por</span>

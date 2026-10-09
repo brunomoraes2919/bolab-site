@@ -20,7 +20,7 @@ function renderAnnounce() {
     <div class="container announce__inner">
       <span>${icon('truck')} Entrega grátis acima de R$ ${SITE.shipping.freeAbove}</span>
       <span class="announce__sep" aria-hidden="true">•</span>
-      <button type="button" data-copy-coupon="BOLAB10">${icon('gift')} 10% OFF na 1ª encomenda: <strong>BOLAB10</strong></button>
+      <button type="button" data-copy-coupon="BOLAB10">${icon('gift')} 10% OFF no 1º pedido: <strong>BOLAB10</strong></button>
     </div>
   `);
 }
@@ -55,9 +55,9 @@ function renderHeader() {
             </form>
 
             <div class="header__actions">
-              <a class="icon-btn only-mobile" href="#/cardapio?foco=busca" aria-label="Buscar">${icon('search')}</a>
+              <a class="icon-btn header__search-link" href="#/cardapio?foco=busca" aria-label="Buscar no cardápio">${icon('search')}</a>
               <a class="icon-btn only-desktop" href="#/favoritos" aria-label="Favoritos">${icon('heart')}${badge(favs.count())}</a>
-              <a class="header__account only-desktop" href="${user ? '#/conta' : '#/entrar'}">
+              <a class="header__account only-desktop" href="${user ? '#/conta' : '#/entrar'}" aria-label="${user ? `Minha conta, ${user.name.split(' ')[0]}` : 'Entrar ou criar conta'}">
                 ${user ? html`<span class="avatar avatar--sm">${initials(user.name)}</span>` : icon('user')}
                 <span>${user ? `Olá, ${user.name.split(' ')[0]}` : 'Entrar'}</span>
               </a>
@@ -78,7 +78,7 @@ function renderTabbar() {
     <a href="#/cardapio" class="${is((p) => p.startsWith('/cardapio') || p.startsWith('/produto'))}">${icon('cake')}<span>Cardápio</span></a>
     <a href="#/monte-seu-bolo" class="tabbar__fab" aria-label="Monte seu bolo em 3D">
       <span class="tabbar__fab-btn">${icon('sparkles')}</span>
-      <span>Criar</span>
+      <span>Montar</span>
     </a>
     <a href="#/pedidos" class="${is(orders)}">${icon('package')}<span>Pedidos</span></a>
     <a href="${auth.isLogged() ? '#/conta' : '#/entrar'}" class="${is(account)}">${icon('user')}<span>${auth.isLogged() ? 'Conta' : 'Entrar'}</span></a>

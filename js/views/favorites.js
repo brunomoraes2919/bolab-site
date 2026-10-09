@@ -1,9 +1,21 @@
-// BOLAB — favoritos: produtos salvos com o coração e bolos criados no personalizador 3D.
+// BOLAB — favoritos: produtos salvos com o coração e bolos montados no personalizador 3D.
 import { html, icon, money, plural, dateShort, on, toast, confirmDialog, observeReveal } from '../ui.js';
 import { productCard, pageHead, mediaFallback } from '../components.js';
 import { store, favs, savedCakes, cart } from '../store.js';
+import { normalizeConfig, servesOf, prepHoursOf } from '../customizer/pricing.js';
 
 const SUMMARY_MAX = 4;
+
+/** Rendimento e prazo do bolo salvo, calculados como no personalizador (o carrinho usa os dois). */
+function cakeExtras(config) {
+  if (!config || typeof config !== 'object') return {}; // sem configuração não dá para afirmar tamanho nem prazo
+  try {
+    const c = normalizeConfig(config);
+    return { serves: servesOf(c), prepHours: prepHoursOf(c) };
+  } catch {
+    return {}; // configuração antiga ou incompleta: valem os padrões do carrinho
+  }
+}
 
 function emptyAll() {
   return html`
@@ -12,10 +24,10 @@ function emptyAll() {
       <div class="empty">
         <div class="empty__art">${icon('heart')}</div>
         <h2>Guarde aqui os bolos que você amou</h2>
-        <p>Toque no coração de qualquer bolo para salvar. Ou crie o seu em 3D e deixe guardado para pedir quando quiser.</p>
+        <p>Toque no coração de qualquer bolo para salvar. Ou monte o seu em 3D e deixe guardado para pedir quando quiser.</p>
         <div class="favs-empty-actions">
           <a class="btn" href="#/cardapio">Ver cardápio</a>
-          <a class="btn btn--secondary" href="#/monte-seu-bolo">${icon('sparkles')} Criar meu bolo em 3D</a>
+          <a class="btn btn--secondary" href="#/monte-seu-bolo">${icon('sparkles')} Montar meu bolo em 3D</a>
         </div>
       </div>
     </div>
@@ -77,10 +89,10 @@ function cakesList(list) {
       <a class="favs-invite reveal" href="#/monte-seu-bolo">
         <span class="favs-invite__icon">${icon('cube')}</span>
         <span class="favs-invite__body">
-          <strong>Crie um bolo que é só seu</strong>
+          <strong>Monte um bolo que é só seu</strong>
           <span>Monte camada por camada no personalizador 3D e salve aqui para pedir quando quiser.</span>
         </span>
-        <span class="favs-invite__cta">Começar a criar ${icon('arrow-right')}</span>
+        <span class="favs-invite__cta">Montar meu bolo em 3D ${icon('arrow-right')}</span>
       </a>
     `;
   }
@@ -98,7 +110,7 @@ const view = {
 
     const sub = [
       list.length ? plural(list.length, 'favorito', 'favoritos') : '',
-      cakes.length ? plural(cakes.length, 'bolo criado por você', 'bolos criados por você') : '',
+      cakes.length ? plural(cakes.length, 'bolo montado por você', 'bolos montados por você') : '',
     ]
       .filter(Boolean)
       .join(' · ');
@@ -117,8 +129,8 @@ const view = {
 
         <section class="favs-section" aria-labelledby="favs-cakes-title">
           <div class="favs-section__head">
-            <h2 id="favs-cakes-title">Seus bolos criados</h2>
-            ${cakes.length ? html`<a class="link-arrow" href="#/monte-seu-bolo">Criar outro ${icon('arrow-right')}</a>` : ''}
+            <h2 id="favs-cakes-title">Bolos que você montou</h2>
+            ${cakes.length ? html`<a class="link-arrow" href="#/monte-seu-bolo">Montar outro ${icon('arrow-right')}</a>` : ''}
           </div>
           ${cakesList(cakes)}
         </section>
@@ -146,7 +158,7 @@ const view = {
     on(root, 'click', '[data-favs-add]', (_ev, el) => {
       const cake = savedCakes.get(el.dataset.favsAdd);
       if (!cake) return;
-      cart.addCustom({ name: cake.name, price: cake.price, thumb: cake.thumb, config: cake.config, summary: cake.summary });
+      cart.addCustom({ name: cake.name, price: cake.price, thumb: cake.thumb, config: cake.config, summary: cake.summary, ...cakeExtras(cake.config) });
       toast(`${cake.name || 'Seu bolo'} foi para o carrinho`, { type: 'success', action: { label: 'Ver carrinho', href: '#/carrinho' } });
     });
 
@@ -155,7 +167,7 @@ const view = {
       if (!cake) return;
       const ok = await confirmDialog({
         title: 'Remover este bolo?',
-        message: `“${cake.name || 'Bolo personalizado'}” sai dos seus bolos salvos. Você pode criar de novo quando quiser.`,
+        message: `“${cake.name || 'Bolo personalizado'}” sai dos seus bolos salvos. Você pode montar de novo quando quiser.`,
         confirmLabel: 'Remover',
         cancelLabel: 'Manter',
         danger: true,

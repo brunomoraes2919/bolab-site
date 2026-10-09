@@ -179,7 +179,7 @@ export default {
                 <div class="empty acc-empty">
                   <div class="empty__art">${icon('credit-card')}</div>
                   <h2>Nenhum cartão salvo</h2>
-                  <p>Salve um cartão e pague as próximas encomendas sem digitar tudo de novo.</p>
+                  <p>Salve um cartão e pague os próximos pedidos sem digitar tudo de novo.</p>
                   <button class="btn" type="button" data-add>${icon('plus')} Adicionar cartão</button>
                 </div>
               </div>

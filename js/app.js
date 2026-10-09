@@ -2,8 +2,8 @@
 import { startRouter, revalidate } from './router.js';
 import { startShell } from './shell.js';
 import { cart, favs, store } from './store.js';
-import { toast, on } from './ui.js';
-import { getProduct } from './data/products.js';
+import { toast, on, openDialog, html, raw, icon, money } from './ui.js';
+import { getProduct, sizesOf, priceOf } from './data/products.js';
 import { mediaFallback } from './components.js';
 
 /* Foto que não carregou (sem internet, link quebrado) vira um placeholder da marca. */
@@ -19,15 +19,58 @@ document.addEventListener(
   true,
 );
 
-/* "+" dos cards: adiciona direto ao carrinho (tamanho P para bolos). */
+/* "+" dos cards. Acessório entra direto; bolo pergunta o tamanho antes
+   (ninguém deve descobrir só no carrinho que pediu um bolo de 8 fatias para 20 convidados). */
+function addWithFeedback(p, size, el) {
+  cart.addProduct(p.id, { size });
+  el?.classList.add('is-added');
+  setTimeout(() => el?.classList.remove('is-added'), 600);
+  toast(`${p.name} foi para o carrinho`, { type: 'success', action: { label: 'Ver carrinho', href: '#/carrinho' } });
+}
+
+function openSizeSheet(p, el) {
+  const sizes = sizesOf(p);
+  let chosen = sizes[0].id;
+  const dlg = openDialog({
+    title: p.name,
+    body: html`
+      <p class="muted">Para quantas pessoas é o bolo?</p>
+      <div class="size-sheet" role="radiogroup" aria-label="Tamanho">
+        ${sizes.map(
+          (s, i) => html`
+            <label class="option">
+              <input type="radio" name="sheet-size" value="${s.id}" ${i === 0 ? raw('checked') : ''} />
+              <span class="option__body">
+                <span class="option__title">Tamanho ${s.label} · ${s.diameter}</span>
+                <span class="option__desc">${s.serves}</span>
+              </span>
+              <strong class="size-sheet__price">${money(priceOf(p, s.id))}</strong>
+              <span class="option__check">${icon('check')}</span>
+            </label>
+          `,
+        )}
+      </div>
+    `,
+    footer: html`<button class="btn btn--block" type="button" data-sheet-add autofocus>Adicionar · ${money(priceOf(p, chosen))}</button>`,
+  });
+  dlg.el.addEventListener('change', (ev) => {
+    if (ev.target.name !== 'sheet-size') return;
+    chosen = ev.target.value;
+    dlg.el.querySelector('[data-sheet-add]').textContent = `Adicionar · ${money(priceOf(p, chosen))}`;
+  });
+  dlg.el.addEventListener('click', (ev) => {
+    if (!ev.target.closest('[data-sheet-add]')) return;
+    dlg.close();
+    addWithFeedback(p, chosen, el);
+  });
+}
+
 on(document.body, 'click', '[data-add-product]', (ev, el) => {
   ev.preventDefault();
   const p = getProduct(el.dataset.addProduct);
   if (!p) return;
-  cart.addProduct(p.id, { size: el.dataset.size || 'p' });
-  el.classList.add('is-added');
-  setTimeout(() => el.classList.remove('is-added'), 600);
-  toast(`${p.name} foi para o carrinho`, { type: 'success', action: { label: 'Ver carrinho', href: '#/carrinho' } });
+  if (sizesOf(p).length && !el.dataset.size) openSizeSheet(p, el);
+  else addWithFeedback(p, el.dataset.size || 'p', el);
 });
 
 /* Coração de favorito em qualquer lugar do site. */
@@ -60,8 +103,23 @@ on(document.body, 'click', '[data-qty-step]', (_ev, btn) => {
    O setTimeout dá vez à navegação que a própria tela costuma fazer logo depois de sair. */
 store.on('auth', () => setTimeout(revalidate, 0));
 
+/* "Pular para o conteúdo": leva o foco ao conteúdo sem trocar de tela. */
+on(document.body, 'click', '[data-skip]', (ev) => {
+  ev.preventDefault();
+  const main = document.getElementById('app');
+  main.focus();
+  main.scrollIntoView();
+});
+
 startShell();
 startRouter();
+window.__bolabReady = true;
+
+/* Navegador bloqueando o armazenamento (aba anônima restrita, cota cheia): avisa uma vez. */
+const warnStorage = () =>
+  toast('Seu navegador não está deixando salvar dados. O carrinho e os pedidos somem ao fechar esta aba.', { type: 'error', duration: 9000 });
+if (!store.isPersistent()) warnStorage();
+else store.on('storage-fail', warnStorage);
 
 // No app Android os arquivos já vêm embutidos; o service worker é só para o site.
 const IN_APP = location.hostname === 'appassets.androidplatform.net';

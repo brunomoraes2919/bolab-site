@@ -210,23 +210,31 @@ function crustCanvas(size, seed) {
   });
 }
 
-/** Camada fina de creme raspado sobre o bolo naked (branco com transparência irregular). */
+/**
+ * Creme raspado do bolo naked, para UMA camada de massa (v = 0 e v = 1 são as emendas).
+ * A espátula deixa o creme mais grosso junto aos recheios e bem fino no meio da camada,
+ * em riscos horizontais longos — nada de manchas soltas.
+ */
 function scrapeCanvas(size, seed) {
-  const n1 = tileNoise(3, seed);
-  const n2 = tileNoise(9, seed + 1);
-  const n3 = tileNoise(40, seed + 2);
-  const c = makeCanvas(size);
+  const n1 = tileNoise(2, seed);
+  const n2 = tileNoise(5, seed + 1);
+  const n3 = tileNoise(11, seed + 2);
+  const c = makeCanvas(size, size / 2);
+  const h = size / 2;
   const ctx = c.getContext('2d');
-  const img = ctx.createImageData(size, size);
-  for (let y = 0; y < size; y++) {
+  const img = ctx.createImageData(size, h);
+  for (let y = 0; y < h; y++) {
     for (let x = 0; x < size; x++) {
       const u = x / size;
-      const v = y / size;
-      let a = n1(u, v * 2) * 0.55 + n2(u, v * 5) * 0.35 + n3(u, v * 8) * 0.25;
-      a = Math.max(0, Math.min(1, (a - 0.36) * 2.6));
+      const v = y / h;
+      const edge = Math.pow(Math.abs(v * 2 - 1), 2.4); // 0 no meio da camada, 1 nas emendas
+      // ruído esticado na horizontal (a espátula corre em volta do bolo)
+      const streak = n1(u, v * 3) * 0.5 + n2(u, v * 9) * 0.32 + n3(u, v * 22) * 0.18;
+      let a = 0.34 + edge * 0.6 + (streak - 0.5) * 0.62;
+      a = Math.max(0.1, Math.min(0.97, a));
       const i = (y * size + x) * 4;
       img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
-      img.data[i + 3] = Math.round(a * 235);
+      img.data[i + 3] = Math.round(a * 255);
     }
   }
   ctx.putImageData(img, 0, 0);

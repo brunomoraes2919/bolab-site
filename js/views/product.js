@@ -34,10 +34,6 @@ function quote(p, size, qty) {
   };
 }
 
-function prepLabel(hours) {
-  return hours % 24 === 0 ? plural(hours / 24, 'dia', 'dias') : `${hours} horas`;
-}
-
 function listText(items) {
   return items.length > 1 ? `${items.slice(0, -1).join(', ')} e ${items[items.length - 1]}` : items[0] || '';
 }
@@ -107,11 +103,11 @@ function sizeSelector(p) {
   `;
 }
 
-function details(p) {
+function details(p, firstDate) {
   const cake = isCake(p);
   const item = (title, body, open = false) => html`
     <details ${open ? html`open` : ''}>
-      <summary>${title}${icon('plus')}</summary>
+      <summary>${title}${icon('chevron-down')}</summary>
       <div class="accordion__body">${body}</div>
     </details>
   `;
@@ -123,10 +119,8 @@ function details(p) {
         cake ? 'Sobre este bolo' : 'Sobre este item',
         html`<p>${p.long}</p>
           <p class="pd-details__meta">
-            ${icon('clock')}
-            ${p.prepHours
-              ? `Feito sob encomenda: precisa de ${prepLabel(p.prepHours)} de preparo.`
-              : 'Pronta entrega: chega junto com o seu bolo.'}
+            ${icon('calendar')}
+            <span>${p.prepHours ? 'Feito sob encomenda.' : 'Pronta entrega.'} Pedindo hoje, a primeira data de entrega é ${firstDate}.</span>
           </p>`,
         true,
       )}
@@ -159,7 +153,7 @@ function details(p) {
         : item(
             'Entrega e retirada',
             html`<p>
-              Vai junto com a sua encomenda, na data e no horário que você escolher no fechamento do pedido. Também dá para retirar no
+              Vai junto com o seu pedido, na data e no horário que você escolher ao fechar a compra. Também dá para retirar no
               ${SITE.pickup.name}: ${SITE.pickup.address}.
             </p>`,
           )}
@@ -261,13 +255,13 @@ function shelf({ eyebrow, title, list, more }) {
 function notFound() {
   return html`
     <div class="container">
-      <div class="empty">
+      <div class="empty pd-missing">
         <div class="empty__art">${icon('cake')}</div>
-        <h2>Este bolo não está mais no cardápio</h2>
-        <p>O link pode estar desatualizado. Veja os bolos disponíveis ou crie o seu, do seu jeito, em 3D.</p>
+        <h1>Este bolo não está mais no cardápio</h1>
+        <p>O link pode estar desatualizado. Veja os bolos disponíveis ou monte o seu, do seu jeito, em 3D.</p>
         <div class="pd-empty-actions">
           <a class="btn" href="#/cardapio">Ver cardápio</a>
-          <a class="btn btn--secondary" href="#/monte-seu-bolo">${icon('sparkles')} Criar meu bolo em 3D</a>
+          <a class="btn btn--secondary" href="#/monte-seu-bolo">${icon('sparkles')} Montar meu bolo em 3D</a>
         </div>
       </div>
     </div>
@@ -284,7 +278,7 @@ function stickyBar() {
       <strong data-pd-sticky-price></strong>
     </div>
     <button class="btn pd-add pd-sticky__btn" type="button">
-      <span class="pd-add__idle">Adicionar</span>
+      <span class="pd-add__idle">${icon('bag')} Adicionar</span>
       <span class="pd-add__done">${icon('check')} Adicionado</span>
     </button>
   `);
@@ -302,8 +296,9 @@ export default {
     const cake = isCake(p);
     const cat = CATEGORIES.find((c) => c.id === p.cat);
     const q = quote(p, 'p', 1);
-    const first = schedule.earliest(p.prepHours);
+    const firstDate = dateLong(schedule.earliest(p.prepHours)).toLowerCase();
     const avg = Number(p.rating).toFixed(1).replace('.', ',');
+    const askText = `Oi! Preciso ${cake ? 'do bolo' : 'do item'} ${p.name} para ___. Vocês conseguem?`;
 
     return html`
       <article class="pd">
@@ -329,6 +324,12 @@ export default {
                 <button class="pd-rating" type="button" data-pd-goto-reviews aria-label="Nota ${avg} de 5. Ver ${p.reviews} avaliações">
                   ${stars(p.rating)}<strong>${avg}</strong><span>${plural(p.reviews, 'avaliação', 'avaliações')}</span>
                 </button>
+                ${sizesOf(p).length
+                  ? html`<p class="pd-from">
+                      <span>a partir de</span> <strong>${money(q.unit)}</strong>
+                      <span class="pd-from__pix">${money(q.pix)} no Pix</span>
+                    </p>`
+                  : ''}
                 <p class="pd-desc">${p.desc}</p>
               </header>
 
@@ -336,11 +337,16 @@ export default {
 
               <div class="pd-price" aria-live="polite" data-pd-price>${priceBlock(q, 1)}</div>
 
-              ${notice(html`Peça hoje e receba a\u00a0partir\u00a0de <strong>${dateLong(first).toLowerCase()}</strong>`, { tone: 'green', iconName: 'calendar' })}
+              <div class="pd-when">
+                ${notice(html`Peça hoje e receba a\u00a0partir\u00a0de <strong>${firstDate}</strong>`, { tone: 'green', iconName: 'calendar' })}
+                <a class="pd-ask" href="https://wa.me/${SITE.whatsapp}?text=${encodeURIComponent(askText)}" target="_blank" rel="noopener">
+                  ${icon('whatsapp')}<span>Precisa para antes? <strong>Chame no WhatsApp</strong></span>
+                </a>
+              </div>
 
               <div class="pd-form">
                 <div class="field pd-note">
-                  <label for="pd-note">${cake ? 'Mensagem no bolo ou observações' : 'Observações'} <span>(opcional)</span></label>
+                  <label for="pd-note">${cake ? 'Mensagem no bolo ou observações' : 'Observações'} <span class="field__hint">(opcional)</span></label>
                   <textarea
                     class="textarea"
                     id="pd-note"
@@ -394,12 +400,12 @@ export default {
                         <strong>Quer este bolo do seu jeito?</strong>
                         <span>Troque massa, recheio, cobertura e decoração e veja o resultado girando na tela.</span>
                       </span>
-                      <span class="pd-custom__cta">Personalizar ${icon('arrow-right')}</span>
+                      <span class="pd-custom__cta">Personalizar este bolo ${icon('arrow-right')}</span>
                     </a>
                   `
                 : ''}
 
-              ${details(p)}
+              ${details(p, firstDate)}
             </div>
           </div>
         </div>
@@ -408,8 +414,8 @@ export default {
         ${cake
           ? html`
               ${shelf({
-                eyebrow: 'Complete a festa',
-                title: html`Os detalhes que <em>fazem a mesa</em>`,
+                eyebrow: 'Para a mesa do bolo',
+                title: html`Complete <em>a festa</em>`,
                 list: addOns(4),
                 more: { href: '#/cardapio?cat=acess', label: 'Ver todos' },
               })}
@@ -422,8 +428,8 @@ export default {
             `
           : html`
               ${shelf({
-                eyebrow: 'Complete a festa',
-                title: html`Combine com <em>outros detalhes</em>`,
+                eyebrow: 'Para a mesa do bolo',
+                title: html`Complete <em>a festa</em>`,
                 list: relatedTo(p, 4),
                 more: { href: '#/cardapio?cat=acess', label: 'Ver todos' },
               })}
@@ -434,7 +440,6 @@ export default {
                 more: { href: '#/cardapio', label: 'Ver cardápio' },
               })}
             `}
-        <div class="pd-end" data-pd-end></div>
       </article>
     `;
   },
@@ -448,7 +453,6 @@ export default {
     const shippingEl = root.querySelector('[data-pd-shipping]');
     const noteEl = root.querySelector('[data-pd-note]');
     const mainBtn = root.querySelector('[data-pd-add]');
-    const endEl = root.querySelector('[data-pd-end]');
 
     let size = sizes.length ? sizes[0].id : null;
     let qty = 1;
@@ -520,8 +524,12 @@ export default {
     on(root, 'click', '[data-pd-add]', (_ev, btn) => onAdd(btn));
     barBtn.addEventListener('click', () => onAdd(barBtn));
 
+    // Um clique duplo não pode colocar duas unidades: depois do primeiro, a tela já está de saída.
+    let leaving = false;
     on(root, 'click', '[data-pd-buy]', () => {
-      if (addToCart()) navigate('/carrinho');
+      if (leaving || !addToCart()) return;
+      leaving = true;
+      navigate('/carrinho');
     });
 
     on(root, 'click', '[data-pd-share]', share);
@@ -530,33 +538,22 @@ export default {
       root.querySelector('#pd-avaliacoes')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
 
-    /* A barra aparece quando o botão principal some por cima da tela e sai de cena
-       quando o conteúdo acaba, para nunca cobrir o rodapé. */
-    let passedCta = false;
-    let atEnd = false;
-    const syncBar = () => {
-      const show = passedCta && !atEnd;
-      bar.classList.toggle('is-visible', show);
-      bar.toggleAttribute('inert', !show);
-    };
+    /* A barra aparece quando o botão principal some por cima da tela. No fim da página ela
+       fica sobre o espaço reservado no rodapé (ver css/catalog.css), sem cobrir conteúdo.
+       A área observada vai do cabeçalho para baixo sem fim: o botão só "sai" dela por cima,
+       então um salto de rolagem (voltar ao topo, por exemplo) nunca deixa a barra no estado errado. */
     let io = null;
     if ('IntersectionObserver' in window) {
-      const css = getComputedStyle(document.documentElement);
-      const headerH = parseFloat(css.getPropertyValue('--header-h')) || 60;
-      const tabbarH = parseFloat(css.getPropertyValue('--tabbar-h')) || 64;
+      const headerH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--header-h')) || 60;
       io = new IntersectionObserver(
-        (entries) => {
-          entries.forEach((e) => {
-            const above = e.boundingClientRect.top < (e.rootBounds?.top ?? headerH);
-            if (e.target === mainBtn) passedCta = !e.isIntersecting && above;
-            else atEnd = e.isIntersecting || above;
-          });
-          syncBar();
+        ([entry]) => {
+          const show = !entry.isIntersecting;
+          bar.classList.toggle('is-visible', show);
+          bar.toggleAttribute('inert', !show);
         },
-        { rootMargin: `-${headerH}px 0px -${tabbarH}px 0px` },
+        { rootMargin: `-${headerH}px 0px 100000px 0px` },
       );
       io.observe(mainBtn);
-      io.observe(endEl);
     }
 
     update();

@@ -6,7 +6,7 @@ import { PRODUCTS, addOns, getProduct, isCake } from '../data/products.js';
 import { SITE, COUPONS, WALLET_COUPONS } from '../data/site.js';
 
 /* O que a pessoa está digitando (e o que já viu) sobrevive aos redesenhos da tela. */
-const draft = { coupon: '', couponError: '', walletOpen: false, pct: 0, barAway: false };
+const draft = { coupon: '', couponError: '', walletOpen: false, pct: 0, openDetails: new Set(), freshLine: '' };
 
 /**
  * Parcelas possíveis no cartão para um valor, conforme SITE.card.
@@ -104,18 +104,54 @@ function shippingBanner(t) {
   `;
 }
 
+/** "Formato: Redondo, tamanho M" → { label: 'Formato', value: 'Redondo, tamanho M' } */
+function summaryPart(text) {
+  const str = String(text);
+  const i = str.indexOf(': ');
+  return i > 0 && i <= 40 ? { label: str.slice(0, i), value: str.slice(i + 2) } : { label: '', value: str };
+}
+
+/** Bolo criado no 3D: receita em uma frase curta, lista completa sob demanda e atalho para editar. */
+function customExtra(l) {
+  const parts = (Array.isArray(l.summary) ? l.summary : []).map(summaryPart);
+  const open = draft.openDetails.has(l.lineId);
+  return html`
+    <div class="cart-line__extra">
+      ${parts.length && !open ? html`<p class="cart-line__recipe">${parts.map((p) => p.value).join(' · ')}</p>` : ''}
+      ${parts.length && open
+        ? html`
+            <dl class="cart-line__details" id="cart-details-${l.lineId}">
+              ${parts.map((p) => html`<div><dt>${p.label || 'Detalhe'}</dt><dd>${p.value}</dd></div>`)}
+            </dl>
+          `
+        : ''}
+      <div class="cart-line__links">
+        ${parts.length
+          ? html`
+              <button class="cart-line__link" type="button" id="cart-more-${l.lineId}" data-details="${l.lineId}" aria-expanded="${open ? 'true' : 'false'}">
+                ${open ? 'Ocultar detalhes' : 'Ver todos os detalhes'}${icon('chevron-down')}
+              </button>
+            `
+          : ''}
+        <a class="cart-line__link" href="#/monte-seu-bolo?linha=${l.lineId}">${icon('edit')}Editar no 3D</a>
+      </div>
+    </div>
+  `;
+}
+
 function lineItem(l) {
   const custom = l.kind === 'custom';
   const href = !custom && getProduct(l.productId) ? `#/produto/${l.productId}` : '';
+  const cls = ['cart-line', custom ? 'cart-line--custom' : '', draft.freshLine === l.lineId ? 'is-new' : ''].filter(Boolean).join(' ');
   return html`
-    <li class="cart-line">
+    <li class="${cls}">
       ${href
         ? html`<a class="cart-line__media" href="${href}" tabindex="-1" aria-hidden="true">${lineThumb(l, { w: 208 })}</a>`
-        : html`<div class="cart-line__media">${lineThumb(l, { w: 208 })}</div>`}
+        : html`<div class="cart-line__media">${lineThumb(l, { w: 256 })}</div>`}
       <div class="cart-line__body">
         <div class="cart-line__head">
           <div class="cart-line__titles">
-            ${custom ? html`<span class="badge badge--gold">${icon('cube')} Criado por você em 3D</span>` : ''}
+            ${custom ? html`<span class="badge badge--gold">${icon('cube')} Criado <span class="cart-line__by">por você</span> em 3D</span>` : ''}
             <h3 class="cart-line__name">${href ? html`<a href="${href}">${l.name}</a>` : l.name}</h3>
             ${l.sizeLabel ? html`<p class="cart-line__meta">${l.sizeLabel}</p>` : ''}
           </div>
@@ -123,9 +159,9 @@ function lineItem(l) {
             ${icon('trash')}
           </button>
         </div>
-        ${custom && l.summary?.length ? html`<ul class="cart-line__summary">${l.summary.map((s) => html`<li>${s}</li>`)}</ul>` : ''}
         ${l.note ? html`<p class="cart-line__note">${icon('edit')}<span>${l.note}</span></p>` : ''}
       </div>
+      ${custom ? customExtra(l) : ''}
       <div class="cart-line__foot">
         ${qtyStepper(l.qty, { id: l.lineId })}
         <div class="cart-line__price">
@@ -142,7 +178,7 @@ function couponBlock(t) {
 
   if (code && t.coupon) {
     return html`
-      <div class="cart-coupon cart-coupon--on">
+      <div class="cart-coupon cart-coupon--on" role="status">
         <span class="cart-coupon__icon">${icon('ticket')}</span>
         <div class="cart-coupon__body">
           <strong>${t.coupon.code}</strong>
@@ -242,7 +278,7 @@ function summaryCard(t) {
         </div>
       </div>
       <div class="cart-summary__actions">
-        <a class="btn btn--lg btn--block" href="#/checkout" data-cart-cta>Fechar pedido ${icon('arrow-right')}</a>
+        <a class="btn btn--lg btn--block only-desktop" href="#/checkout">Fechar pedido ${icon('arrow-right')}</a>
         <a class="btn btn--ghost btn--block" href="#/cardapio">Continuar comprando</a>
       </div>
       <ul class="cart-trust">
@@ -289,7 +325,7 @@ function noteCard() {
   return html`
     <section class="card cart-note">
       <div class="field">
-        <label for="cart-note">Algum recado para a nossa confeitaria?</label>
+        <label for="cart-note">Algum recado para a nossa confeitaria? <span class="cart-optional">(opcional)</span></label>
         <textarea
           class="textarea"
           id="cart-note"
@@ -302,7 +338,7 @@ function noteCard() {
 ${note}</textarea
         >
         <div class="field__hint cart-note__hint" id="cart-note-hint">
-          <span>Opcional. A gente lê antes de começar o seu bolo.</span>
+          <span>A gente lê antes de começar o seu bolo.</span>
           <span data-note-count>${note.length}/300</span>
         </div>
       </div>
@@ -360,14 +396,13 @@ export default {
           </div>
           <aside class="cart-side">${summaryCard(t)}</aside>
         </div>
-        <div class="cart-bar ${draft.barAway ? 'is-away' : ''}" data-cart-bar>
-          <a class="cart-bar__link" href="#/checkout">
-            <span class="cart-bar__total">
-              <small>Total · ${plural(t.itemCount, 'item', 'itens')}</small>
-              <strong>${money(t.total)}</strong>
-            </span>
-            <span class="cart-bar__cta">Fechar pedido ${icon('arrow-right')}</span>
-          </a>
+        <p class="sr-only" role="status" data-cart-live></p>
+        <div class="cart-bar">
+          <div class="cart-bar__info">
+            <span>Total · ${plural(t.itemCount, 'item', 'itens')}</span>
+            <strong>${money(t.total)}</strong>
+          </div>
+          <a class="btn cart-bar__btn" href="#/checkout">Fechar pedido ${icon('arrow-right')}</a>
         </div>
       </div>
     `;
@@ -417,9 +452,9 @@ export default {
         showCouponError(res.message);
         return;
       }
+      // Sem aviso flutuante: o cupom aplicado e os novos valores já aparecem no próprio resumo.
       draft.coupon = '';
       draft.couponError = '';
-      toast(`Cupom ${res.coupon.code} aplicado: ${res.coupon.label}`, { type: 'success' });
     };
 
     on(page, 'submit', '[data-coupon-form]', (ev, form) => {
@@ -431,11 +466,7 @@ export default {
       if (draft.couponError) showCouponError('');
     });
     on(page, 'click', '[data-coupon-apply]', (_ev, btn) => applyCoupon(btn.dataset.couponApply));
-    on(page, 'click', '[data-coupon-remove]', () => {
-      const code = cart.couponCode();
-      cart.removeCoupon();
-      toast(`Cupom ${code} removido`);
-    });
+    on(page, 'click', '[data-coupon-remove]', () => cart.removeCoupon());
     page.querySelector('.cart-wallet')?.addEventListener('toggle', (ev) => {
       draft.walletOpen = ev.target.open;
     });
@@ -446,11 +477,28 @@ export default {
       page.querySelector('[data-note-count]').textContent = `${area.value.length}/300`;
     });
 
-    /* Complete a festa */
+    /* Bolo criado no 3D: abre e fecha a lista completa de escolhas. */
+    on(page, 'click', '[data-details]', (_ev, btn) => {
+      const id = btn.dataset.details;
+      if (draft.openDetails.has(id)) draft.openDetails.delete(id);
+      else draft.openDetails.add(id);
+      keepFocus(() => ctx.rerender());
+    });
+
+    /* Complete a festa: o item novo aparece destacado na lista, sem aviso por cima do que mudou. */
     on(page, 'click', '[data-cart-add]', (_ev, btn) => {
       const line = cart.addProduct(btn.dataset.cartAdd);
-      if (line) toast(`${line.name} foi para o carrinho`, { type: 'success' });
+      if (line) draft.freshLine = line.lineId;
     });
+    const added = draft.freshLine ? cart.line(draft.freshLine) : null;
+    draft.freshLine = '';
+    if (added) {
+      page.querySelector('.cart-line.is-new')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      requestAnimationFrame(() => {
+        const live = page.querySelector('[data-cart-live]');
+        if (live) live.textContent = `${added.name} foi para o carrinho.`;
+      });
+    }
 
     /* Barra de frete: anima do valor anterior até o atual. */
     const bar = page.querySelector('.progress > i');
@@ -462,24 +510,6 @@ export default {
       draft.pct = pct;
     }
 
-    /* No celular, a barra flutuante sai de cena quando o botão do resumo já está à vista. */
-    const floating = page.querySelector('[data-cart-bar]');
-    const cta = page.querySelector('[data-cart-cta]');
-    let io;
-    if (floating && cta && 'IntersectionObserver' in window) {
-      io = new IntersectionObserver(
-        ([entry]) => {
-          draft.barAway = entry.isIntersecting;
-          floating.classList.toggle('is-away', draft.barAway);
-        },
-        { rootMargin: '0px 0px -170px 0px' },
-      );
-      io.observe(cta);
-    }
-
-    return () => {
-      off();
-      io?.disconnect();
-    };
+    return off;
   },
 };

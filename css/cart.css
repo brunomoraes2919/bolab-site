@@ -179,21 +179,111 @@
   color: var(--red);
 }
 
-.cart-line__summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
+/* Bolo criado no 3D: miniatura maior, receita em uma frase e atalho para editar. */
+.cart-line--custom {
+  grid-template-columns: 112px minmax(0, 1fr);
 }
 
-.cart-line__summary li {
-  padding: 3px 10px;
-  border-radius: var(--r-pill);
-  background: var(--rose-50);
-  box-shadow: inset 0 0 0 1px var(--line-soft);
+.cart-line--custom .cart-line__media {
+  width: 112px;
+  height: 112px;
+}
+
+/* Em telas estreitas o selo encurta ("Criado em 3D") para não encostar na lixeira. */
+.cart-line__by {
+  display: none;
+}
+
+@media (min-width: 440px) {
+  .cart-line__by {
+    display: inline;
+  }
+}
+
+.cart-line__extra {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cart-line__recipe {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   color: var(--text-2);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  overflow: hidden;
+}
+
+.cart-line__details {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--rose-50);
+  font-size: var(--fs-sm);
+}
+
+.cart-line__details div {
+  display: grid;
+  grid-template-columns: minmax(84px, 32%) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.cart-line__details dt {
+  color: var(--text-3);
   font-weight: 700;
+}
+
+.cart-line__details dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.cart-line__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--s-5);
+}
+
+.cart-line__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  color: var(--rose-700);
+  font-size: var(--fs-sm);
+  font-weight: 800;
+}
+
+.cart-line__link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.cart-line__link svg {
+  width: 16px;
+  height: 16px;
+  transition: transform var(--t-med) var(--ease);
+}
+
+.cart-line__link[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+/* Item que acabou de entrar (vindo de "Complete a festa"): um destaque breve, no lugar de um aviso. */
+.cart-line.is-new {
+  animation: cart-new 1800ms var(--ease);
+}
+
+@keyframes cart-new {
+  from {
+    background: var(--rose-100);
+  }
 }
 
 .cart-line__note {
@@ -256,9 +346,27 @@
   .cart-line__foot {
     grid-column: 2;
   }
+
+  .cart-line--custom {
+    grid-template-columns: 128px minmax(0, 1fr);
+  }
+
+  .cart-line--custom .cart-line__media {
+    grid-row: span 3;
+    width: 128px;
+    height: 128px;
+  }
+
+  .cart-line__extra {
+    grid-column: 2;
+  }
 }
 
 /* Complete a festa */
+.cart-cross {
+  container-type: inline-size;
+}
+
 .cart-cross__head h2 {
   font-size: var(--fs-xl);
 }
@@ -325,6 +433,7 @@
 .cart-cross__price {
   font-family: var(--font-display);
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .cart-cross__add {
@@ -354,13 +463,52 @@
   height: 20px;
 }
 
-@media (min-width: 640px) {
+/* Com espaço para três colunas folgadas, o cartão fica em pé (foto em cima). Quando a seção estreita
+   (ex.: carrinho em duas colunas perto de 900px), volta para a lista: nome e preço nunca ficam sob o "+". */
+@container (min-width: 540px) {
   .cart-cross__list {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .cart-cross__item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 10px 12px;
+  }
+
+  .cart-cross__media {
+    grid-column: 1 / -1;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 3 / 2;
+  }
+
+  .cart-cross__body {
+    display: contents;
+  }
+
+  .cart-cross__name {
+    grid-column: 1 / -1;
+    align-self: start;
+    padding-inline: 4px;
+  }
+
+  .cart-cross__price {
+    padding-left: 4px;
+    font-size: var(--fs-lg);
   }
 }
 
 /* Recado */
+.cart-optional {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
 .cart-note {
   padding: var(--s-5);
 }
@@ -650,77 +798,66 @@
   font-weight: 800;
 }
 
-/* Barra flutuante do celular: gruda acima da barra inferior e do botão "Criar".
-   É "sticky" (e não "fixed") porque a animação de entrada de .view prende elementos fixos. */
+/* Barra de ação do celular e do tablet: faixa branca encostada no rodapé, igual à da página do produto.
+   Nessas telas a barra de navegação some (css/shell.css), então há uma faixa só. */
 .cart-bar {
-  position: sticky;
-  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 38px);
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: var(--z-sticky);
-  margin-top: var(--s-5);
-  transition: opacity var(--t-med) var(--ease), transform var(--t-med) var(--ease), visibility 0s;
-}
-
-.cart-bar.is-away {
-  opacity: 0;
-  transform: translateY(14px);
-  visibility: hidden;
-  transition: opacity var(--t-med) var(--ease), transform var(--t-med) var(--ease), visibility 0s linear var(--t-med);
-}
-
-.cart-bar__link {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 60px;
-  padding: 8px 8px 8px 22px;
-  border-radius: var(--r-pill);
-  background: var(--cocoa-900);
-  color: #fff;
-  box-shadow: var(--shadow-3);
+  column-gap: 12px;
+  padding: 10px var(--gutter) calc(10px + var(--safe-bottom));
+  border-radius: 22px 22px 0 0;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 -6px 24px rgba(122, 44, 64, 0.12);
+  backdrop-filter: blur(12px);
 }
 
-.cart-bar__total {
+.cart-bar__info {
   display: grid;
   min-width: 0;
   line-height: 1.2;
 }
 
-.cart-bar__total small {
-  color: #E9D3D9;
-  font-size: 11px;
+.cart-bar__info span {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cart-bar__info strong {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
   font-weight: 700;
   white-space: nowrap;
 }
 
-.cart-bar__total strong {
-  font-family: var(--font-display);
-  font-size: var(--fs-lg);
-  white-space: nowrap;
+.cart-bar__btn {
+  min-height: 48px;
 }
 
-.cart-bar__cta {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 44px;
-  padding: 0 18px;
-  border-radius: var(--r-pill);
-  background: var(--rose-600);
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.cart-bar__cta svg {
-  width: 18px;
-  height: 18px;
+@media (min-width: 560px) {
+  .cart-bar__btn {
+    min-width: 280px;
+  }
 }
 
 @media (max-width: 899px) {
-  /* Os avisos sobem para não cobrir a barra flutuante. */
-  body:has(.cart-bar:not(.is-away)) .toast-host {
-    bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 110px);
+  /* O fim da página (rodapé incluído) termina acima da barra: nada fica coberto. */
+  body:has(.cart-bar) {
+    padding-bottom: calc(68px + var(--safe-bottom));
+  }
+
+  /* Avisos aparecem logo acima da barra. */
+  body:has(.cart-bar) .toast-host {
+    bottom: calc(var(--safe-bottom) + 84px);
   }
 }
 
@@ -765,6 +902,12 @@
 }
 
 /* ═════════ Fechar pedido ═════════ */
+/* Nesta tela os avisos aparecem no topo, sobre o cabeçalho: nunca em cima de um campo ou rótulo. */
+body:has(.co) .toast-host {
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  bottom: auto;
+}
+
 .co {
   padding-block: var(--s-4) var(--s-12);
 }
@@ -845,7 +988,8 @@
 
 /* Etapas */
 .co-step {
-  padding: var(--s-4);
+  --co-pad: var(--s-4);
+  padding: var(--co-pad);
   container-type: inline-size;
 }
 
@@ -949,7 +1093,8 @@
 
 @media (min-width: 900px) {
   .co-step {
-    padding: var(--s-6) var(--s-8);
+    --co-pad: var(--s-8);
+    padding: var(--s-6) var(--co-pad);
   }
 }
 
@@ -977,12 +1122,16 @@
   outline-offset: 2px;
 }
 
-.co .option__title.co-option__title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0 12px;
+.co-option__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+}
+
+.co-option__main {
+  display: block;
+  min-width: 0;
 }
 
 .co .option__title.co-option__name,
@@ -994,7 +1143,7 @@
 }
 
 .co-option__price {
-  margin-left: auto;
+  font-weight: 800;
   white-space: nowrap;
 }
 
@@ -1023,6 +1172,13 @@
   }
 }
 
+/* Celulares bem estreitos: sem o ícone, o título da opção e o preço cabem na mesma linha. */
+@media (max-width: 380px) {
+  .co-option .option__icon {
+    display: none;
+  }
+}
+
 /* Grupos de campos */
 .co-group {
   min-width: 0;
@@ -1048,10 +1204,9 @@
 }
 
 .co-optional {
-  margin-left: 4px;
+  margin-left: 2px;
   color: var(--text-3);
-  font-size: var(--fs-xs);
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .co-addr__grid {
@@ -1078,16 +1233,82 @@
   background-position: right 9px center;
 }
 
+.co-cep-box {
+  display: grid;
+  justify-items: start;
+  align-content: start;
+  gap: 2px;
+  min-width: 0;
+  margin-top: -6px;
+}
+
 .co-cep {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  min-height: 42px;
-  margin-top: -6px;
   color: var(--text-2);
   font-size: var(--fs-sm);
   font-weight: 700;
   line-height: 1.4;
+}
+
+.co-cep .link {
+  color: inherit;
+}
+
+.co-cep__help {
+  min-height: 40px;
+  font-size: var(--fs-sm);
+}
+
+.co-unserved-box {
+  margin-top: var(--s-4);
+}
+
+.co-unserved-box:empty {
+  display: none;
+}
+
+.co-unserved > div {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.co-unserved .btn {
+  min-height: 44px;
+  margin-top: 4px;
+}
+
+.co-sum__issue .link {
+  color: inherit;
+  white-space: nowrap;
+}
+
+.co-addr__more {
+  margin-top: var(--s-4);
+  animation: co-reveal var(--t-med) var(--ease);
+}
+
+@keyframes co-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+.co-nonumber {
+  align-items: center;
+  min-height: 44px;
+  margin-top: -6px;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.co-addr .input[disabled] {
+  background: var(--rose-50);
+  color: var(--text-3);
 }
 
 .co-cep svg,
@@ -1111,6 +1332,10 @@
   color: #7A4F0E;
 }
 
+.co-cep.is-unknown {
+  font-weight: 600;
+}
+
 @media (min-width: 640px) {
   .co-addr__grid > .co-col-2 {
     grid-column: span 2;
@@ -1128,8 +1353,14 @@
     grid-column: span 6;
   }
 
-  .co-cep {
-    align-items: center;
+  .co-cep-box {
+    align-self: end;
+    align-content: center;
+    min-height: 50px;
+    margin-top: 0;
+  }
+
+  .co-nonumber {
     align-self: end;
     min-height: 50px;
     margin-top: 0;
@@ -1266,6 +1497,116 @@
 .co-sched {
   display: grid;
   gap: var(--s-5);
+}
+
+.co-daypick {
+  display: grid;
+  min-width: 0;
+}
+
+/* Celular: faixa com os próximos dias, no lugar do calendário do mês. */
+.co-days {
+  display: flex;
+  gap: 8px;
+  margin-inline: calc(var(--co-pad) * -1);
+  padding: 4px var(--co-pad) 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--co-pad);
+}
+
+.co-days::-webkit-scrollbar {
+  display: none;
+}
+
+.co-day {
+  flex: none;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  width: 62px;
+  min-height: 78px;
+  border-radius: var(--r-md);
+  background: var(--white);
+  box-shadow: inset 0 0 0 1.5px var(--line);
+  scroll-snap-align: start;
+  transition: background var(--t-fast), box-shadow var(--t-fast), color var(--t-fast);
+}
+
+.co-day:hover {
+  box-shadow: inset 0 0 0 1.5px var(--rose-400);
+}
+
+.co-day__wd {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+}
+
+.co-day__num {
+  font-family: var(--font-display);
+  font-size: 1.375rem;
+  line-height: 1.2;
+}
+
+.co-day__mo {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.co-day.is-selected,
+.co-day.is-selected:hover {
+  background: var(--rose-600);
+  box-shadow: var(--shadow-brand);
+  color: #fff;
+}
+
+.co-day.is-selected .co-day__wd,
+.co-day.is-selected .co-day__mo {
+  color: #FBE4EA;
+}
+
+.co-textbtn {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  color: var(--rose-700);
+  font-size: var(--fs-sm);
+  font-weight: 800;
+}
+
+.co-textbtn:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.co-textbtn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.co-sched--stack {
+  gap: var(--s-3);
+}
+
+.co-slots__note {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.co-slots__note svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--rose-500);
 }
 
 .co-cal {
@@ -1524,15 +1865,6 @@
   }
 }
 
-.co-error {
-  padding: 12px 14px;
-  border-radius: var(--r-md);
-  background: var(--red-soft);
-  color: #8A2318;
-  font-size: var(--fs-sm);
-  font-weight: 700;
-}
-
 /* Pagamento */
 .co-pay-panel {
   display: grid;
@@ -1694,32 +2026,8 @@
   }
 }
 
-.co-demo {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
-  padding: 10px 14px;
-  border-radius: var(--r-md);
-  background: var(--amber-soft);
-  color: #7A4F0E;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-}
-
-.co-demo > svg {
-  flex: none;
-  width: 18px;
-  height: 18px;
-}
-
-.co-demo > span {
-  flex: 1;
-  min-width: 200px;
-}
-
 .co-demo .link {
-  min-height: 32px;
+  margin-left: 4px;
   color: inherit;
   text-decoration-color: currentColor;
 }
@@ -2140,6 +2448,7 @@ form.is-busy .co-demo {
 /* Pix */
 .ord-pix {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--s-5);
   margin-bottom: var(--s-5);
   padding: var(--s-5);
@@ -2334,31 +2643,155 @@ form.is-busy .co-demo {
   color: var(--text-2);
 }
 
+/* Aviso de demonstração do Pix: ícone + texto na primeira linha, botão ocupando a largura toda embaixo. */
 .ord-pix__demo {
   display: grid;
-  gap: var(--s-3);
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--s-3) 12px;
   margin-top: var(--s-5);
-  padding: var(--s-4);
-  border: 1.5px dashed #E3C17A;
-  border-radius: var(--r-md);
-  background: var(--amber-soft);
 }
 
-.ord-pix__demo p {
-  display: flex;
-  gap: 10px;
-  color: #7A4F0E;
-  font-size: var(--fs-sm);
+.ord-pix__demo > div {
+  display: contents;
 }
 
-.ord-pix__demo svg {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
+.ord-pix__sim {
+  grid-column: 1 / -1;
+  padding-inline: var(--s-3);
+  line-height: 1.2;
+  white-space: normal;
 }
 
-@media (min-width: 760px) {
+.ord-pix__quick,
+.ord-pix__qr-toggle {
+  display: none;
+}
+
+.ord-pix .btn.is-copied {
+  --btn-bg: var(--green);
+  box-shadow: none;
+}
+
+.ord-pix .btn--secondary.is-copied {
+  --btn-bg: var(--green-soft);
+  --btn-fg: #1E6B42;
+  box-shadow: inset 0 0 0 1.5px #9CD3B5;
+}
+
+/* Celular e tablet: ninguém escaneia a própria tela. Primeiro copiar o código; o QR fica recolhido. */
+@media (max-width: 899px) {
+  .ord-pix {
+    gap: var(--s-4);
+  }
+
+  .ord-pix__body {
+    display: contents;
+  }
+
+  .ord-pix__top {
+    order: 1;
+  }
+
+  .ord-pix__quick {
+    order: 2;
+    display: grid;
+    gap: var(--s-3);
+  }
+
+  .ord-pix__expired {
+    order: 2;
+    margin-top: 0;
+  }
+
+  .ord-pix__qr-toggle {
+    order: 3;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 52px;
+    padding: 8px 14px;
+    border-radius: var(--r-md);
+    background: var(--rose-50);
+    box-shadow: inset 0 0 0 1px var(--line-soft);
+    color: var(--rose-800);
+    font-size: var(--fs-sm);
+    font-weight: 800;
+    line-height: 1.3;
+    text-align: left;
+  }
+
+  /* As duas frases ficam lado a lado quando cabem; senão, uma embaixo da outra, sem quebrar no meio. */
+  .ord-pix__qr-text {
+    flex: 1;
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 5px;
+    min-width: 0;
+  }
+
+  .ord-pix__qr-text span {
+    white-space: nowrap;
+  }
+
+  .ord-pix__qr-toggle svg {
+    flex: none;
+    width: 18px;
+    height: 18px;
+  }
+
+  .ord-pix__qr-toggle svg:last-child {
+    transition: transform var(--t-med) var(--ease);
+  }
+
+  .ord-pix__qr-toggle[aria-expanded="true"] svg:last-child {
+    transform: rotate(180deg);
+  }
+
+  .ord-pix__qr {
+    order: 4;
+    display: none;
+  }
+
+  .ord-pix.is-qr-open .ord-pix__qr {
+    display: grid;
+  }
+
+  .ord-pix__demo {
+    order: 5;
+    margin-top: 0;
+  }
+
+  .ord-pix__copy {
+    min-height: 60px;
+  }
+
+  .ord-pix__codeline {
+    min-height: 44px;
+    background: var(--rose-50);
+    color: var(--text-2);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: var(--fs-xs);
+    text-overflow: ellipsis;
+  }
+
+  .ord-pix__quick .ord-pix__how {
+    margin-block: 2px 0;
+  }
+
+  /* O botão principal desta tela é copiar o código; o de simulação fica discreto. */
+  .ord-pix__sim {
+    --btn-bg: var(--white);
+    --btn-fg: var(--rose-700);
+    box-shadow: inset 0 0 0 1.5px var(--rose-300);
+  }
+
+  .ord-pix__sim:hover {
+    --btn-bg: var(--rose-100);
+  }
+}
+
+@media (min-width: 900px) {
   .ord-pix {
     grid-template-columns: 250px minmax(0, 1fr);
     gap: var(--s-8);
@@ -2836,16 +3269,11 @@ form.is-busy .co-demo {
   text-decoration-color: currentColor;
 }
 
-.ord-demo {
+.ord-demo > div {
   display: grid;
   justify-items: start;
   gap: 10px;
-  padding: 14px 16px;
-  border: 1.5px dashed #E3C17A;
-  border-radius: var(--r-md);
-  background: var(--amber-soft);
-  color: #7A4F0E;
-  font-size: var(--fs-sm);
+  min-width: 0;
 }
 
 .ord-demo .btn {

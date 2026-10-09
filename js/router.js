@@ -2,7 +2,9 @@
 import { auth } from './store.js';
 import { closeAllDialogs, html, icon } from './ui.js';
 
-const view = (name) => () => import(`./views/${name}.js`);
+/** Importa a tela. Se uma tentativa falhou (rede), a próxima usa um endereço novo:
+ *  o navegador guarda a falha de um import() e repetiria o erro para sempre. */
+const view = (name) => (attempt) => import(`./views/${name}.js${attempt ? `?t=${attempt}` : ''}`);
 
 /** Tabela de rotas. `:id` vira params.id. */
 const ROUTES = [
@@ -25,18 +27,20 @@ const ROUTES = [
   { path: '/atendimento', load: view('support') },
 ].map((r) => ({
   ...r,
+  failures: 0,
   keys: (r.path.match(/:(\w+)/g) || []).map((k) => k.slice(1)),
   regex: new RegExp(`^${r.path.replace(/:(\w+)/g, '([^/]+)')}/?$`),
 }));
 
 const appEl = () => document.getElementById('app');
 const listeners = new Set();
-const scrollMemory = new Map();
-const trail = []; // caminhos visitados, para detectar "voltar"
+const scrollMemory = new Map(); // posição de rolagem por entrada do histórico
 
 let current = { path: null, full: null, cleanup: null, view: null, root: null, ctx: null };
 let navToken = 0;
-let replaceNext = false; // a próxima renderização veio de um navigate(..., { replace: true })
+// Cada entrada do histórico do navegador ganha um número (history.state.bolabIdx).
+// Comparando com o da tela atual sabemos se a pessoa avançou, voltou ou abriu algo novo.
+let currentIdx = -1;
 
 /** Lê o hash atual → { path, query, full }. */
 export function parseLocation() {
@@ -56,8 +60,7 @@ export function navigate(path, { replace = false, query } = {}) {
   }
   const hash = `#${target}`;
   if (replace) {
-    replaceNext = true;
-    history.replaceState(null, '', hash);
+    history.replaceState(history.state, '', hash); // mantém o número da entrada
   } else if (location.hash !== hash) {
     location.hash = hash;
     return;
@@ -67,7 +70,7 @@ export function navigate(path, { replace = false, query } = {}) {
 
 /** Volta uma tela; se não houver histórico dentro da loja, vai para `fallback`. */
 export function goBack(fallback = '/') {
-  if (trail.length > 1) history.back();
+  if (currentIdx > 0) history.back();
   else navigate(fallback, { replace: true });
 }
 
@@ -84,28 +87,35 @@ export function currentRoute() {
 function match(path) {
   for (const r of ROUTES) {
     const m = path.match(r.regex);
-    if (m) {
+    if (!m) continue;
+    try {
       const params = {};
       r.keys.forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1])));
       return { route: r, params };
+    } catch {
+      return null; // link com "%" quebrado: trata como página não encontrada
     }
   }
   return null;
 }
 
-function statusView({ iconName, title, text, cta, href }) {
+function statusView({ iconName, title, text, cta, href, retry = false }) {
   return {
     layout: 'default',
     render: () => html`
       <div class="container">
         <div class="empty">
           <div class="empty__art">${icon(iconName)}</div>
-          <h2>${title}</h2>
+          <h1 style="font-size:var(--fs-xl)">${title}</h1>
           <p>${text}</p>
-          <a class="btn" href="${href}">${cta}</a>
+          ${retry ? html`<button class="btn" type="button" data-router-retry>Tentar de novo</button>` : ''}
+          <a class="btn ${retry ? 'btn--secondary' : ''}" href="${href}">${cta}</a>
         </div>
       </div>
     `,
+    mount: (root) => {
+      root.querySelector('[data-router-retry]')?.addEventListener('click', () => render());
+    },
   };
 }
 
@@ -123,24 +133,30 @@ const LOAD_ERROR = statusView({
   text: 'Confira sua conexão e tente de novo.',
   cta: 'Voltar ao início',
   href: '#/',
+  retry: true,
 });
 
-/** Atualiza o rastro de telas visitadas. Devolve true quando a pessoa está voltando. */
-function updateTrail(full, wasReplace) {
-  if (wasReplace && trail.length) {
-    trail[trail.length - 1] = full;
-    return false;
+/**
+ * Descobre o tipo da navegação e numera a entrada do histórico.
+ * → 'new' (link ou navigate), 'back', 'forward' ou 'same' (replace / recarga da mesma entrada)
+ */
+function classifyNavigation() {
+  const state = history.state;
+  const known = state && Number.isInteger(state.bolabIdx);
+  if (!known) {
+    const idx = currentIdx + 1;
+    history.replaceState({ ...(state || {}), bolabIdx: idx }, '');
+    currentIdx = idx;
+    return 'new';
   }
-  const isBack = trail.length > 1 && trail[trail.length - 2] === full;
-  if (isBack) trail.pop();
-  else if (trail[trail.length - 1] !== full) trail.push(full);
-  return isBack;
+  const idx = state.bolabIdx;
+  const kind = currentIdx < 0 || idx === currentIdx ? 'same' : idx < currentIdx ? 'back' : 'forward';
+  currentIdx = idx;
+  return kind;
 }
 
 async function render() {
   const token = ++navToken;
-  const wasReplace = replaceNext;
-  replaceNext = false;
   const loc = parseLocation();
   const found = match(loc.path);
 
@@ -149,9 +165,10 @@ async function render() {
   if (found) {
     params = found.params;
     try {
-      mod = (await found.route.load()).default;
+      mod = (await found.route.load(found.route.failures)).default;
     } catch (err) {
       console.error('[router] falha ao carregar a tela', loc.path, err);
+      found.route.failures += 1;
       mod = LOAD_ERROR;
     }
   }
@@ -162,9 +179,11 @@ async function render() {
     return;
   }
 
+  const leavingIdx = currentIdx;
+  const kind = classifyNavigation();
+
   // Mesma tela, só a query mudou: a tela pode atualizar sem recriar tudo.
   if (current.view === mod && current.path === loc.path && typeof mod.onQuery === 'function') {
-    updateTrail(loc.full, wasReplace);
     current.full = loc.full;
     current.ctx.query = loc.query;
     mod.onQuery(current.root, current.ctx);
@@ -172,8 +191,7 @@ async function render() {
     return;
   }
 
-  if (current.full) scrollMemory.set(current.full, window.scrollY);
-  const isBack = updateTrail(loc.full, wasReplace);
+  if (leavingIdx >= 0 && current.full) scrollMemory.set(leavingIdx, window.scrollY);
 
   closeAllDialogs();
   try {
@@ -214,21 +232,25 @@ async function render() {
   document.body.dataset.layout = mod.layout || 'default';
   document.title = mod.title ? `${typeof mod.title === 'function' ? mod.title(ctx) : mod.title} · BOLAB` : 'BOLAB — Bolos artesanais sob encomenda';
 
+  let active = mod;
   try {
     root.innerHTML = String(mod.render(ctx));
   } catch (err) {
     console.error('[router] erro ao desenhar a tela', loc.path, err);
+    active = LOAD_ERROR;
     root.innerHTML = String(LOAD_ERROR.render());
   }
   appEl().replaceChildren(root);
   current = { path: loc.path, full: loc.full, cleanup: null, view: mod, root, ctx };
   try {
-    current.cleanup = mod.mount?.(root, ctx) || null;
+    current.cleanup = active.mount?.(root, ctx) || null;
   } catch (err) {
     console.error('[router] erro ao iniciar a tela', loc.path, err);
   }
 
-  window.scrollTo(0, isBack ? scrollMemory.get(loc.full) || 0 : 0);
+  // Só quem voltou ou avançou pelo histórico retoma a rolagem; tela aberta por link começa do topo.
+  const restore = kind === 'back' || kind === 'forward';
+  window.scrollTo({ top: restore ? scrollMemory.get(currentIdx) || 0 : 0, behavior: 'instant' });
   notify(loc, mod);
 }
 
@@ -247,7 +269,8 @@ export function revalidate() {
 }
 
 export function startRouter() {
+  // A rolagem é controlada aqui (o conteúdo é montado depois que o navegador tentaria restaurá-la).
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
   window.addEventListener('hashchange', render);
-  // Depois de entrar ou sair, telas protegidas precisam ser reavaliadas.
   render();
 }

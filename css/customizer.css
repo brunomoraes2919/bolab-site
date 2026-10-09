@@ -13,18 +13,55 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   bottom: auto;
 }
 
+/* Altura do palco no celular. Registrada como medida para poder crescer suavemente no resumo. */
+@property --cz-stage {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 380px;
+}
+
 .cz {
   --cz-bar: 56px;
   --cz-lap: 22px; /* quanto o painel sobe sobre o palco no celular */
+  --cz-stage: clamp(250px, 45vh, 470px);
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: clamp(250px, 45vh, 470px) minmax(0, 1fr); /* navegadores sem dvh */
-  grid-template-rows: clamp(250px, 45dvh, 470px) minmax(0, 1fr);
+  grid-template-rows: var(--cz-stage) minmax(0, 1fr);
   height: 100vh;
-  height: 100dvh;
   overflow: hidden;
   background: var(--surface);
+  transition: --cz-stage 520ms var(--ease);
+}
+
+/* No resumo, o bolo ganha o palco: é o momento da revelação. */
+.cz[data-step="resumo"] {
+  --cz-stage: clamp(250px, min(54vh, 100vh - 392px), 520px);
+}
+
+@supports (height: 100dvh) {
+  .cz {
+    --cz-stage: clamp(250px, 45dvh, 470px);
+    height: 100dvh;
+  }
+
+  .cz[data-step="resumo"] {
+    --cz-stage: clamp(250px, min(54dvh, 100dvh - 392px), 520px);
+  }
+}
+
+/* Com o teclado do celular aberto, a tela inteira cabe na área visível: bolo em cima, campo embaixo. */
+.cz.is-typing {
+  --cz-stage: max(180px, calc(var(--cz-vh, 100vh) * 0.52));
+  height: var(--cz-vh, 100vh);
+  transform: translateY(var(--cz-vtop, 0px));
+  transition: none;
+}
+
+.cz.is-typing .cz-steps,
+.cz.is-typing .cz-foot,
+.cz.is-typing .cz-tools {
+  display: none;
 }
 
 /* ───────── Palco ───────── */
@@ -87,7 +124,8 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   padding: env(safe-area-inset-top, 0px) 10px 0 6px;
 }
 
-.cz-round {
+.cz-round,
+.cz-restart {
   display: grid;
   place-items: center;
   flex: none;
@@ -95,7 +133,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   height: 44px;
   border-radius: 50%;
   color: var(--cocoa-700);
-  transition: background var(--t-fast), color var(--t-fast), transform var(--t-fast);
+  transition: background var(--t-fast), color var(--t-fast), transform var(--t-fast), box-shadow var(--t-fast);
 }
 
 .cz-round svg {
@@ -103,25 +141,40 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   height: 22px;
 }
 
-.cz-round:hover {
+.cz-restart svg {
+  width: 20px;
+  height: 20px;
+}
+
+.cz-restart span {
+  display: none;
+}
+
+.cz-round:hover,
+.cz-restart:hover {
   background: rgba(255, 255, 255, 0.8);
   color: var(--rose-700);
 }
 
-.cz-round:active {
+.cz-round:active,
+.cz-restart:active {
   transform: scale(0.94);
 }
 
 .cz-brand {
   display: flex;
+  flex: 1 1 0;
   align-items: center;
   gap: 10px;
   min-width: 0;
-  margin-right: auto;
+}
+
+.cz-brand__mark {
+  flex: none;
+  border-radius: 8px;
 }
 
 .cz-brand img {
-  flex: none;
   width: 22px;
   height: 34px;
   object-fit: contain;
@@ -129,16 +182,22 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 .cz-brand__text {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
   min-width: 0;
   line-height: 1.15;
 }
 
-.cz-brand__text strong {
+/* o título nunca passa por baixo dos botões: se faltar espaço, encurta com reticências */
+.cz-brand__text h1 {
+  overflow: hidden;
   font-family: var(--font-display);
   font-size: 1.0625rem;
   font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0;
   color: var(--text);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -216,31 +275,34 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   }
 }
 
-/* Dica "Arraste para girar" */
+/* Dica "Arraste para girar": some no primeiro toque. No celular fica no canto livre do palco,
+   ao lado dos botões; no computador, no alto do palco — nunca sobre o bolo ou o prato. */
 .cz-hint {
   position: absolute;
-  top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) + 2px);
-  left: 50%;
+  left: 12px;
+  bottom: calc(var(--cz-lap) + 10px);
   z-index: 2;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px;
-  border-radius: var(--r-pill);
+  max-width: 100px;
+  min-height: 44px;
+  padding: 6px 10px 6px 9px;
+  border-radius: 16px;
   background: rgba(42, 18, 16, 0.78);
   color: #fff;
   font-size: var(--fs-xs);
   font-weight: 800;
-  white-space: nowrap;
+  line-height: 1.15;
   pointer-events: none;
   opacity: 0;
-  transform: translate(-50%, -6px);
+  transform: translateY(6px);
   transition: opacity 400ms var(--ease), transform 400ms var(--ease);
 }
 
 .cz-hint.is-on {
   opacity: 1;
-  transform: translate(-50%, 0);
+  transform: none;
 }
 
 .cz-hint svg {
@@ -327,7 +389,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   }
 }
 
-/* Rendimento e prazo (só no computador) */
+/* Rendimento e entrega (só em telas largas) */
 .cz-meta {
   position: absolute;
   left: 20px;
@@ -460,6 +522,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 /* Etapas */
 .cz-steps {
+  grid-row: 1;
   display: flex;
   gap: 6px;
   padding: 12px 16px 10px;
@@ -537,8 +600,9 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 /* Corpo (rola por dentro) */
 .cz-body {
+  grid-row: 2;
   min-height: 0;
-  padding: 6px 16px 22px;
+  padding: 4px 16px 22px;
   overflow-y: auto;
   overscroll-behavior: contain;
   outline: 0;
@@ -561,46 +625,71 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   }
 }
 
+/* Título da etapa: só no computador — no celular, o chip escuro já diz onde a pessoa está */
 .cz-head {
-  display: flex;
+  display: none;
   flex-direction: column;
   gap: 2px;
 }
 
 .cz-head .eyebrow {
-  display: none;
   font-size: 0.6875rem;
 }
 
 .cz-head h2 {
-  font-size: 1.375rem;
+  font-size: 1.75rem;
 }
 
 .cz-head p {
-  display: none;
   color: var(--text-2);
   font-size: var(--fs-sm);
 }
 
-/* Dica da chef */
+/* Âncora de preço (etapa 1) */
+.cz-anchor {
+  margin: 2px 0 8px;
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.cz-anchor strong {
+  color: var(--text);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+/* Dica da chef: no celular, uma linha que abre ao toque; no computador, sempre aberta */
 .cz-tip {
-  display: flex;
-  gap: 10px;
-  margin-top: 8px;
-  padding: 10px 12px;
+  margin-top: 2px;
   border-radius: var(--r-md);
   background: linear-gradient(135deg, var(--gold-soft) 0%, #fff8ec 100%);
+}
+
+.cz-sec + .cz-tip {
+  margin-top: 14px;
+}
+
+.cz-tip__btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 10px 6px 8px;
+  border-radius: inherit;
   color: #6b4d12;
   font-size: 0.8125rem;
   line-height: 1.4;
+  text-align: left;
 }
 
 .cz-tip__icon {
   display: grid;
   place-items: center;
   flex: none;
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 4px rgba(201, 154, 46, 0.3);
@@ -608,22 +697,70 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 }
 
 .cz-tip__icon svg {
-  width: 20px;
-  height: 20px;
+  width: 17px;
+  height: 17px;
 }
 
-.cz-tip strong {
-  display: block;
+.cz-tip__body {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.cz-tip__body strong {
+  flex: none;
   color: #7a5a10;
-  font-size: var(--fs-xs);
+  font-size: 0.6875rem;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
+.cz-tip__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cz-tip__chev {
+  flex: none;
+  color: #a37c1c;
+}
+
+.cz-tip__chev svg {
+  width: 16px;
+  height: 16px;
+  transition: transform var(--t-med) var(--ease);
+}
+
+.cz-tip.is-open .cz-tip__btn {
+  align-items: flex-start;
+  padding-block: 9px;
+}
+
+.cz-tip.is-open .cz-tip__body {
+  display: block;
+}
+
+.cz-tip.is-open .cz-tip__body strong {
+  display: block;
+}
+
+.cz-tip.is-open .cz-tip__text {
+  display: block;
+  white-space: normal;
+}
+
+.cz-tip.is-open .cz-tip__chev svg {
+  transform: rotate(180deg);
+}
+
 /* Seções */
 .cz-sec {
-  margin-top: 16px;
+  margin-top: 14px;
 }
 
 .cz-sec__head {
@@ -631,8 +768,8 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 36px;
-  margin-bottom: 8px;
+  min-height: 28px;
+  margin-bottom: 6px;
 }
 
 .cz-sec__head h3 {
@@ -642,17 +779,18 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   letter-spacing: 0;
 }
 
-.cz-sec__head h3 small {
-  margin-left: 6px;
-  color: var(--text-3);
-  font-size: var(--fs-sm);
-  font-weight: 700;
-}
-
 .cz-sec__note {
   color: var(--text-2);
   font-size: var(--fs-sm);
   font-weight: 700;
+  text-align: right;
+}
+
+/* "(opcional)": sempre em peso normal, logo depois do rótulo */
+.cz-optional {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 400;
 }
 
 .cz-linkbtn {
@@ -679,11 +817,16 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 }
 
 .cz-linkbtn--solid {
+  min-height: 40px;
   background: var(--rose-100);
 }
 
 .cz-linkbtn--solid:hover {
   background: var(--rose-200);
+}
+
+.cz-linkbtn--inset {
+  margin: 4px 0 -6px -12px;
 }
 
 /* Grades de opções */
@@ -764,12 +907,25 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   margin-top: 2px;
   color: var(--rose-700);
   font-size: var(--fs-xs);
+  line-height: 1.25;
+}
+
+.cz-opt__price b {
   font-weight: 800;
+  white-space: nowrap;
+}
+
+/* "por camada": deixa claro que o valor se repete, sem assustar com o total */
+.cz-opt__price small {
+  color: var(--text-2);
+  font-size: 0.6875rem;
+  font-weight: 700;
   white-space: nowrap;
 }
 
 .cz-opt__price.is-free {
   color: var(--green);
+  font-weight: 800;
 }
 
 .cz-opt__check {
@@ -804,9 +960,9 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 .cz-opt--tile {
   flex-direction: column;
   justify-content: center;
-  gap: 4px;
-  min-height: 96px;
-  padding: 12px 6px 10px;
+  gap: 2px;
+  min-height: 84px;
+  padding: 8px 4px;
   text-align: center;
 }
 
@@ -819,8 +975,8 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   display: grid;
   place-items: center;
   flex: none;
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   color: var(--rose-600);
 }
 
@@ -835,7 +991,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 .cz-opt__big {
   font-family: var(--font-display);
-  font-size: 1.75rem;
+  font-size: 1.625rem;
   font-weight: 700;
   line-height: 1;
   color: var(--rose-600);
@@ -978,6 +1134,10 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   padding: 10px 10px 10px 14px;
   border-radius: var(--r-md);
   background: var(--rose-50);
+}
+
+.cz-row--gap {
+  margin-top: 10px;
 }
 
 .cz-row__text {
@@ -1131,12 +1291,20 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   font-weight: 800;
 }
 
-/* Inspirações */
+/* Inspirações — no celular, uma fileira de miniaturas (a primeira é o "Surpreenda-me") */
+.cz-sec--presets {
+  margin-top: 0;
+}
+
+.cz-sec--presets .cz-sec__head {
+  display: none;
+}
+
 .cz-presets {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   margin-inline: -16px;
-  padding: 2px 16px 6px;
+  padding: 2px 16px 4px;
   overflow-x: auto;
   scrollbar-width: none;
   scroll-snap-type: x proximity;
@@ -1150,28 +1318,28 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   display: flex;
   flex: none;
   flex-direction: column;
-  width: 116px;
-  border-radius: var(--r-md);
-  background: var(--white);
-  box-shadow: inset 0 0 0 1.5px var(--line);
-  overflow: hidden;
+  gap: 4px;
+  width: 78px;
   scroll-snap-align: start;
-  text-align: left;
-  transition: box-shadow var(--t-fast), transform var(--t-med) var(--ease);
-}
-
-.cz-preset:hover {
-  box-shadow: inset 0 0 0 1.5px var(--rose-400), var(--shadow-2);
-  transform: translateY(-2px);
+  text-align: center;
 }
 
 .cz-preset__img {
   display: grid;
   place-items: center;
-  width: 100%;
-  aspect-ratio: 1;
+  width: 78px;
+  height: 78px;
+  border-radius: 18px;
   background: radial-gradient(circle at 50% 42%, #fffdfb 0%, #fdeef2 55%, #f7d3dc 100%);
+  box-shadow: inset 0 0 0 1.5px var(--line);
   color: var(--rose-300);
+  overflow: hidden;
+  transition: box-shadow var(--t-fast), transform var(--t-med) var(--ease);
+}
+
+.cz-preset:hover .cz-preset__img {
+  box-shadow: inset 0 0 0 1.5px var(--rose-400);
+  transform: translateY(-2px);
 }
 
 .cz-preset__img img {
@@ -1181,27 +1349,43 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 }
 
 .cz-preset__img svg {
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
+}
+
+.cz-preset--surprise .cz-preset__img {
+  background: var(--rose-100);
+  box-shadow: none;
+  border: 1.5px dashed var(--rose-400);
+  color: var(--rose-700);
+}
+
+.cz-preset--surprise .cz-preset__text strong {
+  display: block;
+  color: var(--rose-700);
+  font-size: 0.65625rem;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
 }
 
 .cz-preset__text {
   display: flex;
   flex-direction: column;
-  padding: 8px 10px 10px;
-  line-height: 1.25;
+  line-height: 1.2;
 }
 
 .cz-preset__text strong {
-  font-family: var(--font-display);
-  font-size: var(--fs-sm);
-  font-weight: 700;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 0.6875rem;
+  font-weight: 800;
 }
 
 .cz-preset__text span {
-  color: var(--text-2);
-  font-size: 0.6875rem;
-  font-weight: 700;
+  display: none;
 }
 
 /* Campo de texto com contador */
@@ -1223,9 +1407,27 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   font-weight: 800;
 }
 
-.cz-field__top span {
-  color: var(--text-3);
+.cz-field__price {
+  flex: none;
+  color: var(--rose-700);
   font-size: var(--fs-xs);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.cz-field__foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.cz-field__foot span:last-child {
+  flex: none;
+  color: var(--text-3);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -1268,7 +1470,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  margin-top: 18px;
+  margin-top: 14px;
   padding: 24px 20px;
   border-radius: var(--r-lg);
   background: var(--rose-50);
@@ -1304,7 +1506,124 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   margin-top: 4px;
 }
 
-/* Resumo */
+/* ───────── Resumo: a revelação ───────── */
+.cz-offer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-top: 4px;
+}
+
+.cz-offer .eyebrow {
+  font-size: 0.6875rem;
+}
+
+.cz-offer .eyebrow svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cz-offer__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.cz-offer__name h2 {
+  font-size: 1.4375rem;
+  line-height: 1.15;
+}
+
+.cz-rename {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  color: var(--rose-700);
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  white-space: nowrap;
+  transition: background var(--t-fast);
+}
+
+.cz-rename:hover {
+  background: var(--rose-100);
+}
+
+.cz-rename svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cz-offer__input {
+  min-height: 46px;
+  font-family: var(--font-display);
+  font-size: 1.1875rem;
+  font-weight: 700;
+}
+
+.cz-offer__price {
+  margin-top: 6px;
+  line-height: 1;
+}
+
+.cz-offer__price strong {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 2.125rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transform-origin: left center;
+}
+
+.cz-offer__pay {
+  margin-top: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+
+.cz-offer__pay strong {
+  color: var(--green);
+  font-weight: 800;
+}
+
+.cz-offer__ship {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.cz-offer__ship svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--rose-600);
+}
+
+.cz-offer__ship strong {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.cz-offer__sub {
+  margin-top: 8px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
 .cz-sum {
   margin-top: 14px;
   border-radius: var(--r-lg);
@@ -1384,56 +1703,60 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   height: 14px;
 }
 
-.cz-facts {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+/* Depois dos detalhes: o preço explicado e três ações discretas (salvar, enviar, baixar) */
+.cz-after {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
   margin-top: 12px;
 }
 
-.cz-fact {
+.cz-quiet {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--r-md);
-  background: var(--rose-50);
-  line-height: 1.25;
+  gap: 2px;
 }
 
-.cz-fact svg {
-  flex: none;
-  width: 20px;
-  height: 20px;
+.cz-quiet__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 44px;
+  padding: 0 9px;
+  border-radius: 12px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  white-space: nowrap;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+
+.cz-quiet__btn:hover {
+  background: var(--rose-50);
+  color: var(--rose-700);
+}
+
+.cz-quiet__btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.cz-quiet__btn[aria-pressed="true"] {
   color: var(--rose-600);
 }
 
-.cz-fact small {
-  display: block;
-  color: var(--text-2);
-  font-size: 0.6875rem;
-  font-weight: 700;
+.cz-quiet__btn[aria-pressed="true"] svg {
+  fill: currentColor;
+  animation: pop 320ms var(--ease);
 }
 
-.cz-fact strong {
-  font-size: var(--fs-sm);
-  font-weight: 800;
-}
-
+/* Detalhes do preço (folha aberta pelo total) */
 .cz-bill {
-  margin-top: 16px;
   padding: 14px 16px 12px;
   border-radius: var(--r-lg);
   background: var(--cream);
   box-shadow: inset 0 0 0 1px var(--line-soft);
-}
-
-.cz-bill h3 {
-  margin-bottom: 6px;
-  font-family: var(--font-body);
-  font-size: var(--fs-sm);
-  font-weight: 800;
-  letter-spacing: 0;
 }
 
 .cz-bill__line {
@@ -1491,57 +1814,6 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   text-align: right;
 }
 
-.cz-final {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.cz-final__more {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.cz-chipbtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 46px;
-  padding: 0 8px;
-  border-radius: var(--r-md);
-  background: var(--white);
-  box-shadow: inset 0 0 0 1.5px var(--line);
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  font-weight: 800;
-  white-space: nowrap;
-  transition: box-shadow var(--t-fast), color var(--t-fast), background var(--t-fast);
-}
-
-.cz-chipbtn:hover {
-  box-shadow: inset 0 0 0 1.5px var(--rose-400);
-  color: var(--rose-700);
-}
-
-.cz-chipbtn svg {
-  width: 18px;
-  height: 18px;
-}
-
-.cz-chipbtn[aria-pressed="true"] {
-  background: var(--rose-50);
-  box-shadow: inset 0 0 0 2px var(--rose-600);
-  color: var(--rose-700);
-}
-
-.cz-chipbtn[aria-pressed="true"] svg {
-  fill: currentColor;
-  animation: pop 320ms var(--ease);
-}
-
 .cz-trust {
   display: flex;
   align-items: flex-start;
@@ -1562,6 +1834,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 /* ───────── Barra inferior ───────── */
 .cz-foot {
+  grid-row: 3;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1581,6 +1854,11 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   box-shadow: inset 0 0 0 1.5px var(--rose-300);
   color: var(--rose-700);
   transition: background var(--t-fast);
+}
+
+/* no resumo do celular o botão final é largo: o "voltar" sai (as etapas no topo continuam clicáveis) */
+.cz-prev[data-last] {
+  display: none;
 }
 
 .cz-prev:hover {
@@ -1669,6 +1947,10 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   font-size: var(--fs-sm);
 }
 
+.cz-added p + p {
+  margin-top: 0;
+}
+
 .cz-added .price {
   margin-top: 6px;
 }
@@ -1688,9 +1970,31 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   background: var(--rose-50);
 }
 
+/* ───────── Celular baixo: miniaturas menores, para o Formato caber na primeira tela ───────── */
+@media (max-height: 720px) and (max-width: 899px) {
+  .cz-preset {
+    width: 60px;
+  }
+
+  .cz-preset__img {
+    width: 60px;
+    height: 60px;
+    border-radius: 15px;
+  }
+
+  .cz-preset__text {
+    display: none;
+  }
+
+  .cz-opt--tile {
+    min-height: 76px;
+  }
+}
+
 /* ───────── Celular deitado (pouca altura): palco e painel lado a lado ───────── */
 @media (max-height: 520px) and (min-width: 560px) and (max-width: 899px) {
-  .cz {
+  .cz,
+  .cz[data-step="resumo"] {
     --cz-lap: 0px;
     --cz-bar: 48px;
     grid-template-columns: minmax(0, 1fr) minmax(300px, 46%);
@@ -1710,7 +2014,8 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 /* ───────── Computador ───────── */
 @media (min-width: 900px) {
-  .cz {
+  .cz,
+  .cz[data-step="resumo"] {
     --cz-bar: 76px;
     --cz-lap: 0px;
     grid-template-columns: minmax(0, 1fr) 440px;
@@ -1727,7 +2032,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
     height: 43px;
   }
 
-  .cz-brand__text strong {
+  .cz-brand__text h1 {
     font-size: 1.25rem;
   }
 
@@ -1739,9 +2044,29 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
     display: inline-flex;
   }
 
-  .cz-round--surface {
+  /* "Recomeçar" com ícone e nome: não se confunde com desfazer */
+  .cz-restart {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    width: auto;
+    height: 46px;
+    padding: 0 16px 0 13px;
+    border-radius: var(--r-pill);
     background: rgba(255, 255, 255, 0.92);
     box-shadow: var(--shadow-1);
+    font-size: var(--fs-sm);
+    font-weight: 800;
+    backdrop-filter: blur(8px);
+  }
+
+  .cz-restart span {
+    display: inline;
+  }
+
+  .cz-restart:hover {
+    background: #fff;
+    box-shadow: var(--shadow-2);
   }
 
   .cz-tools {
@@ -1750,10 +2075,20 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   }
 
   .cz-hint {
-    top: auto;
-    bottom: 84px;
+    top: calc(var(--cz-bar) + 6px);
+    bottom: auto;
+    left: 50%;
+    max-width: none;
+    min-height: 0;
     padding: 10px 18px;
+    border-radius: var(--r-pill);
     font-size: var(--fs-sm);
+    white-space: nowrap;
+    transform: translate(-50%, -6px);
+  }
+
+  .cz-hint.is-on {
+    transform: translate(-50%, 0);
   }
 
   .cz-panel {
@@ -1772,37 +2107,161 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
     padding: 8px 28px 28px;
   }
 
-  .cz-head .eyebrow {
-    display: inline-flex;
+  .cz-head {
+    display: flex;
   }
 
-  .cz-head h2 {
-    font-size: 1.75rem;
+  .cz-anchor {
+    margin: 10px 0 0;
+    font-size: var(--fs-sm);
   }
 
-  .cz-head p {
-    display: block;
+  .cz-tip,
+  .cz-sec + .cz-tip {
+    margin-top: 14px;
   }
 
-  .cz-tip {
+  .cz-tip__btn,
+  .cz-tip.is-open .cz-tip__btn {
+    align-items: flex-start;
     gap: 12px;
-    margin-top: 12px;
     padding: 12px 14px;
     font-size: var(--fs-sm);
     line-height: 1.45;
+    cursor: default;
+  }
+
+  .cz-tip__icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .cz-tip__icon svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .cz-tip__body {
+    display: block;
+  }
+
+  .cz-tip__body strong {
+    display: block;
+    font-size: var(--fs-xs);
+  }
+
+  .cz-tip__text {
+    display: block;
+    white-space: normal;
+  }
+
+  .cz-tip__chev {
+    display: none;
   }
 
   .cz-sec {
     margin-top: 20px;
   }
 
+  .cz-sec__head {
+    min-height: 36px;
+    margin-bottom: 8px;
+  }
+
+  .cz-opt--tile {
+    gap: 4px;
+    min-height: 96px;
+    padding: 12px 6px 10px;
+  }
+
+  .cz-opt__art {
+    width: 40px;
+    height: 40px;
+  }
+
+  .cz-opt__big {
+    font-size: 1.75rem;
+  }
+
+  /* Inspirações em cartões, com o botão "Surpreenda-me" no título da seção */
+  .cz-sec--presets {
+    margin-top: 18px;
+  }
+
+  .cz-sec--presets .cz-sec__head {
+    display: flex;
+  }
+
+  .cz-preset--surprise {
+    display: none;
+  }
+
   .cz-presets {
+    gap: 10px;
     margin-inline: -28px;
-    padding-inline: 28px;
+    padding: 2px 28px 6px;
   }
 
   .cz-preset {
+    gap: 0;
     width: 136px;
+    border-radius: var(--r-md);
+    background: var(--white);
+    box-shadow: inset 0 0 0 1.5px var(--line);
+    overflow: hidden;
+    text-align: left;
+    transition: box-shadow var(--t-fast), transform var(--t-med) var(--ease);
+  }
+
+  .cz-preset:hover {
+    box-shadow: inset 0 0 0 1.5px var(--rose-400), var(--shadow-2);
+    transform: translateY(-2px);
+  }
+
+  .cz-preset__img,
+  .cz-preset:hover .cz-preset__img {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+    border-radius: 0;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .cz-preset__text {
+    display: flex;
+    padding: 8px 10px 10px;
+    line-height: 1.25;
+  }
+
+  .cz-preset__text strong {
+    color: var(--text);
+    font-family: var(--font-display);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+  }
+
+  .cz-preset__text span {
+    display: block;
+    color: var(--text-2);
+    font-size: 0.6875rem;
+    font-weight: 700;
+  }
+
+  .cz-offer {
+    padding-top: 10px;
+  }
+
+  .cz-offer__name h2 {
+    font-size: 1.75rem;
+  }
+
+  .cz-offer__price strong {
+    font-size: 2.5rem;
+  }
+
+  .cz-offer__sub {
+    font-size: var(--fs-sm);
   }
 
   .cz-foot {
@@ -1814,7 +2273,8 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
     display: none;
   }
 
-  .cz-prev {
+  .cz-prev,
+  .cz-prev[data-last] {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1835,6 +2295,42 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   }
 }
 
+/* Palco estreito (computador pequeno, tablet deitado): a barra superior enxuga para o título caber */
+@media (min-width: 900px) and (max-width: 1099px) {
+  .cz-top {
+    gap: 8px;
+    padding-inline: 10px 14px;
+  }
+
+  .cz-brand__text h1 {
+    font-size: 1.125rem;
+  }
+
+  .cz-restart {
+    display: grid;
+    width: 46px;
+    padding: 0;
+    border-radius: 50%;
+  }
+
+  .cz-restart span {
+    display: none;
+  }
+
+  .cz-price {
+    gap: 8px;
+    padding: 0 8px 0 14px;
+  }
+
+  .cz-price small {
+    display: none;
+  }
+
+  .cz-price strong {
+    font-size: 1.25rem;
+  }
+}
+
 @media (min-width: 1180px) {
   .cz-meta {
     display: inline-flex;
@@ -1842,7 +2338,8 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 }
 
 @media (min-width: 1280px) {
-  .cz {
+  .cz,
+  .cz[data-step="resumo"] {
     grid-template-columns: minmax(0, 1fr) 468px;
   }
 }
@@ -1852,16 +2349,16 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
     display: none;
   }
 
-  .cz-grid--4 {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .cz-opt--tile {
-    min-height: 84px;
+  .cz-anchor {
+    font-size: 0.75rem;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .cz {
+    transition: none;
+  }
+
   .cz-hint svg,
   .cz-loading img,
   .cz-tool--icon[aria-pressed="true"] svg {

@@ -2,6 +2,7 @@
 import { html, raw, icon, initials, on, toast, formData, applyErrors, validators, bindMasks, openDialog, toDate, isoDate } from '../ui.js';
 import { auth } from '../store.js';
 import { GOOGLE_LOGO } from '../icons.js';
+import { SITE } from '../data/site.js';
 import { accountPage, withLoading } from './account.js';
 import { passwordField, bindPasswordFields, clearErrorsOnInput } from './auth.js';
 
@@ -61,7 +62,7 @@ export default {
           <div class="form-grid form-grid--2">
             <div class="field span-2">
               <label for="pf-name">Nome completo</label>
-              <input class="input" id="pf-name" name="name" type="text" autocomplete="name" autocapitalize="words" value="${user.name}" />
+              <input class="input" id="pf-name" name="name" type="text" autocomplete="name" autocapitalize="words" maxlength="80" value="${user.name}" />
             </div>
             <div class="field">
               <label for="pf-email">E-mail</label>
@@ -112,7 +113,7 @@ export default {
           </div>
           ${social
             ? html`<div class="acc-provider">
-                ${raw(GOOGLE_LOGO)}<span>Você entrou com o Google (conta de exemplo desta demonstração), então ainda não tem senha na BOLAB.</span>
+                ${raw(GOOGLE_LOGO)}<span>Você entrou com o Google${SITE.demo ? ' (conta de exemplo desta demonstração)' : ''}, então ainda não tem senha na BOLAB.</span>
               </div>`
             : ''}
           <input type="email" name="username" autocomplete="username" value="${user.email}" hidden />

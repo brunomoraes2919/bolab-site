@@ -7,8 +7,8 @@
 
 .catalog-head {
   display: grid;
-  gap: var(--s-5);
-  padding-block: var(--s-6) var(--s-5);
+  gap: var(--s-4);
+  padding-block: var(--s-5) var(--s-4);
 }
 
 .catalog-head__title {
@@ -17,7 +17,9 @@
   letter-spacing: -0.02em;
 }
 
+/* No celular o subtítulo sai: a primeira foto aparece mais cedo. */
 .catalog-head__lead {
+  display: none;
   margin-top: var(--s-2);
   max-width: 44ch;
   color: var(--text-2);
@@ -123,8 +125,17 @@
   }
 }
 
-.catalog-cell {
-  display: grid;
+.catalog-cell,
+.pd-shelf__cell,
+.favs-cell {
+  display: flex;
+  min-width: 0;
+}
+
+.catalog-cell > *,
+.pd-shelf__cell > *,
+.favs-cell > * {
+  flex: 1;
   min-width: 0;
 }
 
@@ -279,6 +290,15 @@
 }
 
 @media (min-width: 640px) {
+  .catalog-head {
+    gap: var(--s-5);
+    padding-block: var(--s-6) var(--s-5);
+  }
+
+  .catalog-head__lead {
+    display: block;
+  }
+
   .catalog-count strong,
   .catalog-count__desc {
     display: inline;
@@ -343,7 +363,7 @@
 
 .pd-photo {
   position: relative;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 4 / 3;
   border-radius: var(--r-xl);
   background: var(--rose-100);
   box-shadow: var(--shadow-2);
@@ -399,6 +419,11 @@
   color: var(--rose-700);
 }
 
+/* Produto fora do cardápio: o título é o h1 da tela, com a cara do estado vazio padrão. */
+.pd-missing h1 {
+  font-size: var(--fs-xl);
+}
+
 .pd-title {
   font-size: clamp(1.75rem, 1.3rem + 2vw, 2.5rem);
   letter-spacing: -0.02em;
@@ -430,19 +455,88 @@
   text-decoration-color: currentColor;
 }
 
-.pd-desc {
-  max-width: 50ch;
+/* Preço resumido logo abaixo da nota: no celular ele precisa estar na primeira tela. */
+.pd-from {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
   color: var(--text-2);
-  font-size: var(--fs-lg);
-  line-height: 1.5;
+  font-size: var(--fs-sm);
+  font-weight: 700;
 }
 
-.pd-buy > .notice > div {
+.pd-from strong {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.pd-from__pix {
+  color: #1e6b42;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.pd-from__pix::before {
+  content: "·";
+  margin-right: 8px;
+  color: var(--text-3);
+}
+
+.pd-desc {
+  display: -webkit-box;
+  max-width: 50ch;
+  overflow: hidden;
+  color: var(--text-2);
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3; /* duas linhas na maioria dos celulares; três nos mais estreitos, sem cortar a frase */
+}
+
+/* Data de entrega + saída para quem precisa antes */
+.pd-when {
+  display: grid;
+  gap: 6px;
+}
+
+.pd-when > .notice > div {
   text-wrap: balance;
 }
 
-.pd-buy > .notice strong {
+.pd-when > .notice strong {
   white-space: nowrap;
+}
+
+.pd-ask {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 8px;
+  min-height: 36px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.pd-ask svg {
+  width: 18px;
+  height: 18px;
+  color: var(--green);
+}
+
+.pd-ask strong {
+  color: var(--rose-700);
+  font-weight: 800;
+  text-decoration: underline;
+  text-decoration-color: var(--rose-300);
+  text-underline-offset: 3px;
+}
+
+.pd-ask:hover strong {
+  text-decoration-color: currentColor;
 }
 
 .pd-label {
@@ -544,10 +638,8 @@
 .pd-size__dim {
   margin-top: 4px;
   color: var(--text-2);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .pd-size__serves {
@@ -615,8 +707,7 @@
 }
 
 /* Mensagem */
-.pd-note label span {
-  color: var(--text-3);
+.pd-note label .field__hint {
   font-weight: 600;
 }
 
@@ -789,6 +880,7 @@
   font-family: var(--font-display);
   font-size: var(--fs-lg);
   line-height: 1.25;
+  text-wrap: balance;
 }
 
 .pd-custom__cta,
@@ -824,6 +916,11 @@
   border-top: 1px solid var(--line);
 }
 
+/* Seta que vira ao abrir (o "+" girado do acordeão padrão lê-se como "apagar"). */
+.pd-details details[open] summary svg {
+  transform: rotate(180deg);
+}
+
 .pd-details .accordion__body {
   display: grid;
   gap: 10px;
@@ -831,16 +928,22 @@
 
 .pd-details__meta {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   color: var(--text);
   font-size: var(--fs-sm);
   font-weight: 700;
 }
 
+.pd-details__meta span {
+  text-wrap: balance;
+}
+
 .pd-details__meta svg {
+  flex: none;
   width: 16px;
   height: 16px;
+  margin-top: 3px;
   color: var(--rose-600);
 }
 
@@ -897,10 +1000,6 @@
 .pd-section .section-title {
   margin-top: 6px;
   font-size: var(--fs-2xl);
-}
-
-.pd-end {
-  height: 1px;
 }
 
 /* Avaliações */
@@ -1044,11 +1143,6 @@
 }
 
 /* Prateleiras de sugestão: quatro itens em 2 × 2 até caberem em uma fileira */
-.pd-shelf__cell {
-  display: grid;
-  min-width: 0;
-}
-
 @media (min-width: 640px) {
   .pd-shelf.product-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1061,36 +1155,24 @@
   }
 }
 
-/* Barra fixa do celular: fica logo acima da barra inferior e deixa o centro livre para o botão "Criar". */
+/* Barra de compra do celular: uma faixa branca encostada no rodapé. Nesta tela a barra de
+   navegação não aparece (css/shell.css), então ela é a única coisa fixa embaixo. */
 .pd-sticky {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: calc(var(--tabbar-h) + var(--safe-bottom));
+  bottom: 0;
   z-index: var(--z-sticky);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  column-gap: 92px;
-  padding: 10px var(--gutter);
-  border-radius: 22px 22px 0 0;
-  background: rgba(255, 255, 255, 0.97);
-  box-shadow: 0 -6px 24px rgba(122, 44, 64, 0.12);
-  backdrop-filter: blur(12px);
+  column-gap: 12px;
+  padding: 10px var(--gutter) calc(10px + var(--safe-bottom));
+  background: var(--white);
+  box-shadow: 0 -1px 0 var(--line-soft), 0 -8px 24px rgba(122, 44, 64, 0.1);
   visibility: hidden;
-  transform: translateY(calc(100% + 28px));
+  transform: translateY(100%);
   transition: transform var(--t-med) var(--ease), visibility 0s linear var(--t-med);
-}
-
-/* Preenche os cantos arredondados da barra inferior, para as duas parecerem uma peça só. */
-.pd-sticky::after {
-  content: "";
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  height: 28px;
-  background: #fff;
 }
 
 .pd-sticky.is-visible {
@@ -1117,35 +1199,68 @@
 .pd-sticky__info strong {
   overflow: hidden;
   font-family: var(--font-display);
-  font-size: 1.25rem;
+  font-size: var(--fs-xl);
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .pd-sticky__btn {
-  min-height: 44px;
-  padding: 0 10px;
-  font-size: 0.9375rem;
+  width: auto;
+  min-width: 156px;
+  padding: 0 20px;
 }
 
 .pd-sticky__btn svg {
-  width: 16px;
-  height: 16px;
-}
-
-.pd-sticky__btn .pd-add__done {
-  gap: 5px;
+  width: 18px;
+  height: 18px;
 }
 
 @media (max-width: 899px) {
-  /* O aviso "foi para o carrinho" sobe para não cobrir a barra fixa. */
+  /* A página reserva no fim a altura da barra (48 do botão + 20 de respiro): ela nunca
+     cobre a última linha do rodapé. (css/shell.css zera o espaço da barra de navegação nesta
+     tela; o "html" na frente garante que esta reserva vale, seja qual for a ordem dos arquivos.) */
+  html body:has(.pd-sticky) {
+    padding-bottom: calc(68px + var(--safe-bottom));
+  }
+
+  /* Áreas de toque de pelo menos 40 px sem mudar o desenho: a caixa cresce e a margem
+     negativa devolve a altura à linha. */
+  .pd .breadcrumb a,
+  .pd-head a.eyebrow,
+  .pd-rating {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+  }
+
+  /* margem = (altura original da linha − 40 px) ÷ 2 */
+  .pd .breadcrumb a {
+    margin-block: -9.15px;
+  }
+
+  .pd-head a.eyebrow {
+    margin-block: -10.7px;
+  }
+
+  .pd-rating {
+    margin-block: -3.15px;
+  }
+
+  /* Sem barra de navegação, os avisos descem; com a barra de compra à vista, ficam logo acima dela. */
+  body:has(.pd-sticky) .toast-host {
+    bottom: calc(var(--safe-bottom) + 16px);
+  }
+
   body:has(.pd-sticky.is-visible) .toast-host {
-    bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 76px);
+    bottom: calc(var(--safe-bottom) + 80px);
   }
 }
 
-@media (min-width: 560px) {
+/* Cartões de tamanho com mais folga quando a coluna é larga o bastante. */
+@media (min-width: 560px) and (max-width: 699px), (min-width: 900px) {
   .pd-size {
     padding-inline: 10px;
   }
@@ -1155,15 +1270,15 @@
   }
 }
 
-/* Em tablets em pé a foto ocupa a largura toda: fica mais baixa para o nome aparecer logo. */
-@media (min-width: 600px) and (max-width: 899px) {
+/* Coluna única larga: a foto fica mais baixa para nome e preço aparecerem logo. */
+@media (min-width: 600px) and (max-width: 699px) {
   .pd-photo {
     aspect-ratio: 3 / 2;
   }
 }
 
 /* O convite 3D só fica em linha quando a coluna tem largura para isso. */
-@media (min-width: 560px) and (max-width: 899px), (min-width: 1180px) {
+@media (min-width: 560px) and (max-width: 699px), (min-width: 1180px) {
   .pd-custom {
     grid-template-columns: auto minmax(0, 1fr) auto;
   }
@@ -1173,17 +1288,43 @@
   }
 }
 
-@media (min-width: 900px) {
+/* Duas colunas a partir do tablet em pé: foto de um lado, compra do outro. */
+@media (min-width: 700px) {
   .pd-top {
     display: grid;
-    grid-template-columns: minmax(0, 1.04fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: start;
+    gap: var(--s-6);
+  }
+
+  .pd-gallery {
+    position: sticky;
+    top: calc(var(--header-h) + var(--s-4));
+  }
+
+  .pd-photo {
+    aspect-ratio: 1 / 1;
+  }
+
+  /* O bloco de preço completo já aparece na primeira tela. */
+  .pd-from {
+    display: none;
+  }
+
+  .pd-desc {
+    display: block;
+    font-size: var(--fs-lg);
+  }
+}
+
+@media (min-width: 900px) {
+  .pd-top {
+    grid-template-columns: minmax(0, 1.04fr) minmax(0, 1fr);
     gap: var(--s-12);
     margin-top: var(--s-5);
   }
 
   .pd-gallery {
-    position: sticky;
     top: calc(var(--header-h) + var(--s-5));
   }
 
@@ -1221,12 +1362,32 @@
 
 /* Coluna de compra larga: tudo o que decide a compra cabe antes da dobra. */
 @media (min-width: 1180px) {
+  .pd .breadcrumb {
+    padding-top: var(--s-4);
+  }
+
   .pd-top {
-    margin-top: var(--s-4);
+    margin-top: var(--s-3);
   }
 
   .pd-buy {
-    gap: 18px;
+    gap: var(--s-4);
+  }
+
+  .pd-rating {
+    padding-block: 3px;
+  }
+
+  .pd-when {
+    gap: 4px;
+  }
+
+  .pd-when > .notice {
+    padding-block: 10px;
+  }
+
+  .pd-ask {
+    min-height: 22px;
   }
 
   .pd-size {
@@ -1234,7 +1395,7 @@
     grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
     column-gap: 14px;
-    padding: 11px 14px;
+    padding: 9px 14px;
     text-align: left;
   }
 

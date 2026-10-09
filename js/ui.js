@@ -365,22 +365,31 @@ export function openDialog({ title = '', body = '', footer = '', variant = '', o
     if (openOverlays[openOverlays.length - 1] !== api) return;
     if (ev.key === 'Escape' && dismissible) close();
     if (ev.key === 'Tab') {
-      const focusables = el.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select,textarea,[tabindex]:not([tabindex="-1"])');
-      if (!focusables.length) return;
+      const focusables = [...el.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select,textarea,[tabindex]:not([tabindex="-1"])')].filter(
+        (n) => n.getClientRects().length,
+      );
+      if (!focusables.length) {
+        ev.preventDefault();
+        return;
+      }
       const first = focusables[0];
       const last = focusables[focusables.length - 1];
-      if (ev.shiftKey && document.activeElement === first) {
+      const active = document.activeElement;
+      // O foco nunca sai do diálogo: nem pelo fim, nem pelo começo, nem a partir do próprio contêiner.
+      if (ev.shiftKey && (active === first || active === el || !el.contains(active))) {
         ev.preventDefault();
         last.focus();
-      } else if (!ev.shiftKey && document.activeElement === last) {
+      } else if (!ev.shiftKey && (active === last || !el.contains(active))) {
         ev.preventDefault();
         first.focus();
       }
     }
   }
 
+  // Um duplo clique no botão que abre o diálogo não pode fechá-lo no segundo toque.
+  const openedAt = performance.now();
   overlay.addEventListener('mousedown', (ev) => {
-    if (ev.target === overlay && dismissible) close();
+    if (ev.target === overlay && dismissible && performance.now() - openedAt > 350) close();
   });
   overlay.addEventListener('click', (ev) => {
     if (ev.target.closest('[data-dialog-close]')) close();

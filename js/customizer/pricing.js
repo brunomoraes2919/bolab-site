@@ -53,6 +53,7 @@ export function cleanMessage(text) {
   return String(text || '')
     .replace(/[\u0000-\u001f<>]/g, '')
     .replace(/\s+/g, ' ')
+    .replace(/^ /, '')
     .slice(0, MESSAGE_MAX);
 }
 
@@ -99,16 +100,19 @@ export function deltaOf(config, price, scales = true) {
   return round2(price * (scales ? sizeOf(config).mult : 1));
 }
 
-function countList(names) {
-  const seen = new Map();
-  names.forEach((n) => seen.set(n, (seen.get(n) || 0) + 1));
-  return [...seen].map(([name, n]) => (n > 1 ? `${name} (${n}x)` : name)).join(', ');
-}
-
 function joinPt(list) {
   if (list.length <= 1) return list.join('');
   return `${list.slice(0, -1).join(', ')} e ${list[list.length - 1]}`;
 }
+
+/** "Morango (2×) e Ninho": agrupa os repetidos na ordem em que aparecem. */
+function countList(names) {
+  const seen = new Map();
+  names.forEach((n) => seen.set(n, (seen.get(n) || 0) + 1));
+  return joinPt([...seen].map(([name, n]) => (n > 1 ? `${name} (${n}×)` : name)));
+}
+
+const PLACE_TEXT = { top: 'no topo', base: 'na base', both: 'no topo e na base' };
 
 /**
  * Detalhamento do preço.
@@ -139,8 +143,8 @@ export function breakdownOf(config) {
 
   const pip = getPiping(config.piping.style);
   if (pip.price > 0) {
-    const place = PIPING_PLACES.find((p) => p.id === config.piping.where)?.name || '';
-    add('piping', `Acabamento em ${pip.name.toLowerCase()}`, `${place} · ${colorName(config.piping.color).toLowerCase()}`, pip.price * m);
+    const place = PLACE_TEXT[config.piping.where] || '';
+    add('piping', `Acabamento em ${pip.name.toLowerCase()}`, `${place.charAt(0).toUpperCase()}${place.slice(1)}, em ${colorName(config.piping.color).toLowerCase()}`, pip.price * m);
   }
 
   config.decor.items.forEach((id) => {
@@ -159,6 +163,23 @@ export function priceOf(config) {
   return breakdownOf(config).total;
 }
 
+/** O menor preço possível no personalizador (bolo P mais simples) — calculado, nunca fixo. */
+export function minPrice() {
+  const cheapest = (list) => list.reduce((a, b) => (b.price < a.price ? b : a));
+  return priceOf(
+    normalizeConfig({
+      shape: cheapest(SHAPES).id,
+      size: SIZES.reduce((a, b) => (b.mult < a.mult ? b : a)).id,
+      layers: [cheapest(FLAVORS).id],
+      fillings: [],
+      covering: { type: cheapest(COVERINGS).id },
+      drip: { on: false },
+      piping: { style: cheapest(PIPINGS).id },
+      decor: { items: [], message: '' },
+    }),
+  );
+}
+
 /** Texto de rendimento, no mesmo formato dos bolos do cardápio. */
 export function servesOf(config) {
   const s = sizeOf(config);
@@ -171,39 +192,47 @@ export function prepHoursOf(config) {
   return elaborate ? 72 : 48;
 }
 
-export function prepLabelOf(config) {
-  return prepHoursOf(config) >= 72 ? '3 dias' : '2 dias';
+/**
+ * O bolo descrito em frases curtas, uma por parte (tela de resumo).
+ * → { formato, massa, recheio, cobertura, acabamento, decoracao }
+ */
+export function partsOf(config) {
+  const size = sizeOf(config);
+  const names = config.layers.map((id) => getFlavor(id).name);
+  const n = names.length;
+  const sameFlavor = names.every((x) => x === names[0]);
+  const fills = config.fillings.map((id) => getFilling(id).name);
+  const cov = getCovering(config.covering.type);
+  const covColor = colorName(config.covering.color).toLowerCase();
+  const pip = getPiping(config.piping.style);
+  const decor = config.decor.items.map((id) => (id === 'velas' ? `Velas (${config.decor.candles})` : getDecor(id).name));
+  if (config.decor.message) decor.push(`plaquinha “${config.decor.message}”`);
+  return {
+    formato: `${getShape(config.shape).name} · ${size.label} (${size.diameter})`,
+    massa: sameFlavor ? `${n} ${n === 1 ? 'camada' : 'camadas'} de ${names[0].toLowerCase()}` : `${joinPt(names)} (da base ao topo)`,
+    recheio: fills.length ? countList(fills) : 'Sem recheio (bolo de 1 camada)',
+    cobertura: `${cov.id === 'naked' ? `Naked, com creme ${covColor} no topo` : `${cov.name} ${covColor}`}${config.drip.on ? `, com calda ${colorName(config.drip.color).toLowerCase()} escorrendo` : ''}`,
+    acabamento: pip.id === 'liso' ? 'Liso, sem bico' : `${pip.name} ${PLACE_TEXT[config.piping.where] || ''}, em ${colorName(config.piping.color).toLowerCase()}`,
+    decoracao: decor.length ? joinPt(decor) : 'Sem decoração extra',
+  };
 }
 
-/** Linhas do resumo (carrinho, pedido, favoritos). */
+/** Linhas do resumo guardadas com o pedido (carrinho, pedido, favoritos): a ordem dos recheios fica explícita. */
 export function summaryOf(config) {
-  const size = sizeOf(config);
-  const out = [];
-  out.push(`Formato: ${getShape(config.shape).name}, tamanho ${size.label} (${size.diameter})`);
-
+  const p = partsOf(config);
+  const fills = config.fillings.map((id) => getFilling(id).name);
+  const mixedFill = fills.some((f) => f !== fills[0]);
   const names = config.layers.map((id) => getFlavor(id).name);
-  const same = names.every((n) => n === names[0]);
-  const n = names.length;
-  out.push(same ? `Massa: ${n} ${n === 1 ? 'camada' : 'camadas'} de ${names[0].toLowerCase()}` : `Massa (da base ao topo): ${names.join(', ')}`);
-
-  if (config.fillings.length) {
-    const fills = config.fillings.map((id) => getFilling(id).name);
-    const sameFill = fills.every((f) => f === fills[0]);
-    out.push(sameFill ? `Recheio: ${fills[0]}` : `Recheio (de baixo para cima): ${fills.join(', ')}`);
-  } else out.push('Recheio: sem recheio (1 camada)');
-
-  const cov = getCovering(config.covering.type);
-  const covText = cov.id === 'naked' ? `Naked, com creme ${colorName(config.covering.color).toLowerCase()} no topo` : `${cov.name} ${colorName(config.covering.color).toLowerCase()}`;
-  out.push(`Cobertura: ${covText}${config.drip.on ? `, com calda ${colorName(config.drip.color).toLowerCase()} escorrendo` : ''}`);
-
-  const pip = getPiping(config.piping.style);
-  if (pip.id !== 'liso') {
-    const place = PIPING_PLACES.find((p) => p.id === config.piping.where)?.name.toLowerCase() || '';
-    out.push(`Acabamento: ${pip.name} ${place}, ${colorName(config.piping.color).toLowerCase()}`);
-  } else out.push('Acabamento: liso');
-
+  const mixedFlavor = names.some((x) => x !== names[0]);
   const decor = config.decor.items.map((id) => (id === 'velas' ? `Velas (${config.decor.candles})` : getDecor(id).name));
-  out.push(decor.length ? `Decoração: ${joinPt(decor)}` : 'Decoração: sem extras');
+  const out = [
+    `Formato: ${getShape(config.shape).name}, tamanho ${sizeOf(config).label} (${sizeOf(config).diameter})`,
+    mixedFlavor ? `Massa (da base ao topo): ${joinPt(names)}` : `Massa: ${p.massa}`,
+    mixedFill ? `Recheio (de baixo para cima): ${joinPt(fills)}` : `Recheio: ${p.recheio}`,
+    `Cobertura: ${p.cobertura}`,
+    `Acabamento: ${p.acabamento}`,
+    `Decoração: ${decor.length ? joinPt(decor) : 'sem extras'}`,
+  ];
   if (config.decor.message) out.push(`Mensagem: “${config.decor.message}”`);
   return out;
 }

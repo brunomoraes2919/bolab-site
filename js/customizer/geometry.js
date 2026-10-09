@@ -89,13 +89,16 @@ function roundedRectPath(hx, hz, rc) {
   return b.finish();
 }
 
-/** Coração feito de arcos e retas tangentes: dois lóbulos, bico arredondado na frente e reentrância suave atrás. */
+/**
+ * Coração feito de arcos e retas tangentes: dois lóbulos bem separados, bico marcado na frente
+ * e reentrância funda atrás — para ser lido como coração de qualquer ângulo.
+ */
 function heartPath(k) {
-  const r = 0.56 * k;
-  const a = 0.5 * k;
-  const bz = -0.3 * k; // centro dos lóbulos (z)
-  const tz = 0.74 * k; // centro do arredondamento do bico
-  const rt = 0.17 * k;
+  const r = 0.54 * k;
+  const a = 0.6 * k;
+  const bz = -0.36 * k; // centro dos lóbulos (z)
+  const tz = 0.88 * k; // centro do arredondamento do bico
+  const rt = 0.12 * k;
   const rn = 0.15 * k;
   const zN = bz - Math.sqrt((r + rn) ** 2 - a * a); // centro do arredondamento da reentrância
   const alphaN = Math.atan2(bz - zN, a);
@@ -121,7 +124,7 @@ function heartPath(k) {
 export function shapePath(shape, R) {
   if (shape === 'square') return roundedRectPath(R * 0.9 - 0.045, R * 0.9 - 0.045, 0.17);
   if (shape === 'rect') return roundedRectPath(R * 1.14 - 0.045, R * 0.76 - 0.045, 0.17);
-  if (shape === 'heart') return heartPath(R * 1.04);
+  if (shape === 'heart') return heartPath(R);
   return circlePath(R - 0.045);
 }
 
@@ -272,7 +275,8 @@ export function cakeMetrics(config) {
   const sponge = shapePath(config.shape, R);
   const frost = offsetPath(sponge, naked ? 0.014 : t); // superfície externa (cobertura ou borda do creme)
   const isHeart = config.shape === 'heart';
-  const center = { x: 0, z: isHeart ? -0.1 * R : 0 };
+  // no coração, o centro fica onde cabe o maior círculo (arranjos e velas ganham espaço)
+  const center = { x: 0, z: isHeart ? 0.08 * R : 0 };
   const bounds = pathBounds(frost);
   const topFlat = offsetPath(sponge, (naked ? 0.014 : t) - rf); // limite da área plana do topo
   // menor distância do centro até a borda plana do topo: dá a escala das decorações
@@ -424,12 +428,15 @@ export function buildTopCream(m) {
 }
 
 /** Véu fino de creme raspado sobre a lateral do bolo naked. */
-export function buildScrapeCoat(m) {
+export function buildScrapeCoat(m, i) {
+  // um véu por camada: a textura sabe onde ficam as emendas (mais creme) e o meio (massa à mostra)
+  const y0 = m.layerY[i] + (i === 0 ? 0.004 : -0.002);
+  const y1 = m.layerY[i] + m.layerH + 0.002;
   const profile = [
-    { d: 0.004, y: 0.004, nd: 1, ny: 0 },
-    { d: 0.004, y: m.H, nd: 1, ny: 0 },
+    { d: 0.005, y: y0, nd: 1, ny: 0 },
+    { d: 0.005, y: y1, nd: 1, ny: 0 },
   ];
-  return sweep(m.sponge, profile, { uRepeat: Math.max(2, Math.round(m.sponge.length / 1.4)), vScale: 1 / 1.1 });
+  return sweep(m.sponge, profile, { uRepeat: Math.max(2, Math.round(m.sponge.length / 1.6)), vScale: 1 / (y1 - y0) });
 }
 
 /* ───────── Calda escorrendo ─────────

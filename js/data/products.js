@@ -8,7 +8,9 @@ export const SIZES = [
   { id: 'g', label: 'G', diameter: '25 cm', serves: '25 a 30 fatias', mult: 2.1 },
 ];
 
-export const PRODUCTS = [
+// Para tirar um produto do ar sem apagá-lo, acrescente  active: false.
+// Para voltar a vender, apague essa linha (e reative a categoria em js/data/site.js, se for o caso).
+const ALL_PRODUCTS = [
   {
     id: 'p1',
     name: 'Chocolate Belga',
@@ -83,6 +85,7 @@ export const PRODUCTS = [
   },
   {
     id: 'p5',
+    active: false, // fora do cardápio por enquanto (sem opções para restrições alimentares)
     name: 'Vegano de Baunilha',
     desc: '100% vegetal. Massa fofinha de baunilha com creme de coco e frutas da estação.',
     long: 'Ninguém sente falta de nada. Massa de baunilha macia, creme de coco aveludado e frutas frescas por cima — sem leite, sem ovos, sem abrir mão do sabor.',
@@ -155,6 +158,7 @@ export const PRODUCTS = [
   },
   {
     id: 'p9',
+    active: false, // fora do cardápio por enquanto (sem opções para restrições alimentares)
     name: 'Sem Glúten de Cacau',
     desc: 'Farinha de amêndoa, cacau 70% e adoçante natural. Delicioso e sem glúten.',
     long: 'Intenso, úmido e naturalmente sem glúten. Feito com farinha de amêndoas e cacau 70%, tem textura de brownie e sabor de chocolate de verdade.',
@@ -292,7 +296,25 @@ export const REVIEWS = [
   { productId: 'custom', name: 'Gustavo H.', rating: 5, date: '2026-09-14', text: 'Fiz surpresa para minha esposa escolhendo cada camada. Ela amou saber que eu que "criei".' },
 ];
 
+/** Só o que está à venda. */
+export const PRODUCTS = ALL_PRODUCTS.filter((p) => p.active !== false);
+
 const byId = new Map(PRODUCTS.map((p) => [p.id, p]));
+
+/**
+ * Nota média e total de avaliações do cardápio à venda, para os textos de prova social.
+ * → { avg: '4,8', count: 1173, countLabel: 'mais de 1.100' }
+ */
+export function ratingSummary() {
+  const count = PRODUCTS.reduce((n, p) => n + p.reviews, 0);
+  const avg = count ? PRODUCTS.reduce((s, p) => s + p.rating * p.reviews, 0) / count : 0;
+  const floor = Math.floor(count / 100) * 100;
+  return {
+    avg: avg.toFixed(1).replace('.', ','),
+    count,
+    countLabel: floor ? `mais de ${floor.toLocaleString('pt-BR')}` : String(count),
+  };
+}
 
 export function getProduct(id) {
   return byId.get(id) || null;

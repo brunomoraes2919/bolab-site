@@ -58,7 +58,7 @@ function emptyAll() {
     <div class="empty">
       <div class="empty__art">${icon('package')}</div>
       <h2>Seu primeiro pedido começa aqui</h2>
-      <p>Quando você fizer uma encomenda, vai acompanhar cada etapa por esta tela: do forno até a sua mesa.</p>
+      <p>Quando você fizer um pedido, vai acompanhar cada etapa por esta tela: do forno até a sua mesa.</p>
       <div class="cart-empty__cta">
         <a class="btn" href="#/cardapio">${icon('cake')} Ver cardápio</a>
         <a class="btn btn--secondary" href="#/monte-seu-bolo">${icon('sparkles')} Montar meu bolo em 3D</a>

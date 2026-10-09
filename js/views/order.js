@@ -10,11 +10,33 @@ const STEP_ICONS = { received: 'receipt', paid: 'credit-card', preparing: 'cake'
 const BADGE_TONES = { amber: 'badge--amber', gold: 'badge--gold', green: 'badge--green', red: 'badge--red', rose: '' };
 
 const celebrated = new Set(); // pedidos que já ganharam confete nesta visita
-const pixRestart = new Map(); // pedido → momento em que um novo código Pix foi gerado
+const PIX_KEY = 'bolab:pix'; // sessionStorage: pedido → momento em que um novo código Pix foi gerado
+const pixRestart = new Map(loadPixRestarts());
+const qrOpen = new Set(); // pedidos com o QR Code aberto no celular
+const copied = new Set(); // pedidos cujo código acabou de ser copiado
+
+function loadPixRestarts() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(PIX_KEY) || '{}');
+    return Object.entries(saved).filter(([, at]) => Number.isFinite(at));
+  } catch {
+    return [];
+  }
+}
+
+function savePixRestarts() {
+  try {
+    sessionStorage.setItem(PIX_KEY, JSON.stringify(Object.fromEntries(pixRestart)));
+  } catch {
+    // sem armazenamento de sessão: o novo código vale só até recarregar.
+  }
+}
 
 /* ───────── Compartilhado com a lista de pedidos ───────── */
+/** Pedido que saiu de cena: cancelado, ou nunca pago e com a data de entrega já vencida. */
+export const isOff = (order) => orders.statusOf(order).canceled;
 export const isPickup = (order) => order.delivery.mode === 'pickup';
-export const isPixPending = (order) => order.payment.method === 'pix' && !order.payment.paidAt && !order.canceled;
+export const isPixPending = (order) => order.payment.method === 'pix' && !order.payment.paidAt && !isOff(order);
 
 /** Pedido encerrado: entregue, retirado ou cancelado. */
 export function isClosed(order) {
@@ -25,7 +47,7 @@ export function isClosed(order) {
 /** Selo de situação. → { label, tone, icon } */
 export function statusInfo(order) {
   const st = orders.statusOf(order);
-  if (st.canceled) return { label: 'Cancelado', tone: 'red', icon: 'x' };
+  if (st.canceled) return { label: st.label, tone: 'red', icon: st.expired ? 'clock' : 'x' };
   if (!order.payment.paidAt) return { label: order.payment.method === 'pix' ? 'Aguardando Pix' : 'Aguardando pagamento', tone: 'amber', icon: 'clock' };
   if (st.id === 'preparing') return { label: st.label, tone: 'gold', icon: 'cake' };
   if (st.id === 'ready') return { label: st.label, tone: 'green', icon: 'gift' };
@@ -96,7 +118,7 @@ function hero(order, isNew) {
   const first = (order.contact.name || auth.user()?.name || '').trim().split(/\s+/)[0];
   const pickup = isPickup(order);
 
-  if (order.canceled) {
+  if (isOff(order)) {
     return html`
       <div class="ord-headrow">
         ${pageHead(`Pedido ${order.id}`, { back: '/pedidos', sub: `Feito em ${dateTime(order.createdAt)}` })} ${statusBadge(order)}
@@ -125,7 +147,8 @@ function hero(order, isNew) {
         <p class="eyebrow">Pedido ${order.id}</p>
         <h1>Pedido confirmado!</h1>
         <p class="ord-hero__lead">
-          ${first ? `Obrigado, ${first}!` : 'Obrigado!'} Agora é com a gente: seu pedido é feito à mão, bem perto do dia, para chegar fresquinho. Você acompanha cada etapa por aqui.
+          ${first ? `Obrigado, ${first}!` : 'Obrigado!'} Agora é com a gente: seu pedido é feito à mão, bem perto do dia, para chegar fresquinho.
+          ${pickup ? 'Avisamos pelo WhatsApp quando o pedido estiver pronto para retirada.' : 'Avisamos pelo WhatsApp quando o bolo sair para entrega.'} E você acompanha cada etapa por aqui.
         </p>
         <ul class="ord-hero__facts">
           <li>${icon('calendar')}<span>${whenText(order)}</span></li>
@@ -144,15 +167,18 @@ function hero(order, isNew) {
 function pixPanel(order) {
   const left = pixExpiresAt(order) - Date.now();
   const expired = left <= 0;
+  const code = demoPixCode(order);
+  const wasCopied = copied.has(order.id);
+  const showQr = qrOpen.has(order.id);
   return html`
-    <section class="card ord-pix ${expired ? 'is-expired' : ''}" aria-labelledby="ord-pix-title">
-      <div class="ord-pix__qr">
-        <div class="ord-qr" role="img" aria-label="QR Code de demonstração. Não é possível pagar com ele.">
+    <section class="card ord-pix ${expired ? 'is-expired' : ''} ${showQr ? 'is-qr-open' : ''}" aria-labelledby="ord-pix-title">
+      <div class="ord-pix__qr" id="ord-pix-qr">
+        <div class="ord-qr" role="img" aria-label="${SITE.demo ? 'QR Code de demonstração. Não é possível pagar com ele.' : 'QR Code do Pix'}">
           ${decorativeQr(order.id)}
           <span class="ord-qr__mark"><img src="assets/logo-mark.webp" alt="" width="60" height="92" /></span>
-          <span class="ord-qr__ribbon">Demonstração</span>
+          ${SITE.demo ? html`<span class="ord-qr__ribbon">Demonstração</span>` : ''}
         </div>
-        <p class="ord-qr__label">QR Code de demonstração — não realize pagamento</p>
+        ${SITE.demo ? html`<p class="ord-qr__label">QR Code de demonstração — não realize pagamento</p>` : ''}
       </div>
 
       <div class="ord-pix__body">
@@ -175,30 +201,71 @@ function pixPanel(order) {
               </div>
             `
           : html`
-              <ol class="ord-pix__how">
-                <li><span>Abra o app do seu banco e escolha <strong>Pix</strong>.</span></li>
-                <li><span>Aponte a câmera para o QR Code ou cole o código abaixo.</span></li>
-                <li><span>Confirme o valor. A aprovação aparece aqui em segundos.</span></li>
-              </ol>
-              <div class="field">
-                <label for="ord-pix-code">Pix copia e cola</label>
-                <div class="ord-pix__code">
-                  <input class="input" id="ord-pix-code" type="text" readonly value="${demoPixCode(order)}" />
-                  <button class="btn btn--secondary" type="button" id="ord-pix-copy" data-pix-copy>${icon('copy')} Copiar</button>
+              <div class="ord-pix__quick only-mobile">
+                <button class="btn btn--lg btn--block ord-pix__copy ${wasCopied ? 'is-copied' : ''}" type="button" id="ord-pix-copy-m" data-pix-copy>
+                  ${wasCopied ? '' : icon('copy')}<span>${wasCopied ? 'Código copiado ✓' : 'Copiar código Pix'}</span>
+                </button>
+                <input class="input ord-pix__codeline" type="text" readonly value="${code}" data-pix-code aria-label="Código Pix copia e cola" />
+                <ol class="ord-pix__how">
+                  <li><span>Toque em <strong>Copiar código Pix</strong>.</span></li>
+                  <li><span>No app do seu banco, escolha <strong>Pix copia e cola</strong>.</span></li>
+                  <li><span>Cole e confirme — a aprovação aparece aqui em segundos.</span></li>
+                </ol>
+              </div>
+
+              <div class="ord-pix__desk only-desktop">
+                <ol class="ord-pix__how">
+                  <li><span>Abra o app do seu banco e escolha <strong>Pix</strong>.</span></li>
+                  <li><span>Aponte a câmera para o QR Code ou cole o código abaixo.</span></li>
+                  <li><span>Confirme o valor. A aprovação aparece aqui em segundos.</span></li>
+                </ol>
+                <div class="field">
+                  <label for="ord-pix-code">Pix copia e cola</label>
+                  <div class="ord-pix__code">
+                    <input class="input" id="ord-pix-code" type="text" readonly value="${code}" data-pix-code />
+                    <button class="btn btn--secondary ${wasCopied ? 'is-copied' : ''}" type="button" id="ord-pix-copy" data-pix-copy>
+                      ${wasCopied ? '' : icon('copy')}<span>${wasCopied ? 'Copiado ✓' : 'Copiar'}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
+
+              <button class="ord-pix__qr-toggle only-mobile" type="button" id="ord-pix-qr-toggle" data-pix-qr aria-expanded="${showQr ? 'true' : 'false'}" aria-controls="ord-pix-qr">
+                ${icon('qr')}
+                <span class="ord-pix__qr-text">${showQr ? html`<span>Ocultar QR Code</span>` : html`<span>Pagar por outro aparelho?</span> <span>Ver QR Code</span>`}</span>
+                ${icon('chevron-down')}
+              </button>
             `}
 
-        <div class="ord-pix__demo">
-          <p>${icon('info')}<span><strong>Modo demonstração:</strong> o QR Code e o código são ilustrativos e nada é cobrado. Use o botão abaixo para ver o pedido ser confirmado.</span></p>
-          <button class="btn btn--block" type="button" id="ord-pix-pay" data-pix-pay>${icon('pix')} Simular pagamento do Pix</button>
-        </div>
+        ${SITE.demo
+          ? html`
+              <div class="notice notice--amber ord-pix__demo">
+                ${icon('info')}
+                <div>
+                  <p><strong>Modo demonstração:</strong> o código e o QR Code são ilustrativos e nada é cobrado. Use o botão abaixo para ver o pedido ser confirmado.</p>
+                  <button class="btn btn--block ord-pix__sim" type="button" id="ord-pix-pay" data-pix-pay>${icon('pix')} Simular pagamento do Pix</button>
+                </div>
+              </div>
+            `
+          : ''}
       </div>
     </section>
   `;
 }
 
 function timeline(order, st) {
+  if (st.expired) {
+    return html`
+      <section class="card ord-box ord-box--track">
+        <h2>Pedido expirado</h2>
+        ${notice('O pagamento não foi feito e a data combinada já passou, então este pedido não foi produzido. Nada foi cobrado. Se ainda quiser, é só pedir de novo e escolher uma nova data.', {
+          tone: 'red',
+          iconName: 'clock',
+        })}
+      </section>
+    `;
+  }
+
   if (st.canceled) {
     return html`
       <section class="card ord-box ord-box--track">
@@ -282,7 +349,7 @@ function deliveryCard(order) {
           </div>
         </li>
       </ul>
-      ${order.canceled
+      ${isOff(order)
         ? ''
         : html`
             <div class="ord-code">
@@ -329,7 +396,8 @@ function paymentCard(order) {
   const isCard = p.method === 'card';
   const n = p.installments || 1;
   const line = isCard ? `${p.brand || 'Cartão'} •••• ${p.last4 || '····'}` : 'Pix';
-  const sub = order.canceled
+  const off = isOff(order);
+  const sub = off
     ? p.paidAt
       ? 'Valor estornado'
       : 'Nenhum valor cobrado'
@@ -347,7 +415,7 @@ function paymentCard(order) {
           <strong>${line}</strong>
           <span>${sub}</span>
         </div>
-        ${order.canceled ? '' : p.paidAt ? html`<span class="badge badge--green">${icon('check')}Pago</span>` : html`<span class="badge badge--amber">Pendente</span>`}
+        ${off ? '' : p.paidAt ? html`<span class="badge badge--green">${icon('check')}Pago</span>` : html`<span class="badge badge--amber">Pendente</span>`}
       </div>
       <div class="ord-totals">${totalsSummary(order.totals, { mode: order.delivery.mode })}</div>
     </section>
@@ -356,19 +424,20 @@ function paymentCard(order) {
 
 function actions(order, st) {
   const canAdvance = SITE.demo && !st.canceled && st.index < st.steps.length - 1;
-  // Pedido encerrado: repetir é o próximo passo natural. Em andamento: ajuda vem primeiro.
-  const reorder = html`<button class="btn ${isClosed(order) ? '' : 'btn--secondary'} btn--block" type="button" id="ord-reorder" data-reorder>${icon('refresh')} Pedir de novo</button>`;
-  const help = html`<a class="btn btn--secondary btn--block" href="#/atendimento">${icon('message')} Preciso de ajuda</a>`;
   return html`
     <div class="ord-actions">
-      ${isClosed(order) ? html`${reorder}${help}` : html`${help}${reorder}`}
+      ${isClosed(order) ? html`<button class="btn btn--block" type="button" id="ord-reorder" data-reorder>${icon('refresh')} Pedir de novo</button>` : ''}
+      <a class="btn btn--secondary btn--block" href="#/atendimento">${icon('message')} Preciso de ajuda</a>
       ${orders.canCancel(order) ? html`<button class="ord-cancel" type="button" id="ord-cancel" data-cancel>Cancelar pedido</button>` : ''}
     </div>
     ${canAdvance
       ? html`
-          <div class="ord-demo">
-            <p><strong>Modo demonstração.</strong> Veja o acompanhamento evoluir sem esperar o dia da entrega.</p>
-            <button class="btn btn--secondary btn--sm" type="button" id="ord-advance" data-advance>Avançar etapa (demonstração)</button>
+          <div class="notice notice--amber ord-demo">
+            ${icon('info')}
+            <div>
+              <p><strong>Modo demonstração:</strong> veja o acompanhamento evoluir sem esperar o dia da entrega.</p>
+              <button class="btn btn--secondary btn--sm" type="button" id="ord-advance" data-advance>Avançar etapa (demonstração)</button>
+            </div>
           </div>
         `
       : ''}
@@ -445,27 +514,45 @@ export default {
       tick();
     }
 
-    on(page, 'click', '[data-pix-copy]', async (_ev, btn) => {
-      const input = page.querySelector('#ord-pix-code');
+    let copiedTimer = 0;
+    on(page, 'click', '[data-pix-copy]', async () => {
+      const input = [...page.querySelectorAll('[data-pix-code]')].find((el) => el.offsetParent) || page.querySelector('[data-pix-code]');
       const ok = await copyText(input.value);
       if (!ok) {
+        input.focus();
         input.select();
         toast('Selecione o código e copie manualmente.', { type: 'error' });
         return;
       }
-      btn.classList.add('is-copied');
-      toast('Código copiado. Lembre-se: ele é só de demonstração.', { type: 'success' });
+      // Um retorno só: o próprio botão vira "Código copiado ✓" por alguns segundos.
+      copied.add(id);
+      ctx.rerender();
+      document.getElementById(window.matchMedia('(max-width: 899px)').matches ? 'ord-pix-copy-m' : 'ord-pix-copy')?.focus({ preventScroll: true });
     });
+    if (copied.has(id)) {
+      copiedTimer = setTimeout(() => {
+        copied.delete(id);
+        keepFocus(() => ctx.rerender());
+      }, 4000);
+    }
 
-    on(page, 'click', '#ord-pix-code', (_ev, input) => input.select());
+    on(page, 'click', '[data-pix-code]', (_ev, input) => input.select());
+
+    on(page, 'click', '[data-pix-qr]', () => {
+      if (qrOpen.has(id)) qrOpen.delete(id);
+      else qrOpen.add(id);
+      keepFocus(() => ctx.rerender());
+    });
 
     on(page, 'click', '[data-pix-renew]', () => {
       pixRestart.set(id, Date.now());
+      savePixRestarts();
       ctx.rerender();
       toast('Novo código gerado.', { type: 'success' });
     });
 
     on(page, 'click', '[data-pix-pay]', () => {
+      if (pixRestart.delete(id)) savePixRestarts();
       celebrated.add(id);
       orders.markPaid(id);
       confetti();
@@ -503,6 +590,7 @@ export default {
     return () => {
       off();
       clearInterval(timer);
+      clearTimeout(copiedTimer);
     };
   },
 };

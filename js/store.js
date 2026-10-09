@@ -28,28 +28,61 @@ function defaults() {
   };
 }
 
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/** Lê o estado salvo. Qualquer parte faltando ou com o tipo errado volta ao padrão. */
 function load() {
   try {
     const rawState = localStorage.getItem(KEY);
     if (!rawState) return defaults();
     const parsed = JSON.parse(rawState);
-    if (!parsed || parsed.v !== 1) return defaults();
+    if (!isObj(parsed) || parsed.v !== 1) return defaults();
     const base = defaults();
-    return { ...base, ...parsed, cart: { ...base.cart, ...parsed.cart }, data: { ...base.data, ...parsed.data } };
+    const cartIn = isObj(parsed.cart) ? parsed.cart : {};
+    const data = {};
+    Object.entries(isObj(parsed.data) ? parsed.data : {}).forEach(([id, d]) => {
+      if (!isObj(d)) return;
+      const blank = blankUserData();
+      Object.keys(blank).forEach((k) => (blank[k] = Array.isArray(d[k]) ? d[k].filter((x) => x != null) : blank[k]));
+      data[id] = blank;
+    });
+    return {
+      v: 1,
+      session: isObj(parsed.session) ? { userId: parsed.session.userId || null } : base.session,
+      users: Array.isArray(parsed.users) ? parsed.users.filter(isObj) : [],
+      cart: {
+        lines: Array.isArray(cartIn.lines) ? cartIn.lines.filter(isObj) : [],
+        coupon: typeof cartIn.coupon === 'string' ? cartIn.coupon : null,
+        note: typeof cartIn.note === 'string' ? cartIn.note : '',
+      },
+      data: { ...base.data, ...data },
+      prefs: isObj(parsed.prefs) ? parsed.prefs : {},
+      seq: isObj(parsed.seq) && Number.isInteger(parsed.seq.order) ? parsed.seq : base.seq,
+    };
   } catch {
     return defaults();
   }
 }
 
+const listeners = new Map();
 let state = load();
+let persistent = true;
 
 function save() {
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
+    persistent = true;
   } catch {
-    // Sem armazenamento (aba anônima ou cota cheia): segue funcionando só em memória.
+    // Sem armazenamento (aba anônima ou cota cheia): segue funcionando só em memória,
+    // e avisa a tela uma vez (evento 'storage-fail') para a pessoa não perder o pedido sem saber.
+    const wasPersistent = persistent;
+    persistent = false;
+    if (wasPersistent) listeners.get('storage-fail')?.forEach((fn) => fn());
   }
 }
+
+// Testa já na abertura se dá para gravar.
+save();
 
 function uid() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
@@ -57,8 +90,6 @@ function uid() {
 
 /* ───────── Eventos ─────────
    store.on('cart' | 'auth' | 'favs' | 'orders' | 'addresses' | 'cards' | 'chat' | '*', fn) → função para desligar. */
-const listeners = new Map();
-
 function emit(name) {
   save();
   // Copia antes de percorrer: uma tela pode se reinscrever durante o aviso (ctx.rerender()).
@@ -70,6 +101,10 @@ export const store = {
     if (!listeners.has(name)) listeners.set(name, new Set());
     listeners.get(name).add(fn);
     return () => listeners.get(name).delete(fn);
+  },
+  /** false quando o navegador não deixa gravar (o que a pessoa fizer some ao fechar a aba). */
+  isPersistent() {
+    return persistent;
   },
   /** Apaga tudo (usado em "Sair e limpar dados de demonstração"). */
   reset() {
@@ -220,6 +255,10 @@ export const auth = {
     emit('auth');
     return { ok: true };
   },
+  /** Já existe alguma conta criada neste aparelho? (define se o login abre em "Entrar" ou "Criar conta") */
+  hasAccounts() {
+    return state.users.length > 0;
+  },
   emailExists(email) {
     return state.users.some((u) => u.email === String(email).trim().toLowerCase());
   },
@@ -245,7 +284,7 @@ function checkCoupon(code, subtotal) {
   const c = COUPONS[String(code || '').trim().toUpperCase()];
   if (!c) return { ok: false, message: 'Cupom não encontrado. Confira o código.' };
   if (c.expires && toDate(c.expires) < new Date()) return { ok: false, message: 'Este cupom expirou.' };
-  if (c.firstOrderOnly && hasOrders()) return { ok: false, message: 'Este cupom vale só para a primeira encomenda.' };
+  if (c.firstOrderOnly && hasOrders()) return { ok: false, message: 'Este cupom vale só para o primeiro pedido.' };
   if (c.minSubtotal && subtotal < c.minSubtotal) {
     return { ok: false, message: `Este cupom vale para compras a partir de R$ ${c.minSubtotal.toFixed(2).replace('.', ',')}.` };
   }
@@ -320,6 +359,29 @@ export const cart = {
       prepHours,
     };
     state.cart.lines.push(line);
+    emit('cart');
+    return line;
+  },
+  /** Linha do carrinho pelo id (para editar um bolo criado no 3D). */
+  line(lineId) {
+    return state.cart.lines.find((l) => l.lineId === lineId) || null;
+  },
+  /**
+   * Atualiza um bolo personalizado que já está no carrinho (mantém quantidade e posição).
+   * cart.replaceCustom(lineId, { name, price, thumb, config, summary, serves, prepHours }) → linha | null
+   */
+  replaceCustom(lineId, { name, price, thumb, config, summary, serves, prepHours }) {
+    const line = state.cart.lines.find((l) => l.lineId === lineId && l.kind === 'custom');
+    if (!line) return null;
+    Object.assign(line, {
+      name: name ?? line.name,
+      price: Number(price) || line.price,
+      thumb: thumb ?? line.thumb,
+      config: config ?? line.config,
+      summary: summary ?? line.summary,
+      sizeLabel: serves ?? line.sizeLabel,
+      prepHours: prepHours ?? line.prepHours,
+    });
     emit('cart');
     return line;
   },
@@ -535,6 +597,8 @@ export const cards = {
   save({ number, holder, expiry }) {
     const digits = String(number).replace(/\D/g, '');
     const list = scope().cards;
+    const same = list.find((c) => c.last4 === digits.slice(-4) && c.brand === cardBrand(digits) && c.expiry === expiry);
+    if (same) return same; // o mesmo cartão não entra duas vezes
     const item = {
       id: uid(),
       brand: cardBrand(digits),
@@ -597,6 +661,21 @@ function timeIndex(order, steps) {
   return idx('paid');
 }
 
+const plain = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+/** A cidade (e o estado, se informado) está na área de entrega definida em js/data/site.js? */
+export function isServedCity(city, uf = '') {
+  if (!plain(city)) return false;
+  const okCity = SITE.deliveryCities.some((c) => plain(c) === plain(city));
+  const okUf = !uf || plain(uf) === plain(SITE.uf);
+  return okCity && okUf;
+}
+
 export const orders = {
   /** Mais recentes primeiro. */
   list() {
@@ -621,6 +700,9 @@ export const orders = {
     const user = currentUser();
     if (!user) throw new Error('É preciso estar logado para fechar o pedido.');
     if (!state.cart.lines.length) throw new Error('O carrinho está vazio.');
+    if (delivery.mode === 'delivery' && !isServedCity(address?.city, address?.uf)) {
+      throw new Error(`Ainda não entregamos neste endereço. Atendemos ${SITE.region}.`);
+    }
     const totals = cart.totals({ mode: delivery.mode, payment: payment.method });
     state.seq.order += 1;
     const { paid, ...pay } = payment;
@@ -658,8 +740,17 @@ export const orders = {
    */
   statusOf(order) {
     const steps = stepsFor(order);
-    if (order.canceled) {
-      return { id: 'canceled', label: 'Cancelado', index: -1, canceled: true, steps: steps.map((s) => ({ ...s, done: false, current: false })) };
+    // Pedido nunca pago cuja data de entrega já passou deixa de estar "em andamento".
+    const expired = !order.canceled && !order.payment.paidAt && Date.now() > slotBounds(order).end.getTime();
+    if (order.canceled || expired) {
+      return {
+        id: 'canceled',
+        label: expired ? 'Expirado — pagamento não realizado' : 'Cancelado',
+        index: -1,
+        canceled: true,
+        expired,
+        steps: steps.map((s) => ({ ...s, done: false, current: false })),
+      };
     }
     const byTime = timeIndex(order, steps);
     const index = Math.min(steps.length - 1, Math.max(byTime, order.demoStep ?? 0));
@@ -713,30 +804,56 @@ function pseudo(seed) {
   return (h >>> 0) / 4294967295;
 }
 
+/** Início de uma janela ('14:00 – 16:00') em um dia. → Date */
+function slotStart(date, label) {
+  const [h, m] = String(label).split('–')[0].trim().split(':').map(Number);
+  const d = new Date(toDate(date));
+  d.setHours(h || 0, m || 0, 0, 0);
+  return d;
+}
+
 export const schedule = {
-  /** Primeira data possível considerando o prazo de preparo dos itens. → Date (meia-noite) */
+  /** Momento em que o pedido fica pronto se for feito agora. → Date */
+  readyAt(prepHours = cart.prepHours()) {
+    return new Date(Date.now() + prepHours * 3600e3);
+  },
+  /**
+   * Primeira data de entrega possível. → Date (meia-noite)
+   * Regra: o bolo pode sair no mesmo dia em que fica pronto, nas janelas que começam
+   * depois desse horário. Ex.: pedido na sexta às 10h com 24 h de preparo → sábado a partir das 11h.
+   */
   earliest(prepHours = cart.prepHours()) {
-    const d = new Date(Date.now() + prepHours * 3600e3);
+    const ready = schedule.readyAt(prepHours);
+    const d = new Date(ready);
     d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + 1);
-    while (SITE.closedWeekdays.includes(d.getDay())) d.setDate(d.getDate() + 1);
+    for (let i = 0; i < 21; i++) {
+      const open = !SITE.closedWeekdays.includes(d.getDay());
+      if (open && SITE.slots.some((label) => slotStart(d, label) >= ready)) break;
+      d.setDate(d.getDate() + 1);
+    }
     return d;
   },
-  isOpen(date) {
+  isOpen(date, prepHours = cart.prepHours()) {
     const d = toDate(date);
-    const first = schedule.earliest();
+    const first = schedule.earliest(prepHours);
     const last = new Date();
     last.setDate(last.getDate() + SITE.scheduleDaysAhead);
     return d >= first && d <= last && !SITE.closedWeekdays.includes(d.getDay());
   },
-  /** Horários de um dia. → [{ label, left }]  (left = vagas restantes; 0 = esgotado) */
-  slots(date) {
+  /**
+   * Horários de um dia. → [{ label, left }]  (left = vagas restantes; 0 = esgotado)
+   * Janelas que começam antes de o pedido ficar pronto não entram na lista.
+   */
+  slots(date, prepHours = cart.prepHours()) {
     const key = isoDate(date);
-    return SITE.slots.map((label) => {
-      const r = pseudo(`${key}|${label}`);
-      const taken = r < 0.12 ? SITE.maxOrdersPerSlot : Math.floor(r * SITE.maxOrdersPerSlot);
-      return { label, left: SITE.maxOrdersPerSlot - taken };
-    });
+    const ready = schedule.readyAt(prepHours);
+    return SITE.slots
+      .filter((label) => slotStart(date, label) >= ready)
+      .map((label) => {
+        const r = pseudo(`${key}|${label}`);
+        const taken = r < 0.12 ? SITE.maxOrdersPerSlot : Math.floor(r * SITE.maxOrdersPerSlot);
+        return { label, left: SITE.maxOrdersPerSlot - taken };
+      });
   },
 };
 
