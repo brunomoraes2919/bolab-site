@@ -1,0 +1,108 @@
+/* BOLAB — tokens de design. Toda cor, espaço e sombra do site sai daqui. */
+:root {
+  /* Marca */
+  --rose-50: #FDF5F7;
+  --rose-100: #FCE8EE;
+  --rose-200: #F7D3DC;
+  --rose-300: #EDB4C2;
+  --rose-400: #E38CA0;
+  --rose-500: #D96B82; /* rosa oficial */
+  --rose-600: #C4506A; /* botões e links (contraste AA com branco) */
+  --rose-700: #A53D56;
+  --rose-800: #7A2C40;
+  --rose-900: #4A1826;
+
+  --cocoa-900: #2A1210; /* texto principal */
+  --cocoa-700: #4A2B2B;
+  --cocoa-500: #7A5060; /* texto secundário */
+  --cocoa-300: #B08898; /* texto apagado */
+  --cream: #FFFBF7;
+  --line: #EDD0D8;
+  --line-soft: #F5E4E9;
+  --white: #FFFFFF;
+
+  --gold: #C99A2E;
+  --gold-soft: #FBF1D8;
+  --green: #2F8F5B;
+  --green-soft: #E4F4EB;
+  --amber: #B7791F;
+  --amber-soft: #FDF2DC;
+  --red: #C0392B;
+  --red-soft: #FDECEA;
+
+  /* Papéis */
+  --bg: var(--rose-50);
+  --surface: var(--white);
+  --surface-2: var(--cream);
+  --text: var(--cocoa-900);
+  --text-2: var(--cocoa-500);
+  --text-3: var(--cocoa-300);
+  --brand: var(--rose-500);
+  --brand-strong: var(--rose-600);
+  --brand-soft: var(--rose-100);
+  --focus: #7A2C40;
+
+  /* Tipografia */
+  --font-display: "Playfair Display", "Times New Roman", serif;
+  --font-body: "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.875rem;
+  --fs-md: 1rem;
+  --fs-lg: 1.125rem;
+  --fs-xl: 1.375rem;
+  --fs-2xl: clamp(1.5rem, 1.2rem + 1.4vw, 2rem);
+  --fs-3xl: clamp(1.875rem, 1.3rem + 2.6vw, 2.75rem);
+  --fs-hero: clamp(2.25rem, 1.3rem + 4.6vw, 4.25rem);
+
+  /* Espaço */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+  --s-20: 80px;
+  --s-24: 96px;
+
+  /* Forma */
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 28px;
+  --r-pill: 999px;
+
+  --shadow-1: 0 1px 2px rgba(122, 44, 64, 0.06), 0 2px 8px rgba(122, 44, 64, 0.05);
+  --shadow-2: 0 4px 12px rgba(122, 44, 64, 0.08), 0 12px 32px rgba(122, 44, 64, 0.08);
+  --shadow-3: 0 12px 28px rgba(122, 44, 64, 0.14), 0 28px 64px rgba(122, 44, 64, 0.14);
+  --shadow-brand: 0 8px 22px rgba(196, 80, 106, 0.35);
+
+  /* Layout */
+  --container: 1200px;
+  --gutter: 16px;
+  --header-h: 60px;
+  --tabbar-h: 64px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* Movimento */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --t-fast: 140ms;
+  --t-med: 260ms;
+  --t-slow: 480ms;
+
+  --z-header: 50;
+  --z-tabbar: 50;
+  --z-sticky: 40;
+  --z-overlay: 100;
+  --z-toast: 200;
+}
+
+@media (min-width: 900px) {
+  :root {
+    --gutter: 32px;
+    --header-h: 76px;
+  }
+}
