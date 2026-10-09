@@ -1,5 +1,5 @@
 // BOLAB — página inicial.
-import { html, icon, money, observeReveal } from '../ui.js';
+import { html, icon, money, observeReveal, pauseOffscreen } from '../ui.js';
 import { photo, productCard, stars } from '../components.js';
 import { PRODUCTS, REVIEWS, isCake, ratingSummary } from '../data/products.js';
 
@@ -72,7 +72,7 @@ function hero() {
         </div>
 
         <div class="hero__visual">
-          <div class="hero__photo">${photo('hero', { w: 720, eager: true, sizes: '(min-width: 900px) 46vw, 92vw' })}</div>
+          <div class="hero__photo">${photo('hero', { w: 720, eager: true, priority: true, sizes: '(min-width: 900px) 46vw, 92vw' })}</div>
           <div class="hero__card hero__card--a">
             <span class="hero__card-icon">${icon('cube')}</span>
             <div>
@@ -102,7 +102,7 @@ function categories() {
           ${cats.map(
             (c) => html`
               <a class="cat-tile reveal" href="#/cardapio?cat=${c.id}">
-                <span class="cat-tile__img">${photo(c.photo, { w: 220, alt: '' })}</span>
+                <span class="cat-tile__img">${photo(c.photo, { w: 220, alt: '', sizes: '(min-width: 900px) 116px, 84px' })}</span>
                 <span class="cat-tile__label">${c.label}</span>
               </a>
             `,
@@ -329,7 +329,7 @@ function finalCta() {
     <section class="section">
       <div class="container">
         <div class="final-cta reveal">
-          <div class="final-cta__photo">${photo('celebration', { w: 900, sizes: '100vw', alt: '' })}</div>
+          <div class="final-cta__photo">${photo('celebration', { w: 900, sizes: '(min-width: 900px) 50vw, 92vw', alt: '' })}</div>
           <div class="final-cta__body">
             <h2 class="section-title">Tem uma data especial chegando?</h2>
             <p>Garanta o seu bolo agora e escolha o dia da entrega. No primeiro pedido, 10% OFF com o cupom <strong>BOLAB10</strong>.</p>
@@ -344,20 +344,58 @@ function finalCta() {
   `;
 }
 
+/* A página é montada em duas partes. O começo (o que cabe nas primeiras telas) entra na hora;
+   o resto entra logo depois da primeira pintura. O resultado final é o mesmo, mas a pessoa vê a
+   loja mais cedo: o navegador não precisa calcular a página inteira (8 telas de altura no
+   celular) antes de mostrar a primeira. */
+const firstPart = () => html`${hero()} ${categories()} ${bestSellers()}`;
+const secondPart = () => html`${customizerSpotlight()} ${reviews()} ${howItWorks()} ${perks()} ${partyAddOns()} ${faq()} ${finalCta()}`;
+
 export default {
   layout: 'default',
-  render() {
-    return html`
-      ${hero()} ${categories()} ${bestSellers()} ${customizerSpotlight()} ${reviews()} ${howItWorks()} ${perks()} ${partyAddOns()} ${faq()} ${finalCta()}
-    `;
+  render(ctx) {
+    // Voltando pelo histórico, a página vem inteira de uma vez: o roteador precisa da altura
+    // completa para devolver a rolagem ao ponto onde a pessoa estava.
+    if (ctx?.restoring) return html`${firstPart()} ${secondPart()}`;
+    return html`${firstPart()}<div class="home-rest" data-home-rest></div>`;
   },
   mount(root) {
-    observeReveal(root);
-    // No acordeão, abrir uma pergunta fecha as outras.
-    root.querySelectorAll('.accordion details').forEach((d) => {
-      d.addEventListener('toggle', () => {
-        if (d.open) root.querySelectorAll('.accordion details[open]').forEach((o) => o !== d && (o.open = false));
+    let offPause = () => {};
+    let waiting = 0;
+    let frame = 0;
+
+    const wire = () => {
+      observeReveal(root);
+      // No acordeão, abrir uma pergunta fecha as outras.
+      root.querySelectorAll('.accordion details').forEach((d) => {
+        d.addEventListener('toggle', () => {
+          if (d.open) root.querySelectorAll('.accordion details[open]').forEach((o) => o !== d && (o.open = false));
+        });
       });
-    });
+      // Os bolos e os cartões que flutuam só se mexem enquanto estão à vista.
+      offPause = pauseOffscreen(root.querySelectorAll('.hero__visual, .spot__stage'));
+    };
+
+    const slot = root.querySelector('[data-home-rest]');
+    if (!slot) {
+      wire();
+    } else {
+      observeReveal(root);
+      // um quadro para a primeira parte aparecer; depois entra o resto
+      frame = requestAnimationFrame(() => {
+        waiting = setTimeout(() => {
+          const tpl = document.createElement('template');
+          tpl.innerHTML = String(secondPart());
+          slot.replaceWith(tpl.content);
+          wire();
+        }, 0);
+      });
+    }
+
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(waiting);
+      offPause();
+    };
   },
 };

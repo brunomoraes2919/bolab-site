@@ -206,6 +206,8 @@ async function render() {
     params,
     query: loc.query,
     path: loc.path,
+    /** true quando a pessoa voltou ou avançou pelo histórico (a rolagem será devolvida ao ponto onde estava). */
+    restoring: kind === 'back' || kind === 'forward',
     /**
      * Redesenha a tela atual no lugar (sem animação de entrada, mantendo a rolagem).
      * A tela ganha um elemento raiz novo, então os eventos ligados no anterior somem com ele.

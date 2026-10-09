@@ -23,7 +23,10 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 .cz {
   --cz-bar: 56px;
   --cz-lap: 22px; /* quanto o painel sobe sobre o palco no celular */
-  --cz-stage: clamp(250px, 45vh, 470px);
+  /* --cz-stage-to é o destino; --cz-stage vai até ele com transição. A tela 3D usa o destino direto:
+     assim ela muda de tamanho uma vez só, e não a cada quadro da transição. */
+  --cz-stage-to: clamp(250px, 45vh, 470px);
+  --cz-stage: var(--cz-stage-to);
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -36,23 +39,23 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 /* No resumo, o bolo ganha o palco: é o momento da revelação. */
 .cz[data-step="resumo"] {
-  --cz-stage: clamp(250px, min(54vh, 100vh - 392px), 520px);
+  --cz-stage-to: clamp(250px, min(54vh, 100vh - 392px), 520px);
 }
 
 @supports (height: 100dvh) {
   .cz {
-    --cz-stage: clamp(250px, 45dvh, 470px);
+    --cz-stage-to: clamp(250px, 45dvh, 470px);
     height: 100dvh;
   }
 
   .cz[data-step="resumo"] {
-    --cz-stage: clamp(250px, min(54dvh, 100dvh - 392px), 520px);
+    --cz-stage-to: clamp(250px, min(54dvh, 100dvh - 392px), 520px);
   }
 }
 
 /* Com o teclado do celular aberto, a tela inteira cabe na área visível: bolo em cima, campo embaixo. */
 .cz.is-typing {
-  --cz-stage: max(180px, calc(var(--cz-vh, 100vh) * 0.52));
+  --cz-stage-to: max(180px, calc(var(--cz-vh, 100vh) * 0.52));
   height: var(--cz-vh, 100vh);
   transform: translateY(var(--cz-vtop, 0px));
   transition: none;
@@ -60,7 +63,8 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 .cz.is-typing .cz-steps,
 .cz.is-typing .cz-foot,
-.cz.is-typing .cz-tools {
+.cz.is-typing .cz-tools,
+.cz.is-typing .cz-bgbar {
   display: none;
 }
 
@@ -69,19 +73,26 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   position: relative;
   min-height: 0;
   overflow: hidden;
-  background:
-    radial-gradient(60% 46% at 50% 44%, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0) 70%),
-    radial-gradient(120% 90% at 50% 30%, #fffaf8 0%, #fdeef2 48%, #f9dbe3 82%, #f5cbd6 100%);
+  background: #fdeef2;
 }
 
-.cz-stage::after {
-  /* horizonte suave: dá chão ao bolo */
-  content: "";
+/* Fundo do palco. Ele acompanha as cores do bolo (ou a escolha da pessoa) para o bolo sempre se destacar:
+   cada fundo é uma camada, e a troca é um fundido suave entre duas camadas. */
+.cz-bg {
   position: absolute;
-  inset: auto 0 0 0;
-  height: 34%;
-  background: linear-gradient(180deg, rgba(247, 211, 220, 0) 0%, rgba(240, 190, 204, 0.38) 100%);
+  inset: 0;
   pointer-events: none;
+}
+
+.cz-bg__layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 600ms var(--ease);
+}
+
+.cz-bg__layer.is-on {
+  opacity: 1;
 }
 
 .cz-canvas {
@@ -90,7 +101,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   left: 0;
   z-index: 1;
   width: 100%;
-  height: calc(100% - var(--cz-bar) - env(safe-area-inset-top, 0px) + 8px - var(--cz-lap));
+  height: calc(var(--cz-stage-to) - var(--cz-bar) - env(safe-area-inset-top, 0px) + 8px - var(--cz-lap));
   max-width: none;
   outline: 0;
   cursor: grab;
@@ -210,6 +221,50 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   white-space: nowrap;
 }
 
+/* Fundo escuro (rosé profundo, cacau): o que fica direto sobre o palco passa para branco */
+.cz-brand__text h1,
+.cz-brand__text span,
+.cz-loading {
+  transition: color 400ms var(--ease);
+}
+
+.cz[data-tone="dark"] .cz-round,
+.cz[data-tone="dark"] .cz-restart {
+  color: #fff;
+}
+
+.cz[data-tone="dark"] .cz-round:hover,
+.cz[data-tone="dark"] .cz-restart:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+.cz[data-tone="dark"] .cz-brand__text h1 {
+  color: #fff;
+}
+
+.cz[data-tone="dark"] .cz-brand__text span {
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.cz[data-tone="dark"] .cz-brand img {
+  filter: brightness(0) invert(1);
+}
+
+.cz[data-tone="dark"] .cz-loading {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.cz[data-tone="dark"] .cz-hint,
+.cz[data-tone="dark"] .cz-lost span {
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--cocoa-900);
+}
+
+.cz[data-tone="dark"] .cz-canvas:focus-visible {
+  outline-color: #fff;
+}
+
 /* Preço (pílula na barra superior — só no computador) */
 .cz-price {
   display: none;
@@ -218,9 +273,8 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   height: 46px;
   padding: 0 10px 0 18px;
   border-radius: var(--r-pill);
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.96);
   box-shadow: var(--shadow-1);
-  backdrop-filter: blur(8px);
   transition: box-shadow var(--t-fast), transform var(--t-fast);
 }
 
@@ -247,6 +301,9 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   transform-origin: left center;
+  /* largura estável e desenho isolado: o número animado não empurra nem redesenha o resto do painel */
+  min-width: 6.4ch;
+  contain: layout style;
 }
 
 .cz-price__more {
@@ -280,15 +337,15 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 .cz-hint {
   position: absolute;
   left: 12px;
-  bottom: calc(var(--cz-lap) + 10px);
+  bottom: calc(var(--cz-lap) + 62px);
   z-index: 2;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  max-width: 100px;
-  min-height: 44px;
-  padding: 6px 10px 6px 9px;
-  border-radius: 16px;
+  min-height: 36px;
+  padding: 6px 12px 6px 10px;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
   background: rgba(42, 18, 16, 0.78);
   color: #fff;
   font-size: var(--fs-xs);
@@ -308,6 +365,9 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 .cz-hint svg {
   width: 16px;
   height: 16px;
+}
+
+.cz-hint.is-on svg {
   animation: cz-swipe 1.8s ease-in-out infinite;
 }
 
@@ -342,13 +402,12 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   height: 44px;
   padding: 0 12px;
   border-radius: var(--r-pill);
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.96);
   box-shadow: var(--shadow-1);
   color: var(--cocoa-700);
   font-size: var(--fs-sm);
   font-weight: 800;
   white-space: nowrap;
-  backdrop-filter: blur(8px);
   transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast);
 }
 
@@ -379,14 +438,110 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   background: var(--rose-600);
 }
 
-.cz-tool--icon[aria-pressed="true"] svg {
-  animation: cz-turn 6s linear infinite;
+/* (o ícone do giro não fica mais rodando sem parar: o botão aceso já diz que o giro está ligado) */
+
+/* "Fundo": escolha do fundo do palco (automático ou um dos prontos) */
+.cz-tool--bg {
+  width: 44px;
+  padding: 0;
 }
 
-@keyframes cz-turn {
-  to {
-    transform: rotate(360deg);
+.cz-tool--bg span {
+  display: none;
+}
+
+.cz-tool[aria-expanded="true"] {
+  background: var(--cocoa-900);
+  color: #fff;
+}
+
+.cz-bgbar {
+  position: absolute;
+  right: 12px;
+  bottom: calc(var(--cz-lap) + 62px);
+  z-index: 3;
+  max-width: calc(100% - 24px);
+  padding: 10px 10px 8px;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: var(--shadow-2);
+  animation: cz-bgbar-in 180ms var(--ease);
+}
+
+.cz-bgbar[hidden] {
+  display: none;
+}
+
+@keyframes cz-bgbar-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
   }
+}
+
+.cz-bgbar__name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 4px 4px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.cz-bgbar__name strong {
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.cz-bgbar__row {
+  display: flex;
+  gap: 2px;
+}
+
+.cz-bgsw {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+}
+
+.cz-bgsw::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 36%, var(--sw) 0%, var(--sw2) 100%);
+  box-shadow: inset 0 0 0 1.5px rgba(42, 18, 16, 0.18);
+  transition: transform var(--t-fast);
+}
+
+.cz-bgsw--auto::before {
+  background: linear-gradient(135deg, #fdeef2 0 50%, #864962 50% 100%);
+}
+
+.cz-bgsw b {
+  position: relative;
+  color: #fff;
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  text-shadow: 0 0 3px rgba(42, 18, 16, 0.95), 0 0 2px rgba(42, 18, 16, 0.95);
+}
+
+.cz-bgsw:hover::before {
+  transform: scale(1.06);
+}
+
+.cz-bgsw.is-on::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border: 2.5px solid var(--rose-600);
+  border-radius: 50%;
 }
 
 /* Rendimento e entrega (só em telas largas) */
@@ -401,12 +556,11 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   height: 44px;
   padding: 0 18px;
   border-radius: var(--r-pill);
-  background: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.94);
   box-shadow: var(--shadow-1);
   color: var(--text-2);
   font-size: var(--fs-sm);
   font-weight: 700;
-  backdrop-filter: blur(8px);
 }
 
 .cz-meta span {
@@ -460,6 +614,13 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 .cz.is-ready .cz-loading {
   opacity: 0;
+  visibility: hidden;
+  transition: opacity 400ms var(--ease), visibility 0s 400ms;
+}
+
+/* depois de pronto, nada fica animando escondido */
+.cz.is-ready .cz-loading img {
+  animation: none;
 }
 
 .cz-fallback {
@@ -1346,6 +1507,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transform: scale(1.14);
 }
 
 .cz-preset__img svg {
@@ -2001,6 +2163,10 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
     grid-template-rows: minmax(0, 1fr);
   }
 
+  .cz-canvas {
+    height: calc(100% - var(--cz-bar) - env(safe-area-inset-top, 0px) + 8px - var(--cz-lap));
+  }
+
   .cz-panel {
     margin-top: 0;
     border-radius: 0;
@@ -2020,6 +2186,10 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
     --cz-lap: 0px;
     grid-template-columns: minmax(0, 1fr) 440px;
     grid-template-rows: minmax(0, 1fr);
+  }
+
+  .cz-canvas {
+    height: calc(100% - var(--cz-bar) - env(safe-area-inset-top, 0px) + 8px - var(--cz-lap));
   }
 
   .cz-top {
@@ -2053,11 +2223,10 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
     height: 46px;
     padding: 0 16px 0 13px;
     border-radius: var(--r-pill);
-    background: rgba(255, 255, 255, 0.92);
+    background: rgba(255, 255, 255, 0.96);
     box-shadow: var(--shadow-1);
     font-size: var(--fs-sm);
     font-weight: 800;
-    backdrop-filter: blur(8px);
   }
 
   .cz-restart span {
@@ -2069,21 +2238,30 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
     box-shadow: var(--shadow-2);
   }
 
+  /* no computador o "Recomeçar" é uma pílula branca: o texto continua escuro em qualquer fundo */
+  .cz[data-tone="dark"] .cz-restart,
+  .cz[data-tone="dark"] .cz-restart:hover {
+    background: #fff;
+    color: var(--cocoa-700);
+  }
+
   .cz-tools {
     right: 20px;
     bottom: 20px;
+  }
+
+  .cz-bgbar {
+    right: 20px;
+    bottom: 76px;
   }
 
   .cz-hint {
     top: calc(var(--cz-bar) + 6px);
     bottom: auto;
     left: 50%;
-    max-width: none;
     min-height: 0;
     padding: 10px 18px;
-    border-radius: var(--r-pill);
     font-size: var(--fs-sm);
-    white-space: nowrap;
     transform: translate(-50%, -6px);
   }
 
@@ -2331,9 +2509,27 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   }
 }
 
-@media (min-width: 1180px) {
+/* Rendimento e entrega só aparecem quando cabem ao lado dos botões do palco (nunca por baixo deles) */
+@media (min-width: 1340px) {
   .cz-meta {
     display: inline-flex;
+    max-width: calc(100% - 350px);
+    overflow: hidden;
+  }
+}
+
+@media (min-width: 1480px) {
+  .cz-tool--bg {
+    width: auto;
+    padding: 0 16px 0 13px;
+  }
+
+  .cz-tool--bg span {
+    display: inline;
+  }
+
+  .cz-meta {
+    max-width: calc(100% - 400px);
   }
 }
 
@@ -2360,8 +2556,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   }
 
   .cz-hint svg,
-  .cz-loading img,
-  .cz-tool--icon[aria-pressed="true"] svg {
+  .cz-loading img {
     animation: none;
   }
 }

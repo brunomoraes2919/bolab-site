@@ -168,9 +168,11 @@
   pointer-events: none;
 }
 
-.catalog-promo:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-3);
+@media (hover: hover) {
+  .catalog-promo:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-3);
+  }
 }
 
 .catalog-promo__icon {
@@ -835,10 +837,12 @@
   transition: transform var(--t-med) var(--ease), box-shadow var(--t-med) var(--ease);
 }
 
-.pd-custom:hover,
-.favs-invite:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-3);
+@media (hover: hover) {
+  .pd-custom:hover,
+  .favs-invite:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-3);
+  }
 }
 
 .pd-custom__icon,
@@ -1564,8 +1568,10 @@
   transition: transform 600ms var(--ease);
 }
 
-.favs-cake__thumb:hover img {
-  transform: scale(1.05);
+@media (hover: hover) {
+  .favs-cake__thumb:hover img {
+    transform: scale(1.05);
+  }
 }
 
 .favs-cake__info {

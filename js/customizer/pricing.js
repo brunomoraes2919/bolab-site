@@ -26,6 +26,7 @@ import {
   getDecor,
   colorName,
 } from '../data/customizer.js';
+import { BACKDROPS, BACKDROP_AUTO } from './backdrop.js';
 
 const round2 = (n) => Math.round(n * 100) / 100;
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -45,6 +46,7 @@ export function defaultConfig() {
     piping: { style: 'rosetas', where: 'top', color: '#ffffff' },
     decor: { items: ['frutas'], candles: 5, message: '' },
     name: '',
+    backdrop: BACKDROP_AUTO, // fundo do palco: 'auto' (acompanha as cores do bolo) ou o id de um fundo pronto
   };
 }
 
@@ -88,6 +90,8 @@ export function normalizeConfig(raw) {
       message: cleanMessage(c.decor?.message),
     },
     name: String(c.name || '').replace(/[<>]/g, '').slice(0, 40),
+    // bolos guardados antes de existir a escolha de fundo caem em "automático"
+    backdrop: BACKDROPS.some((b) => b.id === c.backdrop) ? c.backdrop : BACKDROP_AUTO,
   };
 }
 

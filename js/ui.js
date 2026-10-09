@@ -428,10 +428,16 @@ export function confirmDialog({ title, message, confirmLabel = 'Confirmar', canc
 /* ───────── Efeitos ───────── */
 let revealObserver;
 
-/** Anima a entrada de todo .reveal dentro de root quando entra na tela. */
+/* Celular, tablet e janelas estreitas (a mesma regra do css/base.css): sem animação de entrada. */
+const LITE_MOTION = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(hover: none), (pointer: coarse), (max-width: 899px)') : null;
+
+/**
+ * Anima a entrada de todo .reveal dentro de root quando entra na tela.
+ * Em telas de toque o conteúdo já nasce visível: lá a animação pesava na rolagem.
+ */
 export function observeReveal(root = document) {
-  if (!('IntersectionObserver' in window)) {
-    root.querySelectorAll('.reveal').forEach((el) => el.classList.add('is-in'));
+  if (!('IntersectionObserver' in window) || LITE_MOTION?.matches) {
+    root.querySelectorAll('.reveal:not(.is-in)').forEach((el) => el.classList.add('is-in'));
     return;
   }
   revealObserver ||= new IntersectionObserver(
@@ -446,6 +452,18 @@ export function observeReveal(root = document) {
     { rootMargin: '0px 0px -8% 0px', threshold: 0.08 },
   );
   root.querySelectorAll('.reveal:not(.is-in)').forEach((el) => revealObserver.observe(el));
+}
+
+/**
+ * Marca cada elemento com .is-away enquanto ele está fora da tela, para o CSS pausar as
+ * animações contínuas de dentro dele (ex.: css/home.css). Devolve a função que desliga.
+ *   const off = pauseOffscreen(root.querySelectorAll('.spot__stage'));
+ */
+export function pauseOffscreen(elements) {
+  if (!('IntersectionObserver' in window)) return () => {};
+  const io = new IntersectionObserver((entries) => entries.forEach((e) => e.target.classList.toggle('is-away', !e.isIntersecting)), { rootMargin: '120px 0px' });
+  elements.forEach((el) => io.observe(el));
+  return () => io.disconnect();
 }
 
 export async function copyText(text) {

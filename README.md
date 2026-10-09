@@ -40,7 +40,7 @@ export default {
   title: 'Carrinho',          // vira "Carrinho · BOLAB" (pode ser função (ctx) => string)
   layout: 'default',          // 'default' | 'plain' | 'focus' | 'immersive'
   auth: false,                // true = exige login (o roteador manda para #/entrar?next=…)
-  render(ctx) { return html`…`; },      // ctx = { params, query, path, rerender() }
+  render(ctx) { return html`…`; },      // ctx = { params, query, path, restoring, rerender() }
   mount(root, ctx) { … return () => { /* limpeza opcional */ }; },
   onQuery(root, ctx) { … },   // opcional: só a query mudou, atualize sem recriar a tela
 };
@@ -63,6 +63,18 @@ Layouts: `default` cabeçalho + rodapé + barra inferior · `plain` sem rodapé 
 7. **Sem bibliotecas externas** além do Three.js já incluído. Sem CDN novo.
 8. Regra de negócio (preço, cupom, frete, pedido) mora em `js/store.js` e `js/data/`. As telas só exibem.
 
+## Desempenho (para a loja continuar leve no celular)
+
+O celular (e o app Android, que é a mesma loja dentro de um WebView) tem bem menos folga que o computador. Estas regras mantêm a rolagem fluida:
+
+1. **Vidro fosco só no computador.** `backdrop-filter` em algo fixo na tela (cabeçalho, barras, fundo de diálogo) obriga o aparelho a desfocar tudo o que passa por baixo a cada quadro. Sempre que usar, acrescente a versão de cor cheia para telas de toque: `@media (hover: none), (pointer: coarse), (max-width: 899px) { … backdrop-filter: none; background: … }` (exemplos em `css/shell.css`).
+2. **Hover com movimento só onde existe mouse.** Efeitos de `:hover` que mexem em `transform` ou `box-shadow` vão dentro de `@media (hover: hover)`. No toque o "hover" gruda depois do toque.
+3. **Animação contínua (`infinite`) descansa fora da tela.** Use `pauseOffscreen(elementos)` de `js/ui.js` e a classe `.is-away` no CSS (exemplo: bolos flutuantes do início, `css/home.css`).
+4. **`.reveal`** (entrada animada ao rolar) funciona só no computador; em telas de toque o conteúdo já nasce visível. Não dependa dela para esconder nada.
+5. **Fotos:** passe sempre `sizes` em `photo()` com a largura real que a foto ocupa; o navegador baixa o menor arquivo que serve.
+6. **Abertura:** o `index.html` pede de uma vez os arquivos da primeira tela (`modulepreload`), a foto principal do início e as fontes. Se trocar a foto `hero` em `js/data/photos.js`, troque o código dela no começo do `index.html` também.
+7. **Para medir:** `python tools/perf_server.py 5180` e `BASE=http://localhost:5180/ node tools/perf.mjs depois` (resumo em `tools/out/perf/RELATORIO-DESEMPENHO.md`; o 3D tem medição própria em `tools/perf_cz.mjs`).
+
 ## Atributos globais (tratados em `js/app.js` e `js/shell.js`)
 
 | Atributo | Efeito |
@@ -80,9 +92,9 @@ Layouts: `default` cabeçalho + rodapé + barra inferior · `plain` sem rodapé 
 
 Tudo documentado em comentários no próprio arquivo — leia `js/store.js`, `js/ui.js` e `js/components.js` antes de escrever uma tela.
 
-- `ui.js`: `html, raw, esc, icon, money, installments, dateLong, dateShort, dateTime, isoDate, toDate, plural, initials, masks, bindMasks, on, debounce, sleep, formData, applyErrors, setFieldError, clearFieldErrors, validators, cardBrand, toast, openDialog, confirmDialog, closeAllDialogs, observeReveal, copyText, confetti`
+- `ui.js`: `html, raw, esc, icon, money, installments, dateLong, dateShort, dateTime, isoDate, toDate, plural, initials, masks, bindMasks, on, debounce, sleep, formData, applyErrors, setFieldError, clearFieldErrors, validators, cardBrand, toast, openDialog, confirmDialog, closeAllDialogs, observeReveal, pauseOffscreen, copyText, confetti`
 - `store.js`: `store.on(evento, fn)`, `auth`, `cart`, `favs`, `savedCakes`, `addresses`, `cards`, `orders`, `schedule`, `chat`, `prefs`
-- `components.js`: `photo, mediaFallback, lineThumb, rating, stars, favButton, productCard, qtyStepper, emptyState, pageHead, breadcrumb, notice, totalsSummary`
+- `components.js`: `photo, photoSrcset, mediaFallback, lineThumb, rating, stars, favButton, productCard, qtyStepper, emptyState, pageHead, breadcrumb, notice, totalsSummary`
 - `data/products.js`: `PRODUCTS, SIZES, REVIEWS, getProduct, sizesOf, priceOf, isCake, searchProducts, relatedTo, addOns`
 - `data/site.js`: `SITE, CATEGORIES, COUPONS, WALLET_COUPONS, ORDER_STEPS`
 

@@ -386,9 +386,13 @@
   transition: transform var(--t-med) var(--ease), box-shadow var(--t-med) var(--ease);
 }
 
-.pcard:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-2);
+/* Só onde existe mouse: no toque, o "hover" gruda depois do toque e animava o card e a foto
+   bem na hora de trocar de tela. */
+@media (hover: hover) {
+  .pcard:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-2);
+  }
 }
 
 .pcard__media {
@@ -405,8 +409,10 @@
   transition: transform 700ms var(--ease);
 }
 
-.pcard:hover .pcard__media img {
-  transform: scale(1.06);
+@media (hover: hover) {
+  .pcard:hover .pcard__media img {
+    transform: scale(1.06);
+  }
 }
 
 .pcard__badge {
@@ -524,6 +530,12 @@
   display: grid;
   gap: 10px;
   margin-top: 14px;
+}
+
+/* Título e fatias em linhas separadas (são <span> dentro de <label>). */
+.size-sheet .option__title,
+.size-sheet .option__desc {
+  display: block;
 }
 
 .size-sheet__price {
@@ -1222,6 +1234,15 @@ body[data-layout="immersive"] .toast-host {
   animation: fade-in var(--t-med) ease both;
 }
 
+/* Telas de toque: desfocar a tela inteira atrás da folha, a cada quadro da abertura, era o
+   trecho mais pesado do site. Fica só o escurecido, um pouco mais forte para compensar. */
+@media (hover: none), (pointer: coarse), (max-width: 899px) {
+  .overlay {
+    background: rgba(42, 18, 16, 0.6);
+    backdrop-filter: none;
+  }
+}
+
 .overlay.is-leaving {
   animation: fade-out var(--t-fast) ease both;
 }
@@ -1388,6 +1409,13 @@ body[data-layout="immersive"] .toast-host {
   background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(12px);
   box-shadow: 0 -6px 24px rgba(122, 44, 64, 0.12);
+}
+
+@media (hover: none), (pointer: coarse), (max-width: 899px) {
+  .sticky-cta {
+    background: var(--white);
+    backdrop-filter: none;
+  }
 }
 
 .sticky-cta .btn {

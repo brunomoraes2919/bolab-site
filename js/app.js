@@ -126,3 +126,17 @@ const IN_APP = location.hostname === 'appassets.androidplatform.net';
 if ('serviceWorker' in navigator && location.protocol === 'https:' && !IN_APP) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
+
+// No app os arquivos já estão no aparelho: com a loja parada, deixamos o motor 3D lido e
+// compilado (sem executar), para o "Monte seu bolo" abrir mais depressa. No site isso não é
+// feito: seriam ~650 KB baixados por quem talvez nem abra o personalizador.
+if (IN_APP) {
+  const warm = () =>
+    ['vendor/three/three.module.min.js', 'js/views/customizer.js'].forEach((href) => {
+      const link = document.createElement('link');
+      link.rel = 'modulepreload';
+      link.href = href;
+      document.head.appendChild(link);
+    });
+  setTimeout(warm, 5000); // depois que a primeira tela e as fotos dela já assentaram
+}

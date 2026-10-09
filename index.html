@@ -18,7 +18,79 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="preconnect" href="https://images.unsplash.com" />
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,600;0,700;0,800;1,600;1,700&display=swap" rel="stylesheet" />
+
+    <script>
+      // DESEMPENHO DA ABERTURA (três atalhos; nenhum muda a aparência):
+      //
+      // 1. A foto principal do início começa a baixar junto com o resto. Antes ela só era pedida
+      //    depois de todo o JavaScript rodar. Se trocar a foto "hero" em js/data/photos.js,
+      //    troque o código dela aqui também (senão o navegador baixa duas fotos).
+      (function () {
+        if (location.hash && location.hash !== '#' && location.hash !== '#/') return;
+        var photo = 'photo-1569289522127-c0452f372d46';
+        var link = document.createElement('link');
+        link.rel = 'preload';
+        link.as = 'image';
+        link.setAttribute(
+          'imagesrcset',
+          [720, 1080, 1440]
+            .map(function (w) {
+              return 'https://images.unsplash.com/' + photo + '?w=' + w + '&q=72&auto=format&fit=crop ' + w + 'w';
+            })
+            .join(', '),
+        );
+        link.setAttribute('imagesizes', '(min-width: 900px) 46vw, 92vw');
+        document.head.appendChild(link);
+      })();
+
+      // 2. As fontes da marca não seguram mais a primeira pintura (a folha de estilo delas vem de
+      //    outro servidor; no app, sem internet, a tela ficava esperando). Assim que a folha chega,
+      //    os arquivos das fontes já são pedidos, para o texto não "pular" depois de aparecer.
+      function bolabFonts(link) {
+        if (link.rel === 'preload') {
+          link.rel = 'stylesheet'; // a folha chegou: aplica (este mesmo aviso dispara de novo depois de aplicada)
+          return;
+        }
+        link.onload = null;
+        if (!document.fonts || !document.fonts.load) return;
+        ['400', '500', '600', '700', '800', '900']
+          .map(function (w) {
+            return w + ' 1em Nunito';
+          })
+          .concat(
+            ['600', '700', '800', 'italic 600', 'italic 700'].map(function (w) {
+              return w + ' 1em "Playfair Display"';
+            }),
+          )
+          .forEach(function (font) {
+            document.fonts.load(font).catch(function () {});
+          });
+      }
+    </script>
+    <link
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,600;0,700;0,800;1,600;1,700&display=swap"
+      onload="bolabFonts(this)"
+    />
+    <noscript>
+      <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,600;0,700;0,800;1,600;1,700&display=swap" rel="stylesheet" />
+    </noscript>
+
+    <!-- 3. Os arquivos de JavaScript da primeira tela são pedidos todos de uma vez, em vez de um
+         descobrir o outro em fila. Se criar um arquivo novo usado na abertura, pode acrescentar
+         aqui; se esquecer, nada quebra (ele só carrega um pouco depois). -->
+    <link rel="modulepreload" href="js/app.js" />
+    <link rel="modulepreload" href="js/router.js" />
+    <link rel="modulepreload" href="js/shell.js" />
+    <link rel="modulepreload" href="js/store.js" />
+    <link rel="modulepreload" href="js/ui.js" />
+    <link rel="modulepreload" href="js/icons.js" />
+    <link rel="modulepreload" href="js/components.js" />
+    <link rel="modulepreload" href="js/data/site.js" />
+    <link rel="modulepreload" href="js/data/products.js" />
+    <link rel="modulepreload" href="js/data/photos.js" />
+    <link rel="modulepreload" href="js/views/home.js" />
 
     <link rel="stylesheet" href="css/tokens.css" />
     <link rel="stylesheet" href="css/base.css" />

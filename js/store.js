@@ -875,13 +875,26 @@ export const chat = {
   },
 };
 
-/* ───────── Preferências soltas ───────── */
+/* ───────── Preferências soltas ─────────
+   Várias preferências gravadas em sequência (o personalizador guarda o rascunho e a etapa a cada
+   escolha) viram uma gravação só, feita logo depois que o código atual termina. Cada gravação
+   converte o estado inteiro em texto, então gravar duas vezes seguidas era trabalho dobrado. */
+let prefsPending = false;
+function savePrefsSoon() {
+  if (prefsPending) return;
+  prefsPending = true;
+  queueMicrotask(() => {
+    prefsPending = false;
+    save();
+  });
+}
+
 export const prefs = {
   get(key, fallback = null) {
     return state.prefs[key] ?? fallback;
   },
   set(key, value) {
     state.prefs[key] = value;
-    save();
+    savePrefsSoon();
   },
 };

@@ -6,24 +6,32 @@ import { isCake, sizesOf } from './data/products.js';
 
 /**
  * Foto responsiva com fallback elegante se não carregar.
- *   photo('p1', { w: 480, ratio: '1/1', alt, eager: false, cls: '' })
+ *   photo('p1', { w: 480, alt, eager: false, cls: '', sizes: '(min-width: 900px) 280px, 46vw' })
  * `key` é uma chave de js/data/photos.js. Para bolos personalizados use customThumb().
+ * `sizes` diz ao navegador a largura que a foto ocupa na tela; com isso ele baixa o menor
+ * arquivo que serve (w, 1,5×w ou 2×w) em vez de sempre o maior. `priority` é só para a foto
+ * principal da tela (a primeira coisa que a pessoa vê).
  */
-export function photo(key, { w = 480, alt, eager = false, cls = '', sizes } = {}) {
+export function photo(key, { w = 480, alt, eager = false, cls = '', sizes, priority = false } = {}) {
   const src = photoUrl(key, w);
   if (!src) return mediaFallback(cls);
-  const srcset = [w, w * 2].map((x) => `${photoUrl(key, x)} ${x}w`).join(', ');
   return html`<img
     class="${cls}"
     src="${src}"
-    srcset="${srcset}"
+    srcset="${photoSrcset(key, w)}"
     sizes="${sizes || `${w}px`}"
     alt="${alt ?? photoAlt(key)}"
     style="object-position:${photoFocus(key)}"
     loading="${eager ? 'eager' : 'lazy'}"
+    ${priority ? raw('fetchpriority="high"') : ''}
     decoding="async"
     data-fallback
   />`;
+}
+
+/** Larguras oferecidas ao navegador para uma foto de largura-base w (o index.html repete estas larguras ao pedir a foto principal antes da hora). */
+export function photoSrcset(key, w) {
+  return [w, Math.round(w * 1.5), w * 2].map((x) => `${photoUrl(key, x)} ${x}w`).join(', ');
 }
 
 export function mediaFallback(cls = '') {

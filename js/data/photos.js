@@ -19,6 +19,7 @@ export const PHOTOS = {
   p13: { id: "photo-1697442788466-4299b57d9814", alt: "Bolo sobre boleira de madeira com topper de número e flores de papel", focus: "center 55%", author: "Daiga Ellaby", backup: "photo-1728355863052-928208f4e743" },
   p14: { id: "photo-1726828952056-5efd2d76c22b", alt: "Bolo decorado com laços rosa e topper de coroa dourada", focus: "60% 65%", author: "Kateryna Hliznitsova", backup: "photo-1693059740560-21151639561f" },
   p15: { id: "photo-1572823535719-64c4d624e731", alt: "Bolo rosa em boleira branca com velas douradas e leques de papel em tons pastel ao fundo", focus: "center 60%", author: "Deva Williamson", backup: "photo-1743058365646-62fa5a299b37" },
+  // hero: se trocar esta foto, troque o mesmo código no início do index.html (ele pede a foto antes, para a tela abrir mais rápido).
   hero: { id: "photo-1569289522127-c0452f372d46", alt: "Bolo rosa alto decorado com cerejas e confeitos sobre boleira branca", focus: "center 40%", author: "Deva Williamson", backup: "photo-1558301211-0d8c8ddee6ec" },
   hero2: { id: "photo-1567517757338-47d461bb1dd1", alt: "Bolo e cupcakes decorados com flores de buttercream em tons pastel, vistos de cima", focus: "70% center", author: "Deva Williamson", backup: "photo-1546379782-7b9235cf24ae" },
   atelier: { id: "photo-1586985289688-ca3cf47d3e6e", alt: "Mão de confeiteira decorando bolo degradê com saco de confeitar", focus: "center 40%", author: "American Heritage Chocolate", backup: "photo-1677840147134-59a6498442f0" },

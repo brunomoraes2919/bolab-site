@@ -115,9 +115,17 @@ function streakHeight(size, seed) {
   const n2 = tileNoise(8, seed + 1);
   const r = rng(seed + 2);
   const bands = Array.from({ length: 46 }, () => ({ y: r(), w: 0.004 + r() * 0.02, a: (r() - 0.5) * 0.5, ph: r() * 6.28, wob: r() * 0.006 }));
+  // cada linha da textura só consulta as faixas que passam perto dela (dezenas de vezes mais rápido)
+  const rows = Array.from({ length: size }, (_, y) => {
+    const v = y / size;
+    return bands.filter((b) => {
+      const d = Math.abs(v - b.y);
+      return Math.min(d, 1 - d) < b.w * 3 + b.wob;
+    });
+  });
   return paintHeight(size, (u, v) => {
     let h = 0.5;
-    for (const b of bands) {
+    for (const b of rows[Math.min(size - 1, Math.round(v * size))]) {
       const yy = b.y + Math.sin(u * 6.2832 + b.ph) * b.wob;
       let d = Math.abs(v - yy);
       d = Math.min(d, 1 - d);
@@ -356,58 +364,110 @@ function flameCanvas() {
   return c;
 }
 
+/** Desenhos já calculados nesta sessão (por tamanho): reabrir o personalizador não refaz nenhum. */
+const DRAWN = new Map();
+
 /**
  * Conjunto de texturas de uma cena. Cada textura é criada na primeira vez que é pedida
- * e todas são liberadas em dispose().
+ * e todas são liberadas em dispose(). size = lado das texturas maiores (256 no celular, 512 no computador).
  */
-export function createTextureKit({ aniso = 4, small = false } = {}) {
+export function createTextureKit({ aniso = 4, small = false, size = 0 } = {}) {
   const cache = new Map();
-  const S = small ? 256 : 512;
+  const S = size || (small ? 256 : 512);
   const get = (key, make) => {
     if (!cache.has(key)) cache.set(key, make());
     return cache.get(key);
   };
-  return {
-    streakNormal: () => get('streak', () => texture(heightToNormal(streakHeight(S, 11), 2.4), { aniso })),
-    swirlNormal: () => get('swirl', () => texture(heightToNormal(swirlHeight(S, 23), 2.2, false), { repeat: false, aniso })),
-    softNormal: () => get('soft', () => texture(heightToNormal(softHeight(S / 2, 31), 2.2), { aniso })),
-    poreNormal: () => get('pore', () => texture(heightToNormal(softHeight(S, 47, true), 2.6), { aniso })),
-    crumb: () => get('crumb', () => texture(crumbCanvas(S, 5), { srgb: true, aniso })),
-    crumbBump: () => get('crumbBump', () => texture(crumbCanvas(S, 5), { aniso })),
-    crust: () => get('crust', () => texture(crustCanvas(S / 2, 71), { srgb: true, aniso })),
-    scrape: () => get('scrape', () => texture(scrapeCanvas(S, 83), { srgb: true, aniso })),
+  const drawn = (key, make) => {
+    const k = `${key}|${S}`;
+    if (!DRAWN.has(k)) DRAWN.set(k, make());
+    return DRAWN.get(k);
+  };
+  const kit = {
+    streakNormal: () => get('streak', () => texture(drawn('streak', () => heightToNormal(streakHeight(S, 11), 2.4)), { aniso })),
+    // a espiral do topo é suave: no celular metade do tamanho basta (um quarto do tempo para desenhar)
+    swirlNormal: () => get('swirl', () => texture(drawn('swirl', () => heightToNormal(swirlHeight(S >= 512 ? S : S / 2, 23), 2.2, false)), { repeat: false, aniso })),
+    softNormal: () => get('soft', () => texture(drawn('soft', () => heightToNormal(softHeight(S / 2, 31), 2.2)), { aniso })),
+    poreNormal: () => get('pore', () => texture(drawn('pore', () => heightToNormal(softHeight(S, 47, true), 2.6)), { aniso })),
+    crumb: () => get('crumb', () => texture(drawn('crumb', () => crumbCanvas(S, 5)), { srgb: true, aniso })),
+    crumbBump: () => get('crumbBump', () => texture(drawn('crumb', () => crumbCanvas(S, 5)), { aniso })),
+    crust: () => get('crust', () => texture(drawn('crust', () => crustCanvas(S / 2, 71)), { srgb: true, aniso })),
+    scrape: () => get('scrape', () => texture(drawn('scrape', () => scrapeCanvas(S, 83)), { srgb: true, aniso })),
     glitterNormal: () =>
-      get('glitter', () => {
-        const r = rng(97);
-        return texture(heightToNormal(paintHeight(128, () => r()), 1.6), { aniso });
-      }),
+      get('glitter', () =>
+        texture(
+          drawn('glitter', () => {
+            const r = rng(97);
+            return heightToNormal(paintHeight(128, () => r()), 1.6);
+          }),
+          { aniso },
+        ),
+      ),
     strawberry: () =>
       get('strawberry', () => {
-        const { color, bump } = strawberryCanvases(256);
+        const { color, bump } = drawn('strawberry', () => strawberryCanvases(S >= 512 ? 256 : 128));
         return { map: texture(color, { srgb: true, aniso }), bump: texture(bump, { aniso }) };
       }),
-    candle: (hex) => get(`candle${hex}`, () => texture(candleCanvas(hex), { srgb: true, aniso })),
-    flame: () => get('flame', () => texture(flameCanvas(), { repeat: false, srgb: true })),
+    candle: (hex) => get(`candle${hex}`, () => texture(drawn(`candle${hex}`, () => candleCanvas(hex)), { srgb: true, aniso })),
+    flame: () => get('flame', () => texture(drawn('flame', flameCanvas), { repeat: false, srgb: true })),
     glow: () =>
       get('glow', () =>
         texture(
-          radialCanvas(128, [
-            [0, 'rgba(255,214,140,0.9)'],
-            [0.25, 'rgba(255,180,90,0.35)'],
-            [1, 'rgba(255,160,60,0)'],
-          ]),
+          drawn('glow', () =>
+            radialCanvas(128, [
+              [0, 'rgba(255,214,140,0.9)'],
+              [0.25, 'rgba(255,180,90,0.35)'],
+              [1, 'rgba(255,160,60,0)'],
+            ]),
+          ),
           { repeat: false, srgb: true },
         ),
       ),
     contactShadow: () =>
       get('contact', () =>
         texture(
-          radialCanvas(256, [
-            [0, 'rgba(255,255,255,1)'],
-            [0.35, 'rgba(255,255,255,0.75)'],
-            [0.7, 'rgba(255,255,255,0.22)'],
-            [1, 'rgba(255,255,255,0)'],
-          ]),
+          drawn('contact', () =>
+            radialCanvas(128, [
+              [0, 'rgba(255,255,255,1)'],
+              [0.35, 'rgba(255,255,255,0.75)'],
+              [0.7, 'rgba(255,255,255,0.22)'],
+              [1, 'rgba(255,255,255,0)'],
+            ]),
+          ),
+          { repeat: false },
+        ),
+      ),
+    /** Sombra do bolo sobre o prato: cheia por baixo do bolo e sumindo logo depois da borda dele. */
+    plateShadow: () =>
+      get('plateShadow', () =>
+        texture(
+          drawn('plateShadow', () =>
+            radialCanvas(128, [
+              [0, 'rgba(255,255,255,1)'],
+              [0.7, 'rgba(255,255,255,1)'],
+              [0.8, 'rgba(255,255,255,0.62)'],
+              [0.9, 'rgba(255,255,255,0.2)'],
+              [1, 'rgba(255,255,255,0)'],
+            ]),
+          ),
+          { repeat: false },
+        ),
+      ),
+    /** Sombra projetada no chão: mancha bem macia, sem borda (parecida com uma curva de sino). */
+    softShadow: () =>
+      get('softShadow', () =>
+        texture(
+          drawn('softShadow', () =>
+            radialCanvas(128, [
+              [0, 'rgba(255,255,255,1)'],
+              [0.18, 'rgba(255,255,255,0.9)'],
+              [0.36, 'rgba(255,255,255,0.62)'],
+              [0.54, 'rgba(255,255,255,0.33)'],
+              [0.72, 'rgba(255,255,255,0.13)'],
+              [0.88, 'rgba(255,255,255,0.03)'],
+              [1, 'rgba(255,255,255,0)'],
+            ]),
+          ),
           { repeat: false },
         ),
       ),
@@ -417,6 +477,10 @@ export function createTextureKit({ aniso = 4, small = false } = {}) {
       cache.set(key, tex);
       return tex;
     },
+    /** Tarefas para adiantar, uma por vez, quando o aparelho estiver ocioso (evita engasgo na primeira escolha). */
+    warmups() {
+      return [kit.softNormal, kit.swirlNormal, kit.poreNormal, kit.streakNormal, kit.crumb, kit.crust, kit.scrape, kit.strawberry].map((fn) => () => void fn());
+    },
     dispose() {
       cache.forEach((t) => {
         if (t?.isTexture) t.dispose();
@@ -425,6 +489,7 @@ export function createTextureKit({ aniso = 4, small = false } = {}) {
       cache.clear();
     },
   };
+  return kit;
 }
 
 export { makeCanvas, texture };

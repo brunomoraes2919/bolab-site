@@ -308,7 +308,7 @@ export default {
           <div class="pd-top">
             <div class="pd-gallery">
               <div class="pd-photo">
-                ${photo(p.photo, { w: 720, alt: p.name, eager: true, sizes: '(min-width: 900px) 46vw, 100vw' })}
+                ${photo(p.photo, { w: 720, alt: p.name, eager: true, priority: true, sizes: '(min-width: 900px) 46vw, 100vw' })}
                 ${p.badge ? html`<span class="badge badge--dark pd-photo__badge">${p.badge}</span>` : ''}
                 <div class="pd-photo__actions">
                   ${favButton(p.id)}

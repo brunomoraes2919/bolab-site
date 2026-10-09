@@ -218,6 +218,18 @@ ol {
   transform: none;
 }
 
+/* Celular, tablet e janelas estreitas: o conteúdo já nasce no lugar. Animar a entrada de cada
+   card durante a rolagem custava caro nesses aparelhos (cada um virava uma camada e era
+   repintado duas vezes) e deixava trechos em branco ao rolar depressa. No computador a
+   animação continua. (js/ui.js -> observeReveal acompanha esta mesma regra.) */
+@media (hover: none), (pointer: coarse), (max-width: 899px) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

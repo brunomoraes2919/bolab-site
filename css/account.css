@@ -849,9 +849,11 @@ section > .acc-subtitle {
   transition: transform var(--t-fast) var(--ease), box-shadow var(--t-fast);
 }
 
-.acc-order:hover {
-  transform: translateY(-2px);
-  box-shadow: inset 0 0 0 1.5px var(--rose-500), var(--shadow-2);
+@media (hover: hover) {
+  .acc-order:hover {
+    transform: translateY(-2px);
+    box-shadow: inset 0 0 0 1.5px var(--rose-500), var(--shadow-2);
+  }
 }
 
 .acc-order__top {

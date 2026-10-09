@@ -21,6 +21,12 @@
   margin-top: var(--s-6);
 }
 
+/* Lugar reservado para a segunda parte da página, que entra logo depois da primeira pintura
+   (js/views/home.js). A altura evita que o rodapé apareça colado no meio enquanto isso. */
+.home-rest {
+  min-height: 300vh;
+}
+
 /* ───────── Hero ───────── */
 .hero {
   position: relative;
@@ -185,6 +191,21 @@
   }
 }
 
+/* Fora da tela, as animações contínuas descansam (js/ui.js -> pauseOffscreen marca .is-away).
+   Sem isso o navegador era acordado a cada quadro, a página inteira, mesmo sem nada se mexendo à vista. */
+.is-away .hero__card,
+.is-away .spot__cake--main {
+  animation-play-state: paused;
+}
+
+/* Tablets de toque em tela larga: cartões flutuantes sem vidro fosco (ver css/shell.css). */
+@media (hover: none), (pointer: coarse) {
+  .hero__card {
+    background: var(--white);
+    backdrop-filter: none;
+  }
+}
+
 @media (min-width: 560px) {
   .hero__cta {
     flex-direction: row;
@@ -261,9 +282,11 @@
   object-fit: cover;
 }
 
-.cat-tile:hover .cat-tile__img {
-  transform: translateY(-4px) scale(1.04);
-  box-shadow: 0 0 0 3px var(--white), 0 0 0 4.5px var(--rose-500), var(--shadow-2);
+@media (hover: hover) {
+  .cat-tile:hover .cat-tile__img {
+    transform: translateY(-4px) scale(1.04);
+    box-shadow: 0 0 0 3px var(--white), 0 0 0 4.5px var(--rose-500), var(--shadow-2);
+  }
 }
 
 .cat-tile__label {
@@ -371,12 +394,14 @@
   opacity: 0.92;
 }
 
-.spot__stage:hover .spot__cake--left {
-  transform: translate(-3%, -2%) rotate(-2deg);
-}
+@media (hover: hover) {
+  .spot__stage:hover .spot__cake--left {
+    transform: translate(-3%, -2%) rotate(-2deg);
+  }
 
-.spot__stage:hover .spot__cake--right {
-  transform: translate(3%, -2%) rotate(2deg);
+  .spot__stage:hover .spot__cake--right {
+    transform: translate(3%, -2%) rotate(2deg);
+  }
 }
 
 @keyframes spot-float {
@@ -405,6 +430,13 @@
   width: 14px;
   height: 14px;
   color: var(--rose-300);
+}
+
+@media (hover: none), (pointer: coarse), (max-width: 899px) {
+  .spot__tag {
+    background: rgba(42, 18, 16, 0.74);
+    backdrop-filter: none;
+  }
 }
 
 .spot__chips {

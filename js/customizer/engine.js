@@ -5,8 +5,14 @@
 //   cake.setCutaway(true|false)       "Ver por dentro": retira uma fatia e mostra massa e recheio
 //   cake.setAutoRotate(true|false)    giro automático (pausa enquanto a pessoa mexe)
 //   cake.setView('default'|'top')     enquadramentos prontos · cake.resetView()
-//   cake.snapshot({ size })           → dataURL JPEG sobre o fundo da marca
+//   cake.snapshot({ size })           → dataURL JPEG sobre o fundo que dá contraste ao bolo
+//   cake.setBackdrop(fundo)           ajusta sombras e luz de baixo ao fundo do palco (js/customizer/backdrop.js)
+//   cake.setPaused(bool) · cake.quiet(ms)   para de desenhar (diálogo aberto) / segura o giro (painel rolando)
 //   cake.resize() · cake.dispose()
+//
+// Fluidez: o nível de qualidade vem de js/customizer/quality.js (celular × computador). O laço só desenha
+// quando algo muda; o giro automático roda a ~30 quadros/s no celular; a resolução desce sozinha se os
+// quadros atrasarem e volta ao máximo quando o bolo para. Peças novas são construídas uma por quadro.
 //
 // createCakeScene lança erro se o aparelho não tiver WebGL: a tela trata e segue sem o 3D.
 import * as THREE from 'three';
@@ -16,6 +22,8 @@ import { createTextureKit } from './textures.js';
 import { cakeMetrics, buildFrosting, buildSponge, buildFillingBand, buildTopCream, buildScrapeCoat, buildDrip, buildCutFaces, buildStand } from './geometry.js';
 import { createDecorLibrary, decorLayout, buildPiping, buildDecor, decorHeight, inWedge } from './decor.js';
 import { getFlavor, getFilling } from '../data/customizer.js';
+import { detectTier, createResolutionGovernor } from './quality.js';
+import { getBackdrop, resolveBackdrop, paintBackdrop } from './backdrop.js';
 
 const TAU = Math.PI * 2;
 const DEG = Math.PI / 180;
@@ -53,12 +61,8 @@ function displayColor(hex, target = new THREE.Color()) {
 }
 
 export function isWebGLAvailable() {
-  try {
-    const c = document.createElement('canvas');
-    return Boolean(window.WebGLRenderingContext && (c.getContext('webgl2') || c.getContext('webgl')));
-  } catch {
-    return false;
-  }
+  // só confere se o navegador conhece WebGL; quem tenta de verdade é o renderizador (um contexto a menos por visita)
+  return typeof window !== 'undefined' && Boolean(window.WebGLRenderingContext);
 }
 
 /** Ajustes de material para cada tipo de cobertura. */
@@ -66,33 +70,44 @@ const COVERING_LOOK = {
   buttercream: { roughness: 0.56, clearcoat: 0.05, clearcoatRoughness: 0.5, sheen: 0.45, normal: 'streak', normalScale: 0.26, topNormal: 'swirl', topScale: 0.3, env: 0.95 },
   chantilly: { roughness: 0.82, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.8, normal: 'soft', normalScale: 0.5, topNormal: 'soft', topScale: 0.5, env: 1 },
   ganache: { roughness: 0.2, clearcoat: 0.75, clearcoatRoughness: 0.14, sheen: 0, normal: 'soft', normalScale: 0.07, topNormal: 'soft', topScale: 0.07, env: 1.15 },
-  glace: { roughness: 0.1, clearcoat: 1, clearcoatRoughness: 0.05, sheen: 0, normal: 'soft', normalScale: 0.045, topNormal: 'soft', topScale: 0.045, env: 1.2 },
+  glace: { roughness: 0.14, clearcoat: 1, clearcoatRoughness: 0.07, sheen: 0, normal: 'soft', normalScale: 0.05, topNormal: 'soft', topScale: 0.05, env: 1.1 },
   chocolate: { roughness: 0.4, clearcoat: 0.28, clearcoatRoughness: 0.32, sheen: 0, normal: 'streak', normalScale: 0.5, topNormal: 'swirl', topScale: 0.5, env: 1 },
   mousse: { roughness: 0.76, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.5, normal: 'pore', normalScale: 0.45, topNormal: 'pore', topScale: 0.45, env: 0.95 },
   naked: { roughness: 0.74, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.6, normal: 'soft', normalScale: 0.45, topNormal: 'swirl', topScale: 0.35, env: 1 },
 };
 
-export function createCakeScene(canvas, { onContextLost, onContextRestored, onInteract, insets } = {}) {
+export function createCakeScene(canvas, { onContextLost, onContextRestored, onInteract, insets, tier: forcedTier } = {}) {
   if (!isWebGLAvailable()) throw new Error('WebGL indisponível');
 
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const lowEnd = window.matchMedia('(max-width: 899px)').matches || (navigator.deviceMemory && navigator.deviceMemory <= 4);
+  const tier = forcedTier || detectTier();
+  const deviceRatio = () => window.devicePixelRatio || 1;
+  /** Proporção de pixels do bolo parado (a mais nítida que o nível permite). */
+  const stillRatio = () => Math.min(deviceRatio(), tier.maxRatio);
+  const gov = createResolutionGovernor({ max: stillRatio(), dpr: deviceRatio() });
+  let curRatio = stillRatio();
 
   /* ───────── Renderizador ───────── */
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: tier.antialias, alpha: true, stencil: false, powerPreference: 'high-performance' });
+  } catch (err) {
+    throw new Error('WebGL indisponível');
+  }
+  renderer.debug.checkShaderErrors = false; // sem esperar o registro de cada programa: a compilação não trava a tela
+  renderer.setPixelRatio(curRatio);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.12;
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.enabled = tier.shadows;
+  renderer.shadowMap.type = tier.softShadow ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
   renderer.localClippingEnabled = true;
   renderer.setClearColor(0x000000, 0);
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 60);
-  const tex = createTextureKit({ aniso: Math.min(8, renderer.capabilities.getMaxAnisotropy()), small: lowEnd });
-  const lib = createDecorLibrary(tex);
+  const tex = createTextureKit({ aniso: Math.min(tier.physical ? 8 : 2, renderer.capabilities.getMaxAnisotropy()), size: tier.texSize });
+  const lib = createDecorLibrary(tex, tier);
 
   let pmrem = null;
   let envTarget = null;
@@ -111,35 +126,51 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   buildEnvironment();
 
   /* ───────── Luzes ───────── */
-  const hemi = new THREE.HemisphereLight(0xfff6f0, 0xf6c9d4, 0.85);
+  // celular: luz principal + contraluz + ambiente (sem preenchimento nem luz das velas: o ambiente compensa)
+  const hemi = new THREE.HemisphereLight(0xfff6f0, 0xf6c9d4, tier.fillLight ? 0.85 : 1.14);
   scene.add(hemi);
   const key = new THREE.DirectionalLight(0xfff0e0, 2.1);
-  key.castShadow = true;
-  key.shadow.mapSize.set(lowEnd ? 1024 : 2048, lowEnd ? 1024 : 2048);
-  key.shadow.bias = -0.0004;
+  key.castShadow = tier.shadows;
+  key.shadow.mapSize.set(tier.shadowSize, tier.shadowSize);
+  key.shadow.bias = -0.0012;
   key.shadow.normalBias = 0.018;
   key.shadow.radius = 5;
   key.shadow.blurSamples = 12;
   scene.add(key, key.target);
   const fill = new THREE.DirectionalLight(0xffe3ea, 0.9);
-  scene.add(fill, fill.target);
+  if (tier.fillLight) scene.add(fill, fill.target);
   const rim = new THREE.DirectionalLight(0xffffff, 1.0);
   scene.add(rim, rim.target);
   // brilho quente das velas: fica sempre na cena (intensidade 0 sem velas) para não recompilar materiais
   const candleLight = new THREE.PointLight(0xffb066, 0, 3.4, 2);
-  scene.add(candleLight);
+  if (tier.pointLight) scene.add(candleLight);
 
-  /* ───────── Chão: sombra projetada + sombra de contato ───────── */
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(16, 16), new THREE.ShadowMaterial({ color: 0x6d2338, opacity: 0.17 }));
+  /* ───────── Chão: sombra projetada (mancha macia) + sombra de contato ─────────
+     A sombra no chão é uma mancha desfocada que acompanha a luz: fica macia em qualquer fundo
+     e não custa nada (o mapa de sombras cuida só do bolo e do prato, com mais definição). */
+  let backdrop = getBackdrop('rosa');
+  const shadowPlane = new THREE.PlaneGeometry(1, 1);
+  const floor = new THREE.Mesh(
+    shadowPlane,
+    new THREE.MeshBasicMaterial({ map: tex.softShadow(), color: backdrop.shadow.color, transparent: true, opacity: backdrop.shadow.opacity, depthWrite: false, toneMapped: false }),
+  );
   floor.rotation.x = -Math.PI / 2;
-  floor.receiveShadow = true;
+  floor.renderOrder = -2;
   scene.add(floor);
   const contact = new THREE.Mesh(
-    new THREE.PlaneGeometry(1, 1),
-    new THREE.MeshBasicMaterial({ map: tex.contactShadow(), color: 0x5c1d30, transparent: true, opacity: 0.34, depthWrite: false, toneMapped: false }),
+    shadowPlane,
+    new THREE.MeshBasicMaterial({ map: tex.contactShadow(), color: backdrop.contact.color, transparent: true, opacity: backdrop.contact.opacity, depthWrite: false, toneMapped: false }),
   );
   contact.rotation.x = -Math.PI / 2;
+  contact.renderOrder = -1;
   scene.add(contact);
+  // sombra macia do bolo sobre o prato: assenta o bolo mesmo sem mapa de sombras (celular)
+  const plateShade = new THREE.Mesh(
+    shadowPlane,
+    new THREE.MeshBasicMaterial({ map: tex.plateShadow(), color: 0x4a1f2b, transparent: true, opacity: tier.shadows ? 0.12 : 0.3, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
+  );
+  plateShade.rotation.x = -Math.PI / 2;
+  scene.add(plateShade);
 
   /* ───────── Planos de corte ("Ver por dentro") ───────── */
   const OFF = () => new THREE.Plane(new THREE.Vector3(0, 1, 0), 1000);
@@ -147,15 +178,25 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   const clipped = { clippingPlanes: clipPlanes, clipIntersection: true, clipShadows: true };
 
   /* ───────── Materiais ───────── */
-  const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xfffdfb, roughness: 0.2, clearcoat: 0.9, clearcoatRoughness: 0.12 });
+  // no celular, sem verniz (clearcoat) nem brilho acetinado (sheen): materiais bem mais leves de desenhar
+  const coat = (v) => (tier.physical ? v : 0);
+  const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xfffdfb, roughness: tier.physical ? 0.2 : 0.12, clearcoat: coat(0.9), clearcoatRoughness: 0.12 });
   const gold = new THREE.MeshStandardMaterial({ color: 0xe6bb62, metalness: 0.88, roughness: 0.28, emissive: 0x6b4a10, emissiveIntensity: 0.4 });
   const frostSide = new THREE.MeshPhysicalMaterial({ color: 0xffffff, sheenColor: 0xffffff, sheenRoughness: 0.55, ...clipped });
   const frostTop = new THREE.MeshPhysicalMaterial({ color: 0xffffff, sheenColor: 0xffffff, sheenRoughness: 0.55, ...clipped });
   const cutFrost = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72, emissiveIntensity: 0.12 });
   cutFrost.emissive = cutFrost.color;
-  const dripMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.2, clearcoat: 0.85, clearcoatRoughness: 0.12, ...clipped });
+  const dripMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: tier.physical ? 0.2 : 0.13, clearcoat: coat(0.85), clearcoatRoughness: 0.12, ...clipped });
   const cutDrip = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35 });
-  const scrapeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: tex.scrape(), transparent: true, roughness: 0.8, depthWrite: false, ...clipped });
+  let scrapeMat = null;
+  const scrape = () => {
+    if (!scrapeMat) {
+      scrapeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: tex.scrape(), transparent: true, roughness: 0.8, depthWrite: false, ...clipped });
+      displayColor(config.covering.color, scrapeMat.color);
+    }
+    return scrapeMat;
+  };
+  const flavorOf = (i) => getFlavor(config.layers[Math.min(i, config.layers.length - 1)]);
   // por camada / por recheio (criados sob demanda, até 4)
   const crustMats = [];
   const crumbMats = [];
@@ -166,11 +207,16 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     return list[i];
   };
   const crustMat = (i) =>
-    layerMat(crustMats, i, () => new THREE.MeshStandardMaterial({ map: tex.crust(), bumpMap: tex.crumbBump(), bumpScale: 1.4, roughness: 0.88, ...clipped }));
+    layerMat(crustMats, i, () => {
+      const mat = new THREE.MeshStandardMaterial({ map: tex.crust(), bumpMap: tex.crumbBump(), bumpScale: 1.4, roughness: 0.88, ...clipped });
+      mat.color.set(flavorOf(i).crust);
+      return mat;
+    });
   const crumbMat = (i) =>
     layerMat(crumbMats, i, () => {
       const mat = new THREE.MeshStandardMaterial({ map: tex.crumb(), emissiveMap: tex.crumb(), bumpMap: tex.crumbBump(), bumpScale: 2.2, roughness: 0.92, vertexColors: true, emissiveIntensity: 0.26 });
       mat.emissive = mat.color; // o miolo "acende" um pouco na própria cor, como massa de verdade atravessada pela luz
+      mat.color.set(flavorOf(i).crumb);
       return mat;
     });
   const bandMat = (i) => layerMat(bandMats, i, () => new THREE.MeshPhysicalMaterial({ roughness: 0.5, ...clipped }));
@@ -231,9 +277,39 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   let size = { w: 1, h: 1 };
   const tweens = new Map();
   let tweenSeq = 0;
+  const jobs = []; // peças a construir, uma por quadro (nunca tudo de uma vez no toque)
+  let paused = false; // diálogo aberto ou bolo fora da tela: nada é desenhado
+  let offscreen = false;
+  let quietUntil = 0; // painel rolando: o giro automático espera
+  let lastInput = 0; // último toque/tecla (o giro descansa depois de um tempo sem ninguém mexer)
+  let lastRender = 0;
+  let lastAmbient = 0;
+  let rotClock = 0;
+  let framePeriod = 1 / 60;
+  let sharp = true; // o quadro parado já está na resolução máxima
+  let ticking = false;
+  let selfMove = false;
+  let nap = 0; // cochilo entre dois quadros do giro automático (o laço não acorda a cada atualização da tela)
+  let skipUntil = 0; // logo depois de reconstruir peças, compilar ou trocar a resolução, o custo do quadro não conta
+  const clock = () => performance.now() / 1000;
+  let napped = false;
+  const stats = { renders: 0, skipped: 0 };
+  const shadowCenter = new THREE.Vector3();
 
   function invalidate() {
     dirty = true;
+    wake();
+  }
+
+  /** Acorda o laço de desenho (ele dorme quando não há nada para animar). */
+  function wake() {
+    // durante o próprio quadro nada é agendado aqui: o fim do quadro decide (senão cada invalidate() criaria um laço a mais)
+    if (!running || ticking || lost || disposed || paused || offscreen) return;
+    if (nap) {
+      clearTimeout(nap);
+      nap = 0;
+    }
+    if (!raf) raf = requestAnimationFrame(tick);
   }
 
   /* ───────── Animações ───────── */
@@ -249,7 +325,16 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     tweens.set(k, { t: -delay, dur, update, ease, done });
   }
 
+  function runJobs(budgetMs) {
+    if (!jobs.length) return false;
+    const t0 = performance.now();
+    do jobs.shift()();
+    while (jobs.length && performance.now() - t0 < budgetMs);
+    return true;
+  }
+
   function settle() {
+    while (jobs.length) jobs.shift()();
     [...tweens.values()].forEach((tw) => {
       tw.update(1);
       tw.done?.();
@@ -291,19 +376,71 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     disposeGroup(standGroup);
     stand = buildStand(m);
     standGroup.add(mesh(stand.plate, porcelain), mesh(stand.rim, gold, { cast: false }), mesh(stand.foot, porcelain), mesh(stand.board, gold, { cast: false }));
-    floor.position.y = stand.floorY;
+    floor.visible = true;
+    const b = m.bounds;
+    const margin = 0.2 + m.R * 0.07 - 0.035;
+    const roundPlate = m.shape === 'round' || m.shape === 'heart';
+    plateShade.position.set(0, -0.0128, 0);
+    plateShade.scale.set(2 * ((roundPlate ? b.maxR : b.hx) + margin), 2 * ((roundPlate ? b.maxR : b.hz) + margin), 1);
     contact.position.y = stand.floorY + 0.002;
     const footR = stand.plateRadius * 0.5;
     contact.scale.set(footR * 3.6, footR * 3.6, 1);
-    const reach = stand.plateRadius + 1.2;
+  }
+
+  /** O mapa de sombras enquadra só o bolo, o prato e a decoração: cada ponto dele rende mais. */
+  function fitShadow() {
+    const top = m.Ht + decorHeight(config) + 0.06;
+    const bottom = stand.floorY;
+    shadowCenter.set(0, (top + bottom) / 2, m.center.z * 0.5);
+    const rb = Math.hypot(stand.plateRadius + 0.06, (top - bottom) / 2);
     const sc = key.shadow.camera;
-    sc.left = -reach;
-    sc.right = reach;
-    sc.top = reach + 1;
-    sc.bottom = -reach;
-    sc.near = 0.5;
-    sc.far = 18;
+    sc.left = -rb;
+    sc.right = rb;
+    sc.top = rb;
+    sc.bottom = -rb;
+    sc.near = 7 - rb - 0.3;
+    sc.far = 7 + rb + 0.3;
     sc.updateProjectionMatrix();
+  }
+
+  /** A mancha de sombra no chão cai para o lado oposto ao da luz principal (lightAz = azimute da luz). */
+  function placeFloorShadow(lightAz) {
+    if (!stand || !m) return;
+    const k = 0.78; // 1 / tan(52°), a altura da luz principal
+    const hPlate = -stand.floorY;
+    const near = -stand.plateRadius + hPlate * k;
+    const far = Math.max(stand.plateRadius + hPlate * k, m.bounds.maxR + (hPlate + m.Ht) * k);
+    const mid = (near + far) / 2;
+    const dx = -Math.sin(lightAz);
+    const dz = -Math.cos(lightAz);
+    floor.position.set(dx * mid, stand.floorY + 0.001, dz * mid);
+    floor.scale.set((far - near) * 1.34, stand.plateRadius * 2.6, 1);
+    floor.rotation.z = Math.atan2(-dz, dx);
+  }
+
+  function applyBackdropLook(b, k = 1, from = null) {
+    if (!from) {
+      floor.material.color.set(b.shadow.color);
+      floor.material.opacity = b.shadow.opacity;
+      contact.material.color.set(b.contact.color);
+      contact.material.opacity = b.contact.opacity;
+      hemi.groundColor.set(b.ground);
+      return;
+    }
+    floor.material.color.copy(from.shadow).lerp(_bd.set(b.shadow.color), k);
+    floor.material.opacity = from.shadowA + (b.shadow.opacity - from.shadowA) * k;
+    contact.material.color.copy(from.contact).lerp(_bd.set(b.contact.color), k);
+    contact.material.opacity = from.contactA + (b.contact.opacity - from.contactA) * k;
+    hemi.groundColor.copy(from.ground).lerp(_bd.set(b.ground), k);
+  }
+
+  /** Fundo do palco em uso: as sombras do chão e a luz que vem de baixo acompanham o tom dele. */
+  function setBackdrop(b, { instant = false } = {}) {
+    if (!b || b.id === backdrop.id) return;
+    const from = { shadow: floor.material.color.clone(), shadowA: floor.material.opacity, contact: contact.material.color.clone(), contactA: contact.material.opacity, ground: hemi.groundColor.clone() };
+    backdrop = b;
+    tween('backdrop', instant ? 0 : 0.55, (k) => applyBackdropLook(b, k, from));
+    invalidate();
   }
 
   function applyCoveringLook() {
@@ -314,10 +451,12 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       [frostSide, look.normal, look.normalScale],
       [frostTop, look.topNormal === 'swirl' && !round ? look.normal : look.topNormal, look.topScale],
     ].forEach(([mat, mapName, scale], isTop) => {
-      mat.roughness = look.roughness;
-      mat.clearcoat = look.clearcoat;
+      // computador: verniz e acetinado nunca chegam a zero, para todas as coberturas usarem o mesmo programa
+      // (trocar de tipo não recompila nada). Celular: os dois ficam desligados e o brilho vira superfície mais lisa.
+      mat.roughness = tier.physical ? look.roughness : Math.max(0.09, look.roughness * (1 - 0.42 * look.clearcoat));
+      mat.clearcoat = tier.physical ? Math.max(0.002, look.clearcoat) : 0;
       mat.clearcoatRoughness = look.clearcoatRoughness;
-      mat.sheen = look.sheen;
+      mat.sheen = tier.physical ? Math.max(0.002, look.sheen) : 0;
       mat.envMapIntensity = look.env;
       const map = mapOf(mapName);
       if (mat.normalMap !== map) {
@@ -344,7 +483,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       m.fillY.forEach((_, i) => bodyGroup.add(mesh(buildFillingBand(m, i), bandMat(i))));
       bodyGroup.add(mesh(buildTopCream(m), [frostSide, frostTop]));
       m.layerY.forEach((_, i) => {
-        const coat = mesh(buildScrapeCoat(m, i), scrapeMat, { cast: false });
+        const coat = mesh(buildScrapeCoat(m, i), scrape(), { cast: false });
         coat.renderOrder = 2;
         bodyGroup.add(coat);
       });
@@ -354,19 +493,22 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   function applyLayerColors(instant) {
     config.layers.forEach((id, i) => {
       const f = getFlavor(id);
+      // só os que já existem: massa e miolo nascem (já na cor certa) quando o bolo é naked ou é aberto
+      const crust = crustMats[i];
+      const crumb = crumbMats[i];
       if (instant) {
-        crustMat(i).color.set(f.crust);
-        crumbMat(i).color.set(f.crumb);
+        crust?.color.set(f.crust);
+        crumb?.color.set(f.crumb);
       } else {
-        tweenColor(`crust${i}`, [crustMat(i)], f.crust);
-        tweenColor(`crumb${i}`, [crumbMat(i)], f.crumb);
+        if (crust) tweenColor(`crust${i}`, [crust], f.crust);
+        if (crumb) tweenColor(`crumb${i}`, [crumb], f.crumb);
       }
     });
     config.fillings.forEach((id, i) => {
       const f = getFilling(id);
       [bandMat(i), cutFillMat(i)].forEach((mat) => {
-        mat.roughness = 0.72 - f.gloss * 0.5;
-        mat.clearcoat = f.gloss * 0.7;
+        mat.roughness = (0.72 - f.gloss * 0.5) * (tier.physical ? 1 : 1 - 0.3 * f.gloss);
+        mat.clearcoat = tier.physical ? Math.max(0.002, f.gloss * 0.7) : 0;
         mat.clearcoatRoughness = 0.25;
       });
       if (instant) {
@@ -380,7 +522,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     disposeGroup(dripGroup);
     if (!config.drip.on) return;
     const seed = (m.shape.length * 31 + Math.round(m.R * 100) + m.n * 7) | 0;
-    dripGroup.add(mesh(buildDrip(m, seed), dripMat));
+    dripGroup.add(mesh(buildDrip(m, seed), dripMat, { cast: tier.smallCastShadow }));
   }
 
   function rebuildCut() {
@@ -448,7 +590,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   }
 
   function buildContext() {
-    return { config, m, lib, layout };
+    return { config, m, lib, layout, tier };
   }
 
   /** Lista das peças de decoração de uma configuração: id → chave (muda a chave, reconstrói). */
@@ -463,16 +605,24 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   }
 
   /* ───────── Câmera ───────── */
-  function getSpherical() {
-    const off = camera.position.clone().sub(controls.target);
-    const s = new THREE.Spherical().setFromVector3(off);
-    return { az: s.theta, polar: s.phi, dist: s.radius, ty: controls.target.y, tz: controls.target.z };
+  const _off = new THREE.Vector3();
+  const _sph = new THREE.Spherical();
+  const _bd = new THREE.Color();
+
+  /** Posição da câmera em volta do alvo. Sem `out`, devolve um objeto novo (fora do laço de desenho). */
+  function getSpherical(out = {}) {
+    _sph.setFromVector3(_off.copy(camera.position).sub(controls.target));
+    out.az = _sph.theta;
+    out.polar = _sph.phi;
+    out.dist = _sph.radius;
+    out.ty = controls.target.y;
+    out.tz = controls.target.z;
+    return out;
   }
 
   function applySpherical(s) {
     controls.target.set(0, s.ty, s.tz ?? 0);
-    const sp = new THREE.Spherical(s.dist, s.polar, s.az);
-    camera.position.setFromSpherical(sp).add(controls.target);
+    camera.position.setFromSpherical(_sph.set(s.dist, s.polar, s.az)).add(controls.target);
     camera.lookAt(controls.target);
   }
 
@@ -654,15 +804,22 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   }
 
   /* ───────── API: configuração ───────── */
-  function setConfig(next, { instant = false } = {}) {
+  /**
+   * instant: sem animação e tudo pronto na volta (miniaturas, fotos).
+   * staged: primeira aparição — o corpo do bolo já, bicos e decorações chegando um a um nos quadros seguintes.
+   */
+  function setConfig(next, { instant = false, staged = false } = {}) {
     if (disposed || !next) return;
+    jobs.length = 0;
+    lastInput = clock();
+    skipUntil = lastInput + 0.4;
     const prev = config;
     const prevM = m;
     const first = !prev;
     config = JSON.parse(JSON.stringify(next));
-    m = cakeMetrics(config);
+    m = cakeMetrics(config, tier.detail);
     layout = decorLayout(config, m);
-    const quiet = instant || reduceMotion;
+    const quiet = instant || staged || reduceMotion;
 
     const kStand = `${config.shape}|${config.size}`;
     const kBody = `${kStand}|${m.n}|${config.covering.type}`;
@@ -689,20 +846,30 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       tweenColor('drip', [dripMat, cutDrip], config.drip.color);
       tweenColor('pipe', [lib.mat.piping()], config.piping.color);
     }
-    displayColor(config.covering.color, scrapeMat.color);
+    if (scrapeMat) displayColor(config.covering.color, scrapeMat.color);
+    const pipeMat = lib.mat.piping();
+    if (pipeMat.sheenColor) displayColor(config.piping.color, pipeMat.sheenColor).lerp(_bd.set(0xffffff), 0.55);
     applyLayerColors(first || quiet || bodyChanged);
 
     if (kDrip !== keys.drip) rebuildDrip();
 
-    if (kPipe !== keys.pipe) {
-      const had = pipingPart && pipingPart.batches.length > 0;
-      disposePart(pipingPart);
-      pipingPart = buildPiping(buildContext());
-      pipingPart.born = quiet || (had && keys.pipeStyle === `${config.piping.style}|${config.piping.where}`) ? -100 : now;
-      cakeGroup.add(pipingPart.group);
+    // Bicos e decorações: cada peça que mudou é construída num quadro próprio — o toque nunca espera por elas,
+    // e a peça antiga fica no lugar até a nova chegar. Só as novas entram com animação.
+    const pop = !(instant || reduceMotion);
+    const pipeStyle = `${config.piping.style}|${config.piping.where}`;
+    if (!pipingPart || pipingPart.key !== kPipe) {
+      jobs.push(() => {
+        const old = pipingPart;
+        const part = buildPiping(buildContext());
+        part.key = kPipe;
+        part.style = pipeStyle;
+        part.born = !pop || (!staged && old && old.batches.length > 0 && old.style === pipeStyle) ? -100 : now;
+        disposePart(old);
+        pipingPart = part;
+        cakeGroup.add(part.group);
+        refreshParts(true);
+      });
     }
-
-    // decorações: reconstrói só as que mudaram; só as novas entram com animação
     const plan = decorPlan(config, sig);
     [...decorParts.keys()].forEach((id) => {
       if (!plan.has(id)) {
@@ -713,13 +880,19 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     plan.forEach((k, id) => {
       const old = decorParts.get(id);
       if (old && old.key === k) return;
-      const part = buildDecor(id, buildContext());
-      part.key = k;
-      part.born = quiet || (old && old.own === ownKey(id)) ? -100 : now;
-      part.own = ownKey(id);
-      disposePart(old);
-      decorParts.set(id, part);
-      cakeGroup.add(part.group);
+      const own = ownKey(id);
+      jobs.push(() => {
+        const prev = decorParts.get(id);
+        const part = buildDecor(id, buildContext());
+        part.key = k;
+        part.own = own;
+        part.born = !pop || (!staged && prev && prev.own === own) ? -100 : now;
+        disposePart(prev);
+        decorParts.set(id, part);
+        cakeGroup.add(part.group);
+        if (id === 'velas' && part.lightAt) candleLight.position.copy(part.lightAt);
+        refreshParts(true);
+      });
     });
 
     if (wedge.span > 0.002 && (bodyChanged || kDrip !== keys.drip || kLayers !== keys.layers)) {
@@ -727,9 +900,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     } else refreshParts(true);
 
     // luz das velas
-    const candles = decorParts.get('velas');
-    if (candles?.lightAt) candleLight.position.copy(candles.lightAt);
-    const lightTo = candles ? 0.5 + Math.sqrt(config.decor.candles) * 0.42 : 0;
+    const lightTo = plan.has('velas') ? 0.5 + Math.sqrt(config.decor.candles) * 0.42 : 0;
     if (quiet) candleLight.userData.base = lightTo;
     else {
       const from = candleLight.userData.base || 0;
@@ -748,6 +919,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
         const fromY = cakeGroup.scale.y;
         tween('settle', 0.7, (k) => cakeGroup.scale.set(side + (1 - side) * k, fromY + (1 - fromY) * k, side + (1 - side) * k), { ease: bounce });
       }
+    } else if (staged && !reduceMotion) {
+      cakeGroup.scale.setScalar(0.86);
+      tween('settle', 0.75, (k) => cakeGroup.scale.setScalar(0.86 + 0.14 * k), { ease: bounce });
     } else {
       tweens.delete('settle');
       cakeGroup.scale.setScalar(1);
@@ -763,7 +937,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       if (m.shape === 'heart') holdRotation(3200);
     } else if (standChanged || topChanged) frame({ animate: !quiet });
 
-    keys = { stand: kStand, body: kBody, drip: kDrip, pipe: kPipe, layers: kLayers, pipeStyle: `${config.piping.style}|${config.piping.where}` };
+    keys = { stand: kStand, body: kBody, drip: kDrip, pipe: kPipe, layers: kLayers };
+    fitShadow();
+    if (instant) while (jobs.length) jobs.shift()();
     invalidate();
   }
 
@@ -813,7 +989,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       wedge.span = to;
       applyWedge();
     } else {
+      let step = 0;
       tween('wedge', 0.62, (k) => {
+        if (k < 1 && step++ % tier.wedgeEvery) return; // no celular: quadro sim, quadro não (e sempre o último)
         wedge.span = from + (to - from) * k;
         applyWedge();
       }, { ease: easeInOut });
@@ -850,31 +1028,113 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   }
 
   /* ───────── Laço de desenho ───────── */
-  function placeLights() {
-    const s = getSpherical();
-    const t = controls.target;
-    const at = (az, elev, dist, light) => {
-      light.position.set(t.x + Math.sin(az) * Math.cos(elev) * dist, t.y + Math.sin(elev) * dist, t.z + Math.cos(az) * Math.cos(elev) * dist);
-      light.target.position.copy(t);
-      light.target.updateMatrixWorld();
-    };
-    // luz principal sempre vindo do alto, à esquerda de quem olha
-    at(s.az - 48 * DEG, 52 * DEG, 7, key);
-    at(s.az + 70 * DEG, 18 * DEG, 6, fill);
-    at(s.az + 165 * DEG, 38 * DEG, 6, rim);
+  const _cam = {};
+  function placeLight(light, center, az, elev, dist) {
+    light.position.set(center.x + Math.sin(az) * Math.cos(elev) * dist, center.y + Math.sin(elev) * dist, center.z + Math.cos(az) * Math.cos(elev) * dist);
+    light.target.position.copy(center);
+    light.target.updateMatrixWorld();
   }
+
+  function placeLights() {
+    const az = getSpherical(_cam).az;
+    // luz principal sempre vindo do alto, à esquerda de quem olha
+    placeLight(key, shadowCenter, az - 48 * DEG, 52 * DEG, 7);
+    placeLight(fill, controls.target, az + 70 * DEG, 18 * DEG, 6);
+    placeLight(rim, controls.target, az + 165 * DEG, 38 * DEG, 6);
+    placeFloorShadow(az - 48 * DEG);
+  }
+
+  function applyRatio(r) {
+    if (Math.abs(r - curRatio) < 1e-3) return;
+    curRatio = r;
+    renderer.setPixelRatio(r);
+    renderer.setSize(size.w, size.h, false);
+    skipUntil = clock() + 0.3; // o quadro que realoca a tela não serve de medida
+  }
+
+  /* Tempo da placa de vídeo, quando o aparelho informa (muitos WebViews não informam: aí vale só o da CPU).
+     Uma consulta por vez; o resultado chega um ou dois quadros depois. */
+  const gl = renderer.getContext();
+  let gpuExt = null;
+  try {
+    gpuExt = renderer.capabilities.isWebGL2 ? gl.getExtension('EXT_disjoint_timer_query_webgl2') : null;
+  } catch {
+    gpuExt = null;
+  }
+  let gpuQuery = null;
+  let gpuOpen = false;
+  let gpuMs = null;
+  let gpuAt = 0;
+  function gpuPoll(t) {
+    if (!gpuExt || !gpuQuery || gpuOpen) return;
+    try {
+      const ready = gl.getQueryParameter(gpuQuery, gl.QUERY_RESULT_AVAILABLE);
+      const disjoint = gl.getParameter(gpuExt.GPU_DISJOINT_EXT);
+      if (!ready && !disjoint) return;
+      if (ready && !disjoint) {
+        gpuMs = gl.getQueryParameter(gpuQuery, gl.QUERY_RESULT) / 1e6;
+        gpuAt = t;
+      }
+      gl.deleteQuery(gpuQuery);
+    } catch {
+      gpuExt = null;
+    }
+    gpuQuery = null;
+  }
+
+  /** Desenha um quadro e devolve o tempo de render na CPU (ms). measure = este quadro entra na medição da placa de vídeo. */
+  function draw(measure = false) {
+    placeLights();
+    if (measure && gpuExt && !gpuQuery && !lost) {
+      try {
+        gpuQuery = gl.createQuery();
+        gl.beginQuery(gpuExt.TIME_ELAPSED_EXT, gpuQuery);
+        gpuOpen = true;
+      } catch {
+        gpuExt = null;
+        gpuQuery = null;
+      }
+    }
+    const t0 = performance.now();
+    renderer.render(scene, camera);
+    const ms = performance.now() - t0;
+    if (gpuOpen) {
+      gl.endQuery(gpuExt.TIME_ELAPSED_EXT);
+      gpuOpen = false;
+    }
+    stats.renders++;
+    return ms;
+  }
+
+  /** Estado da qualidade em uso (só leitura; exposto no gancho ?czdebug). */
+  function quality() {
+    return { tier: tier.name, devicePixelRatio: deviceRatio(), ratio: curRatio, stillRatio: stillRatio(), sharp, gpuTimer: Boolean(gpuExt), governor: gov.state() };
+  }
+
+  /** Sem ninguém mexer há um tempo (celular): o giro e as chamas descansam até o próximo toque. */
+  const resting = (t) => tier.idleSleep > 0 && t - lastInput > tier.idleSleep;
 
   function tick(time) {
     raf = 0;
-    if (!running || lost || disposed) return;
-    raf = requestAnimationFrame(tick);
+    if (!running || lost || disposed || paused || offscreen) return;
+    ticking = true;
     const t = time / 1000;
-    const dt = Math.min(0.05, lastFrame ? t - lastFrame : 0.016);
+    const rawDt = lastFrame ? t - lastFrame : 1 / 60;
+    const dt = Math.min(0.05, rawDt);
     lastFrame = t;
     now += dt;
+    // período da tela (60, 90, 120 Hz): o menor intervalo visto entre dois quadros seguidos, com folga para se corrigir
+    if (!napped) framePeriod = Math.min(1 / 50, framePeriod * 1.002, Math.max(1 / 240, rawDt));
+    napped = false;
 
     let active = dirty;
     dirty = false;
+    gpuPoll(t);
+
+    if (runJobs(5)) {
+      active = true;
+      skipUntil = Math.max(skipUntil, t + 0.25); // peça nova: envio de malhas e, às vezes, compilação
+    }
 
     if (tweens.size) {
       active = true;
@@ -890,6 +1150,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       });
     }
 
+    const calm = t < quietUntil;
+    const asleep = resting(t);
+    let turning = false;
     if (flying) {
       active = true;
       flying.t += dt;
@@ -897,22 +1160,19 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       const e = easeInOut(p);
       const a = flying.from;
       const b = flying.to;
-      applySpherical({ az: a.az + (b.az - a.az) * e, polar: a.polar + (b.polar - a.polar) * e, dist: a.dist + (b.dist - a.dist) * e, ty: a.ty + (b.ty - a.ty) * e, tz: a.tz + (b.tz - a.tz) * e });
+      _cam.az = a.az + (b.az - a.az) * e;
+      _cam.polar = a.polar + (b.polar - a.polar) * e;
+      _cam.dist = a.dist + (b.dist - a.dist) * e;
+      _cam.ty = a.ty + (b.ty - a.ty) * e;
+      _cam.tz = a.tz + (b.tz - a.tz) * e;
+      applySpherical(_cam);
       if (p >= 1) {
         flying = null;
         swayBase = b.az;
         swayT = 0;
       }
-    } else if (autoRotate && !userActive && !focus && now >= holdUntil) {
-      active = true;
-      const s = getSpherical();
-      if (cutaway) {
-        // com o bolo aberto, a câmera só balança de leve em torno da fatia
-        swayT += dt;
-        s.az = swayBase + Math.sin(swayT * 0.55) * 0.42;
-      } else s.az += dt * 0.24;
-      applySpherical(s);
-    }
+    } else if (autoRotate && !userActive && !focus && now >= holdUntil && !calm && !asleep) turning = true;
+    rotClock = turning ? rotClock + dt : 0;
 
     if (controls.update()) active = true;
 
@@ -922,23 +1182,79 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     }
 
     const candles = decorParts.get('velas');
-    if (candles && candles.flames.length) {
-      active = true;
-      let sum = 0;
-      candles.flames.forEach((f) => {
-        const flick = reduceMotion ? 1 : 1 + Math.sin(now * 13 + f.phase) * 0.06 + Math.sin(now * 23.7 + f.phase * 2.1) * 0.05;
-        const sway = reduceMotion ? 1 : 1 + Math.sin(now * 7.3 + f.phase) * 0.05;
-        f.flame.scale.set(f.sx * sway, f.sy * flick, 1);
-        f.glow.material.opacity = 0.5;
-        f.glow.scale.setScalar(0.34 * (0.94 + (flick - 1) * 1.5));
-        sum += flick;
-      });
-      candleLight.intensity = (candleLight.userData.base || 0) * (sum / candles.flames.length);
-    } else candleLight.intensity = candleLight.userData.base || 0;
+    const flames = candles && candles.flames.length ? candles.flames : null;
+    const flicker = Boolean(flames) && !reduceMotion && !calm && !asleep;
+    // animações de fundo (giro automático, chama das velas) rodam num ritmo mais lento, definido pelo nível
+    const ambient = turning || flicker;
 
-    if (!active) return;
-    placeLights();
-    renderer.render(scene, camera);
+    const since = lastRender ? t - lastRender : 1;
+    const fps = active ? tier.activeFps : turning ? tier.rotateFps : tier.flickerFps;
+    const gap = fps ? 1 / fps : 0;
+    const due = since >= gap - framePeriod * 0.6;
+    if (active && !due) dirty = true; // fica para o próximo quadro
+    if ((active || ambient) && due) {
+      if (turning) {
+        const sp = getSpherical(_cam);
+        if (cutaway) {
+          // com o bolo aberto, a câmera só balança de leve em torno da fatia
+          swayT += rotClock;
+          sp.az = swayBase + Math.sin(swayT * 0.55) * 0.42;
+        } else sp.az += rotClock * 0.24;
+        rotClock = 0;
+        applySpherical(sp);
+        // avisa os controles da nova posição sem que isso conte como "a pessoa mexeu" (senão o giro voltaria ao ritmo cheio)
+        selfMove = true;
+        controls.update();
+        selfMove = false;
+      }
+      if (flames) {
+        let sum = 0;
+        for (let i = 0; i < flames.length; i++) {
+          const f = flames[i];
+          const flick = reduceMotion ? 1 : 1 + Math.sin(now * 13 + f.phase) * 0.06 + Math.sin(now * 23.7 + f.phase * 2.1) * 0.05;
+          const sway = reduceMotion ? 1 : 1 + Math.sin(now * 7.3 + f.phase) * 0.05;
+          f.flame.scale.set(f.sx * sway, f.sy * flick, 1);
+          f.glow.material.opacity = 0.5;
+          f.glow.scale.setScalar(0.34 * (0.94 + (flick - 1) * 1.5));
+          sum += flick;
+        }
+        candleLight.intensity = (candleLight.userData.base || 0) * (sum / flames.length);
+      } else candleLight.intensity = candleLight.userData.base || 0;
+
+      // em movimento vale a resolução pedida pelo regulador (no caso comum, a máxima: nada é realocado)
+      applyRatio(gov.ratio);
+      sharp = curRatio >= stillRatio() - 1e-3;
+      const cpuMs = draw(true);
+      lastRender = t;
+      // resolução dinâmica: conta o CUSTO de desenhar este quadro (CPU e, se houver, placa de vídeo) contra o
+      // orçamento do modo atual — nunca o intervalo entre quadros, que atrasa por outros motivos
+      if (clock() >= skipUntil) {
+        const gpuNow = gpuMs != null && t - gpuAt < 0.5 ? gpuMs : null;
+        gov.sample(Math.max(cpuMs, gpuNow || 0), 750 / (fps || 60), { cpuMs, gpuMs: gpuNow });
+      }
+    } else if (!active && !ambient && !sharp && since > 0.22) {
+      // parou de mexer: um quadro na resolução máxima, para o bolo parado ficar nítido
+      applyRatio(stillRatio());
+      sharp = true;
+      draw();
+    } else if (!active && !ambient) stats.skipped++;
+
+    // dorme quando não há mais nada para animar; qualquer mudança chama invalidate() e acorda o laço
+    const waiting = (autoRotate && !focus && !asleep) || (Boolean(flames) && !reduceMotion && !asleep);
+    ticking = false;
+    if (dirty || active || !sharp || tweens.size || flying || jobs.length) raf = requestAnimationFrame(tick);
+    else if (ambient || waiting) {
+      // só animação de fundo pela frente: cochila até perto do próximo quadro dela
+      // acorda com uma folga antes do quadro devido: temporizador atrasado não pode derrubar o giro abaixo de ~30 quadros/s
+      const ms = ambient ? (gap - (t - lastRender) - framePeriod) * 1000 - 6 : 120;
+      if (ms > 4) {
+        nap = setTimeout(() => {
+          nap = 0;
+          napped = true;
+          wake();
+        }, ms);
+      } else raf = requestAnimationFrame(tick);
+    }
   }
 
   function start() {
@@ -946,13 +1262,36 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     running = true;
     lastFrame = 0;
     dirty = true;
-    raf = requestAnimationFrame(tick);
+    wake();
+  }
+
+  function halt() {
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    clearTimeout(nap);
+    nap = 0;
   }
 
   function stop() {
     running = false;
-    if (raf) cancelAnimationFrame(raf);
-    raf = 0;
+    halt();
+  }
+
+  /** Para de desenhar por completo (diálogo aberto por cima do bolo) e retoma depois. */
+  function setPaused(on) {
+    on = Boolean(on);
+    if (on === paused) return;
+    paused = on;
+    if (paused) halt();
+    else {
+      lastFrame = 0;
+      invalidate();
+    }
+  }
+
+  /** Segura o giro automático e as chamas por um instante (enquanto o painel de opções está rolando). */
+  function quiet(ms = 180) {
+    quietUntil = Math.max(quietUntil, performance.now() / 1000 + ms / 1000);
   }
 
   /* ───────── Tamanho ───────── */
@@ -962,7 +1301,10 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const h = Math.max(1, canvas.clientHeight);
     if (w === size.w && h === size.h) return;
     size = { w, h };
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    gov.limit(stillRatio(), deviceRatio());
+    curRatio = Math.min(curRatio, stillRatio());
+    skipUntil = clock() + 0.3;
+    renderer.setPixelRatio(curRatio);
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
@@ -980,15 +1322,6 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   }
 
   /* ───────── Foto do bolo ───────── */
-  function paintBackdrop(ctx, w, h) {
-    const g = ctx.createRadialGradient(w * 0.5, h * 0.42, 0, w * 0.5, h * 0.5, Math.max(w, h) * 0.75);
-    g.addColorStop(0, '#fffdfb');
-    g.addColorStop(0.55, '#fdeef2');
-    g.addColorStop(1, '#f7d3dc');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, w, h);
-  }
-
   /** Desenha o bolo num <canvas> 2D (vista de catálogo, bolo fechado, sem interferir no que está na tela). */
   function snapshotCanvas({ size: px = 360, width = px, height = px, background = true, scale = 2, fill = 0.7 } = {}) {
     if (disposed || lost || !m) return null;
@@ -996,12 +1329,14 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const keepCam = getSpherical();
     const keepWedge = wedge.span;
     const keepSize = { ...size };
-    const keepRatio = renderer.getPixelRatio();
+    // a foto usa o fundo que dá contraste a ESTE bolo (o escolhido à mão ou o automático), e as sombras desse fundo
+    const shot = background ? resolveBackdrop(config, null) : getBackdrop('rosa');
     try {
       if (keepWedge > 0.002) {
         wedge.span = 0;
         applyWedge();
       }
+      applyBackdropLook(shot);
       const ss = Math.min(scale, 4096 / Math.max(width, height));
       renderer.setPixelRatio(1);
       renderer.setSize(Math.round(width * ss), Math.round(height * ss), false);
@@ -1011,18 +1346,18 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       const fit = computeFit(width / height, v, { fill });
       applySpherical({ az: v.az, polar: v.polar, dist: fit.dist, ty: fit.ty, tz: fit.tz });
       candleLight.intensity = candleLight.userData.base || 0;
-      placeLights();
-      renderer.render(scene, camera);
+      draw();
       const out = document.createElement('canvas');
       out.width = width;
       out.height = height;
       const ctx = out.getContext('2d');
-      if (background) paintBackdrop(ctx, width, height);
+      if (background) paintBackdrop(ctx, width, height, shot);
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(renderer.domElement, 0, 0, width, height);
       return out;
     } finally {
-      renderer.setPixelRatio(keepRatio);
+      applyBackdropLook(backdrop);
+      renderer.setPixelRatio(curRatio);
       renderer.setSize(keepSize.w, keepSize.h, false);
       camera.aspect = keepSize.w / keepSize.h;
       camera.updateProjectionMatrix();
@@ -1031,8 +1366,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
         wedge.span = keepWedge;
         applyWedge();
       }
-      placeLights();
-      renderer.render(scene, camera);
+      draw();
       invalidate();
     }
   }
@@ -1049,6 +1383,74 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const url = snapshot(opts);
     if (keep) setConfig(keep, { instant: true });
     return url;
+  }
+
+  /* ───────── Aquecimento ─────────
+     Nos momentos ociosos, adianta o que a pessoa ainda pode escolher — texturas, peças e programas da placa
+     de vídeo — para que o primeiro toque em cada opção não engasgue. Uma tarefa por vez, só com tudo parado. */
+  const warmQueue = [];
+  let warmTimer = 0;
+  const whenIdle = (fn) => ('requestIdleCallback' in window ? window.requestIdleCallback(fn, { timeout: 1500 }) : setTimeout(fn, 120));
+  function warmNext() {
+    if (disposed || lost || !warmQueue.length) return;
+    const busy = tweens.size || flying || jobs.length || userActive || paused;
+    if (!busy) {
+      try {
+        warmQueue.shift()();
+      } catch (err) {
+        console.warn('[bolo 3D] aquecimento ignorado:', err?.message || err);
+      }
+    }
+    if (warmQueue.length) warmTimer = setTimeout(() => whenIdle(warmNext), busy ? 400 : 60);
+  }
+
+  /**
+   * Materiais com planos de corte (massa, recheio e creme do naked, calda) só compilam do jeito certo quando são
+   * desenhados de verdade: entram num quadro comum, num pedacinho invisível, um por momento ocioso.
+   */
+  function warmByDrawing(material) {
+    const geo = new THREE.PlaneGeometry(0.01, 0.01);
+    const probe = new THREE.Mesh(geo, material);
+    probe.frustumCulled = false;
+    probe.receiveShadow = true;
+    probe.position.set(0, -30, 0);
+    scene.add(probe);
+    draw();
+    skipUntil = clock() + 0.4;
+    scene.remove(probe);
+    geo.dispose();
+    invalidate();
+  }
+
+  function warmUp() {
+    if (warmQueue.length || !m || disposed) return;
+    // primeiro o "Ver por dentro" (o momento mais visto), sem travar nada; depois texturas, bicos e decorações;
+    // por último, e só bem depois de o bolo aparecer, os materiais que precisam de um quadro de verdade
+    warmQueue.push(() => {
+      const group = new THREE.Group();
+      const geo = new THREE.PlaneGeometry(0.01, 0.01);
+      [crumbMat(0), cutFillMat(0), cutFrost, cutDrip].forEach((mt) => group.add(new THREE.Mesh(geo, mt)));
+      const done = () => geo.dispose();
+      renderer.compileAsync(group, camera, scene).then(done, done);
+    });
+    tex.warmups().forEach((fn) => warmQueue.push(fn));
+    const base = JSON.parse(JSON.stringify(config));
+    const tryPart = (cfg, build) => () => {
+      const m2 = cakeMetrics(cfg, tier.detail);
+      const part = build({ config: cfg, m: m2, lib, layout: decorLayout(cfg, m2), tier });
+      const done = () => part.dispose();
+      if (!part.group.children.length) done();
+      else renderer.compileAsync(part.group, camera, scene).then(done, done);
+    };
+    ['rosetas', 'conchas', 'estrelas', 'bolinhas', 'folhas'].forEach((style) => {
+      if (style !== config.piping.style) warmQueue.push(tryPart({ ...base, piping: { ...base.piping, style } }, buildPiping));
+    });
+    ['frutas', 'flores', 'velas', 'perolas', 'confete', 'granulado', 'raspas', 'topo'].forEach((id) => {
+      if (config.decor.items.includes(id)) return;
+      warmQueue.push(tryPart({ ...base, decor: { ...base.decor, items: [id], message: '' } }, (ctx) => buildDecor(id === 'topo' ? 'toppers' : id, ctx)));
+    });
+    [() => dripMat, () => crustMat(0), () => bandMat(0), scrape].forEach((get) => warmQueue.push(() => warmByDrawing(get())));
+    warmTimer = setTimeout(() => whenIdle(warmNext), 300);
   }
 
   /* ───────── Eventos ───────── */
@@ -1070,7 +1472,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   };
   controls.addEventListener('start', onStart);
   controls.addEventListener('end', onEnd);
-  controls.addEventListener('change', invalidate);
+  controls.addEventListener('change', () => {
+    if (!selfMove) invalidate();
+  });
 
   // teclado: setas giram, + e - aproximam
   const onKey = (ev) => {
@@ -1089,6 +1493,14 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     onEnd();
   };
   canvas.addEventListener('keydown', onKey);
+
+  // qualquer toque ou tecla na tela conta como "tem gente aqui": o giro em descanso volta
+  const onInput = () => {
+    lastInput = performance.now() / 1000;
+    wake();
+  };
+  lastInput = performance.now() / 1000;
+  ['pointerdown', 'keydown', 'wheel'].forEach((type) => window.addEventListener(type, onInput, { passive: true, capture: true }));
 
   const onVisibility = () => (document.hidden ? stop() : start());
   document.addEventListener('visibilitychange', onVisibility);
@@ -1109,6 +1521,8 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     });
     key.shadow.map?.dispose();
     key.shadow.map = null;
+    gpuQuery = null;
+    gpuOpen = false;
     envTarget?.dispose();
     pmrem?.dispose();
     envTarget = null;
@@ -1129,6 +1543,20 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   ro?.observe(canvas);
   window.addEventListener('resize', resize);
 
+  // bolo fora da tela: nada é desenhado até ele voltar
+  const io =
+    'IntersectionObserver' in window
+      ? new IntersectionObserver((entries) => {
+          offscreen = !entries[entries.length - 1].isIntersecting;
+          if (offscreen) halt();
+          else {
+            lastFrame = 0;
+            invalidate();
+          }
+        })
+      : null;
+  io?.observe(canvas);
+
   resize();
   start();
 
@@ -1137,9 +1565,14 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     disposed = true;
     stop();
     clearTimeout(resumeTimer);
+    clearTimeout(warmTimer);
+    warmQueue.length = 0;
+    jobs.length = 0;
     tweens.clear();
     ro?.disconnect();
+    io?.disconnect();
     window.removeEventListener('resize', resize);
+    ['pointerdown', 'keydown', 'wheel'].forEach((type) => window.removeEventListener(type, onInput, { capture: true }));
     document.removeEventListener('visibilitychange', onVisibility);
     canvas.removeEventListener('keydown', onKey);
     canvas.removeEventListener('webglcontextlost', onLost);
@@ -1149,9 +1582,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     decorParts.forEach(disposePart);
     decorParts.clear();
     [standGroup, bodyGroup, cutGroup, dripGroup].forEach(disposeGroup);
-    floor.geometry.dispose();
+    shadowPlane.dispose();
+    plateShade.material.dispose();
     floor.material.dispose();
-    contact.geometry.dispose();
     contact.material.dispose();
     [porcelain, gold, frostSide, frostTop, cutFrost, dripMat, cutDrip, scrapeMat, ...crustMats, ...crumbMats, ...bandMats, ...cutFillMats].forEach((mt) => mt?.dispose());
     lib.dispose();
@@ -1172,6 +1605,11 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     spin,
     holdRotation,
     focusPlaque,
+    setBackdrop,
+    setPaused,
+    quiet,
+    warmUp,
+    quality,
     snapshot,
     snapshotCanvas,
     thumbOf,
@@ -1183,7 +1621,30 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     get cutaway() {
       return cutaway;
     },
+    /** Nível de qualidade em uso ('mobile' ou 'desktop'). */
+    get tier() {
+      return tier.name;
+    },
     /** Só para testes: acesso ao renderizador (simular perda de contexto, medir desenho). */
-    debug: { renderer, scene, camera, controls, lights: { hemi, key, fill, rim, candleLight }, mats: { frostSide, frostTop, porcelain, gold, dripMat }, floor, contact, invalidate },
+    debug: {
+      renderer,
+      scene,
+      camera,
+      controls,
+      lights: { hemi, key, fill, rim, candleLight },
+      mats: { frostSide, frostTop, porcelain, gold, dripMat },
+      floor,
+      contact,
+      invalidate,
+      stats,
+      gov,
+      tier,
+      get ratio() {
+        return curRatio;
+      },
+      get pending() {
+        return jobs.length;
+      },
+    },
   };
 }

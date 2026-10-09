@@ -817,6 +817,14 @@
   backdrop-filter: blur(12px);
 }
 
+/* Telas de toque: faixa de cor cheia, sem vidro fosco (ver css/shell.css). */
+@media (hover: none), (pointer: coarse), (max-width: 899px) {
+  .cart-bar {
+    background: var(--white);
+    backdrop-filter: none;
+  }
+}
+
 .cart-bar__info {
   display: grid;
   min-width: 0;
@@ -3324,9 +3332,11 @@ form.is-busy .co-demo {
   transition: transform var(--t-med) var(--ease), box-shadow var(--t-med) var(--ease);
 }
 
-.ord-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-2);
+@media (hover: hover) {
+  .ord-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-2);
+  }
 }
 
 .ord-card__head {

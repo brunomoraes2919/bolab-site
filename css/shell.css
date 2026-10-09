@@ -133,6 +133,20 @@
   box-shadow: 0 6px 24px rgba(122, 44, 64, 0.06);
 }
 
+/* Celular, tablet e janelas estreitas: o vidro fosco (backdrop-filter) obriga o aparelho a
+   desfocar de novo tudo o que passa por baixo a cada quadro da rolagem. Nessas telas as
+   faixas fixas ficam com cor cheia, que dá o mesmo aspecto sem esse custo. */
+@media (hover: none), (pointer: coarse), (max-width: 899px) {
+  .header {
+    background: var(--rose-50);
+    backdrop-filter: none;
+  }
+
+  .header.is-scrolled {
+    background: var(--white);
+  }
+}
+
 .header__inner {
   display: flex;
   align-items: center;
@@ -390,6 +404,14 @@
   border-radius: 22px 22px 0 0;
 }
 
+/* Sem vidro fosco em telas de toque (mesmo motivo do cabeçalho). */
+@media (hover: none), (pointer: coarse), (max-width: 899px) {
+  .tabbar {
+    background: var(--white);
+    backdrop-filter: none;
+  }
+}
+
 .tabbar a {
   display: flex;
   flex-direction: column;
@@ -472,7 +494,13 @@ body {
   }
 }
 
-/* ───────── Rodapé ───────── */
+/* ───────── Rodapé ─────────
+   Enquanto a primeira tela não chega, o rodapé fica vazio e não ocupa espaço (js/shell.js o
+   preenche junto com a tela). Antes, a faixa escura aparecia no meio da abertura e pulava. */
+.footer:empty {
+  display: none;
+}
+
 .footer {
   margin-top: var(--s-16);
   padding-block: var(--s-12) var(--s-8);

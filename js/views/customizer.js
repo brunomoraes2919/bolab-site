@@ -3,6 +3,9 @@
 // e o desenho 3D de js/customizer/engine.js. Nada aqui redesenha a tela inteira: cada mudança
 // atualiza o painel no lugar e chama cake.setConfig().
 //
+// Fluidez no celular: o toque só registra a escolha; no quadro seguinte o painel é atualizado no lugar
+// (só o que mudou — ver morph) e, no outro, o bolo. Nada pesado roda dentro do toque.
+//
 // Entradas pelo endereço:  ?bolo=<id salvo>  ·  ?base=<id do produto>  ·  ?linha=<id da linha do carrinho>
 // (esta última abre o bolo que já está no carrinho para editar; o botão final vira "Salvar alterações").
 import { html, raw, icon, money, dateLong, on, toast, openDialog, confirmDialog, debounce, confetti } from '../ui.js';
@@ -51,6 +54,7 @@ import {
 } from '../customizer/pricing.js';
 import { PRESETS, getPreset, presetForProduct, randomConfig } from '../customizer/presets.js';
 import { createCakeScene } from '../customizer/engine.js';
+import { BACKDROPS, BACKDROP_AUTO, getBackdrop, resolveBackdrop, backdropCss } from '../customizer/backdrop.js';
 import { drawCake2D, thumb2D } from '../customizer/fallback.js';
 
 const STEPS = [
@@ -64,13 +68,47 @@ const STEPS = [
 ];
 const STEP_INDEX = Object.fromEntries(STEPS.map((s, i) => [s.id, i]));
 const AUTO_CUT_STEPS = new Set(['massa', 'recheio']);
-const THUMBS_VERSION = 'v7';
 
 /** Recheio sugerido quando o bolo ganha a primeira camada extra. */
 const FIRST_FILLING = { baunilha: 'morango', chocolate: 'brigadeiro', redvelvet: 'ninho', cenoura: 'brigadeiro', limao: 'limao', morango: 'ninho' };
 
-// miniaturas das inspirações: geradas uma vez pelo próprio motor 3D e reaproveitadas
+// miniaturas das inspirações: imagens prontas em assets/img/cz-<id>.webp (geradas pelo próprio motor 3D com
+// tools/render_promos.mjs). Só são desenhadas na hora — e guardadas aqui — se o arquivo faltar.
 const presetThumbs = new Map();
+
+/**
+ * Deixa `live` igual a `next` mexendo só no que mudou (classes, atributos, textos, trechos novos).
+ * Os elementos que continuam iguais não são tocados: sem redesenho do painel inteiro, sem perder foco nem rolagem.
+ */
+function morph(live, next) {
+  const a = live.childNodes;
+  const b = next.childNodes;
+  for (let i = 0; i < b.length; i++) {
+    const to = b[i];
+    const from = a[i];
+    if (!from) {
+      live.appendChild(to.cloneNode(true));
+      continue;
+    }
+    const same = from.nodeType === to.nodeType && from.nodeName === to.nodeName && (from.nodeType !== 1 || (from.dataset?.k || '') === (to.dataset?.k || ''));
+    if (!same) {
+      live.replaceChild(to.cloneNode(true), from);
+      continue;
+    }
+    if (from.nodeType !== 1) {
+      if (from.data !== to.data) from.data = to.data;
+      continue;
+    }
+    for (const at of to.attributes) if (from.getAttribute(at.name) !== at.value) from.setAttribute(at.name, at.value);
+    for (const at of [...from.attributes]) if (!to.hasAttribute(at.name)) from.removeAttribute(at.name);
+    if (from.nodeName === 'INPUT') {
+      if (from !== document.activeElement && from.value !== to.value) from.value = to.value;
+    } else if (from.nodeName === 'svg') {
+      if (from.innerHTML !== to.innerHTML) from.innerHTML = to.innerHTML;
+    } else morph(from, to);
+  }
+  while (a.length > b.length) live.removeChild(live.lastChild);
+}
 
 /* ───────── Ilustrações próprias (traço, no estilo dos ícones do site) ───────── */
 const art = (body, { vb = 48, sw = 2.4 } = {}) =>
@@ -106,6 +144,7 @@ const DECOR_ART = {
 };
 
 const ICON = {
+  backdrop: ico(`<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/>`),
   chef: ico(`<path d="M6 13.900A4 4 0 0 1 7.400 6.100a5 5 0 0 1 9.200 0A4 4 0 0 1 18 13.900V19a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1Z"/><path d="M6 17h12"/>`),
   slice: ico(`<circle cx="9" cy="7" r="2"/><path d="M7.200 7.900 3 11v9c0 .6.4 1 1 1h16c.6 0 1-.4 1-1v-9c0-2-3-6-7-8l-3.600 2.600"/><path d="M16 13H3"/><path d="M16 17H3"/>`),
   spin: ico(`<path d="M16.500 7.500C15.600 4.200 14 2 12 2 9.200 2 7 6.500 7 12s2.200 10 5 10c.3 0 .7-.1 1-.2"/><path d="m15.200 13.700 3.800 1.900-1.900 3.800"/><path d="M19 15.600c-1.800.9-4.300 1.400-7 1.400-5.500 0-10-2.200-10-5s4.500-5 10-5c4.800 0 8.900 1.700 9.800 4"/>`),
@@ -302,8 +341,8 @@ function stepFormato(c, ui) {
         </button>
         ${PRESETS.map(
           (p) => html`<button type="button" class="cz-preset" data-act="preset" data-value="${p.id}" aria-label="Começar pela inspiração ${p.name}: ${p.tag}">
-            <span class="cz-preset__img" data-thumb="${p.id}">
-              ${presetThumbs.has(p.id) ? html`<img src="${presetThumbs.get(p.id)}" alt="" width="136" height="136" />` : icon('cake')}
+            <span class="cz-preset__img" data-thumb="${p.id}" style="background:${backdropCss(resolveBackdrop(p.config))}">
+              <img src="${presetThumbs.get(p.id) || `assets/img/cz-${p.id}.webp`}" alt="" width="136" height="136" loading="lazy" decoding="async" />
             </span>
             <span class="cz-preset__text"><strong>${p.name}</strong><span>${p.tag}</span></span>
           </button>`,
@@ -706,6 +745,7 @@ export default {
     return html`
       <div class="cz" data-cz data-step="formato">
         <section class="cz-stage" aria-label="Seu bolo em 3D">
+          <div class="cz-bg" data-cz-bg aria-hidden="true"></div>
           <header class="cz-top">
             <button type="button" class="cz-round" data-back="/" aria-label="Voltar para a loja">${icon('arrow-left')}</button>
             <div class="cz-brand">
@@ -728,7 +768,9 @@ export default {
 
           <div class="cz-hint" data-cz-hint>${ICON.swipe} Arraste para girar</div>
           <div class="cz-meta" data-cz-meta></div>
+          <div class="cz-bgbar" id="cz-bgbar" data-cz-bgbar role="radiogroup" aria-label="Fundo do palco" hidden></div>
           <div class="cz-tools" data-cz-tools>
+            <button type="button" class="cz-tool cz-tool--bg" data-act="bgmenu" aria-expanded="false" aria-controls="cz-bgbar" aria-label="Fundo do palco" title="Fundo do palco">${ICON.backdrop}<span>Fundo</span></button>
             <button type="button" class="cz-tool cz-tool--label" data-act="cutaway" aria-pressed="false" aria-label="Ver por dentro" title="Ver por dentro">${ICON.slice}<span>Ver por dentro</span></button>
             <button type="button" class="cz-tool cz-tool--icon" data-act="rotate" aria-pressed="false" aria-label="Giro automático" title="Giro automático">${ICON.spin}</button>
             <button type="button" class="cz-tool" data-act="reset" aria-label="Centralizar o bolo" title="Centralizar">${icon('expand')}</button>
@@ -757,6 +799,8 @@ export default {
       name: $('[data-cz-name]'),
       hint: $('[data-cz-hint]'),
       tools: $('[data-cz-tools]'),
+      bg: $('[data-cz-bg]'),
+      bgbar: $('[data-cz-bgbar]'),
       fallback: $('[data-cz-fallback]'),
       lost: $('[data-cz-lost]'),
       loading: $('[data-cz-loading]'),
@@ -788,7 +832,7 @@ export default {
     let shownPrice = null;
     let priceAnim = 0;
 
-    const configKey = () => JSON.stringify(config);
+    const configKey = () => JSON.stringify({ ...config, backdrop: undefined }); // o fundo do palco não faz dele outro bolo
     const clone = (o) => JSON.parse(JSON.stringify(o));
 
     function syncModes() {
@@ -846,6 +890,9 @@ export default {
       return 'new';
     }
 
+    // versões antigas guardavam as miniaturas das inspirações no aparelho (dezenas de KB regravados a cada escolha)
+    if (prefs.get('customizerThumbs')) prefs.set('customizerThumbs', null);
+
     const origin = loadInitial(ctx.query || {});
     syncModes();
     for (let i = 0; i <= step; i++) visited.add(i);
@@ -880,6 +927,8 @@ export default {
       el.hint.hidden = true;
       el.loading.hidden = true;
       el.fallback.hidden = false;
+      setBgBar(false);
+      syncBackdrop({ instant: true });
       drawCake2D(el.fallback.querySelector('canvas'), config, { background: false });
     }
 
@@ -887,7 +936,7 @@ export default {
       if (cake) cake.setConfig(config);
       else drawCake2D(el.fallback.querySelector('canvas'), config, { background: false });
     }
-    const sceneUpdateSoon = debounce(() => alive && sceneUpdate(), 220);
+    const sceneUpdateSoon = debounce(() => alive && sceneUpdate(), 130); // digitando: a plaquinha é refeita no máximo a cada ~130 ms
 
     function setCutaway(on, manual) {
       cutaway = on;
@@ -908,31 +957,75 @@ export default {
       if (remember) prefs.set('customizerRotate', rotating);
     }
 
-    function fillPresetThumbs() {
-      root.querySelectorAll('[data-thumb]').forEach((slot) => {
-        const url = presetThumbs.get(slot.dataset.thumb);
-        if (url && !slot.querySelector('img')) slot.innerHTML = String(html`<img src="${url}" alt="" width="136" height="136" />`);
-      });
+    /* ── fundo do palco: automático (pelas cores do bolo) ou escolhido no botão "Fundo" ── */
+    let stageBackdrop = null;
+    let autoBackdropId = null; // último fundo automático: só troca se outro for claramente melhor
+    let bgOpen = false;
+
+    function syncBackdrop({ instant = false } = {}) {
+      // sem 3D (desenho 2D) o palco fica sempre no fundo claro
+      const b = el.cz.classList.contains('is-flat') ? getBackdrop('rosa') : resolveBackdrop(config, autoBackdropId);
+      if (!getBackdrop(config.backdrop)) autoBackdropId = b.id;
+      if (stageBackdrop?.id === b.id) return;
+      stageBackdrop = b;
+      el.cz.dataset.tone = b.tone;
+      const old = [...el.bg.children];
+      const layer = document.createElement('div');
+      layer.className = 'cz-bg__layer';
+      layer.style.background = backdropCss(b);
+      el.bg.appendChild(layer);
+      if (instant || reduceMotion || !old.length) {
+        old.forEach((n) => n.remove());
+        layer.classList.add('is-on');
+      } else {
+        void layer.offsetWidth;
+        layer.classList.add('is-on');
+        later(() => old.forEach((n) => n.remove()), 650);
+      }
+      cake?.setBackdrop(b, { instant });
+      if (bgOpen) renderBgBar();
     }
 
-    function preparePresetThumbs() {
-      if (presetThumbs.size >= PRESETS.length) return;
-      const cached = prefs.get('customizerThumbs');
-      if (cached?.v === THUMBS_VERSION && cached.items) {
-        Object.entries(cached.items).forEach(([id, url]) => presetThumbs.set(id, url));
-        if (presetThumbs.size >= PRESETS.length) return;
-      }
-      PRESETS.forEach((p) => {
-        if (presetThumbs.has(p.id)) return;
-        try {
-          const url = cake ? cake.thumbOf(p.config, { size: 200, quality: 0.78, fill: 0.88 }) : thumb2D(p.config, 200);
-          if (url) presetThumbs.set(p.id, url);
-        } catch (err) {
-          console.error('[personalizador] miniatura da inspiração', p.id, err);
-        }
-      });
-      if (cake) prefs.set('customizerThumbs', { v: THUMBS_VERSION, items: Object.fromEntries(presetThumbs) });
+    function renderBgBar() {
+      const cur = getBackdrop(config.backdrop) ? config.backdrop : BACKDROP_AUTO;
+      const used = stageBackdrop || getBackdrop('rosa');
+      el.bgbar.innerHTML = String(html`
+        <p class="cz-bgbar__name"><span>Fundo</span><strong>${cur === BACKDROP_AUTO ? `Automático · ${used.name}` : used.name}</strong></p>
+        <div class="cz-bgbar__row">
+          <button type="button" class="cz-bgsw cz-bgsw--auto ${cur === BACKDROP_AUTO ? 'is-on' : ''}" role="radio" aria-checked="${cur === BACKDROP_AUTO ? 'true' : 'false'}" data-act="backdrop" data-value="${BACKDROP_AUTO}" aria-label="Automático: o fundo acompanha as cores do bolo" title="Automático"><b>A</b></button>
+          ${BACKDROPS.map(
+            (b) => html`<button type="button" class="cz-bgsw ${cur === b.id ? 'is-on' : ''}" role="radio" aria-checked="${cur === b.id ? 'true' : 'false'}" data-act="backdrop" data-value="${b.id}" aria-label="${b.name}" title="${b.name}" style="--sw:${b.c[1]};--sw2:${b.c[3]}"></button>`,
+          )}
+        </div>
+      `);
     }
+
+    function setBgBar(open) {
+      bgOpen = Boolean(open);
+      el.bgbar.hidden = !bgOpen;
+      el.tools.querySelector('[data-act="bgmenu"]').setAttribute('aria-expanded', String(bgOpen));
+      if (bgOpen) renderBgBar();
+    }
+
+    /** Miniatura de inspiração cujo arquivo não carregou: desenha na hora com o motor 3D (ou em 2D). */
+    function presetFallback(img) {
+      const id = img.closest('[data-thumb]')?.dataset.thumb;
+      const p = id && getPreset(id);
+      if (!p || img.dataset.fallback) return;
+      img.dataset.fallback = '1';
+      later(() => {
+        if (!alive) return;
+        try {
+          const url = presetThumbs.get(id) || (cake ? cake.thumbOf(p.config, { size: 200, quality: 0.78, fill: 0.88 }) : thumb2D(p.config, 200));
+          if (!url) return;
+          presetThumbs.set(id, url);
+          root.querySelectorAll(`[data-thumb="${id}"] img`).forEach((n) => (n.src = url));
+        } catch (err) {
+          console.error('[personalizador] miniatura da inspiração', id, err);
+        }
+      }, 1200);
+    }
+    root.addEventListener('error', (ev) => ev.target instanceof HTMLImageElement && ev.target.closest('[data-thumb]') && presetFallback(ev.target), true);
 
     function startScene() {
       try {
@@ -948,20 +1041,17 @@ export default {
       } catch (err) {
         console.warn('[personalizador] 3D indisponível, usando desenho 2D:', err?.message || err);
         useFallback();
-        preparePresetThumbs();
-        fillPresetThumbs();
         return;
       }
-      // um quadro para a tela aparecer; depois monta as miniaturas e o bolo da pessoa
+      // um quadro para a tela aparecer; depois o corpo do bolo, e os bicos e decorações chegam um a um
       requestAnimationFrame(() => {
         if (!alive) return;
         try {
-          preparePresetThumbs();
-          fillPresetThumbs();
-          cake.setConfig(config, { instant: true });
+          cake.setBackdrop(stageBackdrop, { instant: true });
           cake.setView(viewFor(step), { animate: false });
-          cake.playIntro();
+          cake.setConfig(config, { staged: true });
           cake.setAutoRotate(rotating);
+          cake.setPaused(Boolean(document.querySelector('.overlay')));
           if (AUTO_CUT_STEPS.has(STEPS[step].id) && autoCut) later(() => alive && autoCut && setCutaway(true), 900);
         } catch (err) {
           console.error('[personalizador] falha ao montar a cena 3D', err);
@@ -973,10 +1063,21 @@ export default {
           later(() => el.hint.classList.add('is-on'), 900);
           later(hideHint, 7000);
         }
+        // com tudo parado, adianta o que a pessoa ainda pode escolher (o primeiro toque em cada opção não engasga)
+        later(() => alive && cake?.warmUp(), 900);
       });
       // a plaquinha usa a fonte da marca: se ela chegar depois, refaz o texto
       document.fonts?.load?.('italic 700 40px "Playfair Display"').then(() => alive && cake?.refreshText()).catch(() => {});
     }
+
+    // Nada é desenhado com um diálogo aberto por cima do bolo; e o giro espera enquanto o painel rola.
+    const overlayWatch = new MutationObserver(() => cake?.setPaused(Boolean(document.querySelector('.overlay'))));
+    overlayWatch.observe(document.body, { childList: true });
+    // Dedo no painel de opções (toque ou rolagem): a pessoa está lendo, não olhando o bolo — o giro espera 2 s.
+    const holdSpin = () => cake?.quiet(2000);
+    el.body.addEventListener('scroll', holdSpin, { passive: true });
+    el.steps.addEventListener('scroll', holdSpin, { passive: true });
+    root.querySelector('.cz-panel').addEventListener('pointerdown', holdSpin, { passive: true });
 
     function hideHint() {
       if (!el.hint.classList.contains('is-on')) return;
@@ -987,22 +1088,37 @@ export default {
     const viewFor = (i) => (['acabamento', 'decoracao'].includes(STEPS[i].id) ? 'top' : 'default');
 
     /* ── desenho do painel ── */
+    let stepsMarkup = '';
+    let stepsShown = -1;
     function renderSteps() {
-      el.steps.innerHTML = String(html`${stepChips(step, config, visited)}`);
-      const cur = el.steps.querySelector('.is-current');
-      if (cur) {
+      const markup = String(html`${stepChips(step, config, visited)}`);
+      if (markup !== stepsMarkup) {
+        stepsMarkup = markup;
+        el.steps.innerHTML = markup;
+      }
+      if (stepsShown === step) return;
+      stepsShown = step;
+      // centraliza a etapa atual no próximo quadro (medir a tela dentro do toque obrigaria o navegador a recalcular tudo na hora)
+      requestAnimationFrame(() => {
+        const cur = alive && el.steps.querySelector('.is-current');
+        if (!cur) return;
         const target = cur.offsetLeft - (el.steps.clientWidth - cur.offsetWidth) / 2;
         el.steps.scrollTo({ left: Math.max(0, target), behavior: reduceMotion ? 'auto' : 'smooth' });
-      }
+      });
     }
 
+    const tpl = document.createElement('template');
+    /** still = a mesma etapa, depois de uma escolha: o painel é atualizado no lugar, só no que mudou. */
     function renderBody({ still = false } = {}) {
-      const keepScroll = still ? el.body.scrollTop : 0;
-      const focusKey = still ? document.activeElement?.closest?.('[data-k]')?.dataset.k : null;
+      const markup = String(renderStep(step, config, ui));
       el.body.classList.toggle('is-still', still);
-      el.body.innerHTML = String(renderStep(step, config, ui));
-      el.body.scrollTop = keepScroll;
-      if (focusKey) el.body.querySelector(`[data-k="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
+      if (still && el.body.firstChild) {
+        tpl.innerHTML = markup;
+        morph(el.body, tpl.content);
+        return;
+      }
+      el.body.innerHTML = markup;
+      el.body.scrollTop = 0;
     }
 
     function renderNameBox() {
@@ -1023,9 +1139,15 @@ export default {
       `);
     }
 
+    let metaMarkup = '';
     function renderMeta() {
-      el.meta.innerHTML = String(html`<span>${icon('users')} ${sizeOf(config).serves}</span><span>${icon('calendar')} Receba a partir de ${firstDate(config)}</span>`);
-      el.name.textContent = editLineId ? 'Editando o bolo do carrinho' : displayName(config);
+      const markup = String(html`<span>${icon('users')} ${sizeOf(config).serves}</span><span>${icon('calendar')} Receba a partir de ${firstDate(config)}</span>`);
+      if (markup !== metaMarkup) {
+        metaMarkup = markup;
+        el.meta.innerHTML = markup;
+      }
+      const name = editLineId ? 'Editando o bolo do carrinho' : displayName(config);
+      if (el.name.textContent !== name) el.name.textContent = name;
     }
 
     function setPriceText(value) {
@@ -1043,11 +1165,10 @@ export default {
       const from = shownPrice;
       const t0 = performance.now();
       cancelAnimationFrame(priceAnim);
-      root.querySelectorAll('[data-cz-price]').forEach((n) => {
-        n.classList.remove('is-bump');
-        void n.offsetWidth;
-        n.classList.add('is-bump');
-      });
+      // o "pulinho" do preço, sem obrigar o navegador a recalcular a tela para reiniciar a animação
+      root.querySelectorAll('[data-cz-price]').forEach((n) =>
+        n.animate?.([{ transform: 'scale(1)' }, { transform: 'scale(1.09)', offset: 0.35 }, { transform: 'scale(1)' }], { duration: 420, easing: 'ease-out' }),
+      );
       const tick = (now) => {
         const k = Math.min(1, (now - t0) / 420);
         shownPrice = from + (target - from) * (1 - (1 - k) ** 3);
@@ -1059,20 +1180,54 @@ export default {
       el.live.textContent = `Total: ${money(target)}`;
     }
 
-    /** Depois de qualquer escolha: valida, atualiza 3D, preço, painel e guarda o rascunho. */
+    /* Depois de qualquer escolha: o toque só valida e agenda. No quadro seguinte o painel e o preço são
+       atualizados (a opção aparece marcada na hora); no outro, o bolo. Várias mudanças no mesmo instante
+       viram uma atualização só. */
+    let pending = null;
+    let flushRaf = 0;
+    let sceneRaf = 0;
+
+    function flush() {
+      flushRaf = 0;
+      const p = pending;
+      pending = null;
+      if (!alive || !p) return;
+      updatePrice();
+      renderMeta();
+      syncBackdrop();
+      if (p.body) {
+        renderBody({ still: true });
+        renderSteps();
+        // o painel atualizado nasce com o preço final; o número animado segue por cima
+        if (shownPrice !== null) setPriceText(shownPrice);
+      }
+      if (p.scene === 'soon') sceneUpdateSoon();
+      else if (p.scene === 'now' && !sceneRaf) {
+        sceneRaf = requestAnimationFrame(() => {
+          sceneRaf = 0;
+          if (alive) sceneUpdate();
+        });
+      }
+    }
+
+    /** Aplica já o que estiver agendado (antes de fotografar o bolo para o carrinho, por exemplo). */
+    function syncNow() {
+      if (flushRaf) {
+        cancelAnimationFrame(flushRaf);
+        flush();
+      }
+      if (sceneRaf) cancelAnimationFrame(sceneRaf);
+      sceneRaf = 0;
+      sceneUpdate();
+    }
+
     function commit({ rerender = true, scene = 'now' } = {}) {
       config = normalizeConfig(config);
       if (ui.savedId && ui.savedKey !== configKey()) ui.savedId = null; // mudou depois de salvar: vira um bolo novo
-      if (scene === 'now') sceneUpdate();
-      else if (scene === 'soon') sceneUpdateSoon();
-      updatePrice();
-      renderMeta();
-      if (rerender) {
-        renderBody({ still: true });
-        renderSteps();
-        // o painel refeito nasce com o preço final; o número animado segue por cima
-        if (shownPrice !== null) setPriceText(shownPrice);
-      }
+      if (!pending) pending = { body: false, scene: 'none' };
+      if (rerender) pending.body = true;
+      if (scene === 'now' || (scene === 'soon' && pending.scene === 'none')) pending.scene = scene;
+      if (!flushRaf) flushRaf = requestAnimationFrame(flush);
       saveDraft();
     }
 
@@ -1084,7 +1239,7 @@ export default {
       cake.spin();
       if (!ui.celebrated && !editLineId) {
         ui.celebrated = true;
-        later(() => alive && STEPS[step]?.id === 'resumo' && confetti({ count: 80 }), 500);
+        later(() => alive && STEPS[step]?.id === 'resumo' && confetti({ count: cake.tier === 'mobile' ? 44 : 80 }), 500);
       }
     }
 
@@ -1095,6 +1250,7 @@ export default {
       visited.add(step);
       ui.tipOpen = false;
       ui.renaming = false;
+      if (bgOpen) setBgBar(false);
       const id = STEPS[step].id;
       el.cz.dataset.step = id;
       renderSteps();
@@ -1118,8 +1274,10 @@ export default {
     function replaceConfig(next, { keepSize = false, message = '', undo = false } = {}) {
       const before = undo ? { config: clone(config), savedId: ui.savedId, savedKey: ui.savedKey } : null;
       const size = config.size;
+      const stage = config.backdrop;
       config = normalizeConfig(next);
       if (keepSize) config.size = size;
+      if (!getBackdrop(next?.backdrop)) config.backdrop = stage; // inspiração ou surpresa não mexem no fundo escolhido
       ui.savedId = null;
       syncModes();
       commit();
@@ -1147,6 +1305,7 @@ export default {
 
     /* ── ações finais ── */
     function cakePayload() {
+      syncNow();
       return {
         name: displayName(config),
         price: priceOf(config),
@@ -1238,14 +1397,24 @@ export default {
         g.fillRect(0, 0, W, H);
         g.drawImage(flat, 0, (H - W) / 2 - 60);
       }
+      const stage = shot ? resolveBackdrop(config) : getBackdrop('rosa');
       const logo = await loadImage('assets/logo.webp');
       if (logo) {
         const lw = 250;
-        g.drawImage(logo, (W - lw) / 2, 54, lw, (lw * logo.height) / logo.width);
+        const lh = (lw * logo.height) / logo.width;
+        if (stage.tone === 'dark') {
+          // sobre fundo escuro, a marca vai numa plaquinha clara
+          g.fillStyle = 'rgba(255, 250, 248, 0.95)';
+          g.beginPath();
+          if (g.roundRect) g.roundRect((W - lw) / 2 - 30, 38, lw + 60, lh + 32, 30);
+          else g.rect((W - lw) / 2 - 30, 38, lw + 60, lh + 32);
+          g.fill();
+        }
+        g.drawImage(logo, (W - lw) / 2, 54, lw, lh);
       }
       await document.fonts?.load?.('700 60px "Playfair Display"').catch(() => {});
       g.textAlign = 'center';
-      g.fillStyle = '#2a1210';
+      g.fillStyle = stage.ink;
       let fs = 64;
       const name = displayName(config);
       do {
@@ -1253,7 +1422,7 @@ export default {
         fs -= 3;
       } while (g.measureText(name).width > W - 140 && fs > 30);
       g.fillText(name, W / 2, H - 150);
-      g.fillStyle = '#7a5060';
+      g.fillStyle = stage.ink2;
       g.font = '700 30px Nunito, system-ui, sans-serif';
       g.fillText(`${sizeOf(config).serves} · criado no personalizador 3D da BOLAB`, W / 2, H - 92);
       return out;
@@ -1479,6 +1648,15 @@ export default {
         input?.focus();
         input?.select();
       },
+      bgmenu: () => setBgBar(!bgOpen),
+      backdrop(v) {
+        config.backdrop = v;
+        commit({ rerender: false, scene: 'none' });
+        syncBackdrop();
+        renderBgBar();
+        el.bgbar.querySelector('.is-on')?.focus({ preventScroll: true });
+        el.live.textContent = `Fundo do palco: ${getBackdrop(v) ? stageBackdrop.name : `automático (${stageBackdrop.name})`}`;
+      },
       add: addToCart,
       save: toggleSave,
       share: () => shareCake(false),
@@ -1495,6 +1673,17 @@ export default {
     on(root, 'click', '[data-act]', (_ev, btn) => {
       const fn = actions[btn.dataset.act];
       if (fn) fn(btn.dataset.value, btn);
+    });
+
+    // o painel "Fundo" fecha ao tocar fora dele ou com Esc
+    const onDocDown = (ev) => {
+      if (bgOpen && !ev.target.closest?.('[data-cz-bgbar], [data-act="bgmenu"]')) setBgBar(false);
+    };
+    document.addEventListener('pointerdown', onDocDown, true);
+    root.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape' || !bgOpen) return;
+      setBgBar(false);
+      el.tools.querySelector('[data-act="bgmenu"]').focus();
     });
 
     root.addEventListener('qty', (ev) => {
@@ -1587,7 +1776,8 @@ export default {
 
     // ganchos de teste: só existem com ?czdebug no endereço (antes do #)
     if (new URLSearchParams(location.search).has('czdebug')) {
-      window.__cz = { cake: () => cake, config: () => config, set: (next) => replaceConfig(next), goto };
+      // quality() é só leitura: nível, proporção de pixels em uso e o estado do regulador de resolução
+      window.__cz = { cake: () => cake, config: () => config, set: (next) => replaceConfig(next), goto, quality: () => cake?.quality() ?? null };
     }
 
     /* ── primeira pintura ── */
@@ -1598,7 +1788,9 @@ export default {
     renderMeta();
     updatePrice();
     setRotating(rotating, false);
-    startScene();
+    syncBackdrop({ instant: true });
+    // a tela aparece primeiro (fundo, opções e o aviso de "preparando"); a cena 3D começa logo em seguida
+    requestAnimationFrame(() => requestAnimationFrame(() => alive && startScene()));
 
     if (origin === 'base') toast('Partimos de um bolo do cardápio. Mude o que quiser!', { type: 'success' });
     if (origin === 'draft' && step > 0) toast('Continuando de onde você parou');
@@ -1630,6 +1822,10 @@ export default {
       storeDraft();
       vv?.removeEventListener('resize', syncKeyboard);
       vv?.removeEventListener('scroll', syncKeyboard);
+      document.removeEventListener('pointerdown', onDocDown, true);
+      overlayWatch.disconnect();
+      cancelAnimationFrame(flushRaf);
+      cancelAnimationFrame(sceneRaf);
       timers.forEach(clearTimeout);
       cancelAnimationFrame(priceAnim);
       try {

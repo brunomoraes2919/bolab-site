@@ -15,6 +15,15 @@ function badge(n) {
   return n > 0 ? html`<span class="count-badge" aria-hidden="true">${n > 9 ? '9+' : n}</span>` : '';
 }
 
+/** Só mexe na página quando o conteúdo mudou de fato (cabeçalho e barra são refeitos a cada troca de tela e a cada mudança no carrinho). */
+const painted = {};
+function setHtml(id, markup) {
+  const next = String(markup);
+  if (painted[id] === next) return;
+  painted[id] = next;
+  document.getElementById(id).innerHTML = next;
+}
+
 function renderAnnounce() {
   document.getElementById('announce').innerHTML = String(html`
     <div class="container announce__inner">
@@ -29,7 +38,7 @@ function renderHeader() {
   const { path, query } = currentRoute();
   const user = auth.user();
   const focus = document.body.dataset.layout === 'focus';
-  document.getElementById('header').innerHTML = String(html`
+  setHtml('header', html`
     <div class="container header__inner">
       ${focus
         ? html`<button class="icon-btn header__back" type="button" data-back="/carrinho" aria-label="Voltar">${icon('arrow-left')}</button>`
@@ -73,7 +82,7 @@ function renderTabbar() {
   const is = (fn) => (fn(path) ? 'is-active' : '');
   const orders = (p) => p.startsWith('/pedido');
   const account = (p) => p.startsWith('/conta') || p === '/entrar' || p === '/favoritos' || p === '/atendimento';
-  document.getElementById('tabbar').innerHTML = String(html`
+  setHtml('tabbar', html`
     <a href="#/" class="${is((p) => p === '/')}">${icon('home')}<span>Início</span></a>
     <a href="#/cardapio" class="${is((p) => p.startsWith('/cardapio') || p.startsWith('/produto'))}">${icon('cake')}<span>Cardápio</span></a>
     <a href="#/monte-seu-bolo" class="tabbar__fab" aria-label="Monte seu bolo em 3D">
@@ -141,10 +150,18 @@ function refresh() {
 
 export function startShell() {
   renderAnnounce();
-  renderFooter();
   refresh();
 
-  onRoute(refresh);
+  // O rodapé só entra junto com a primeira tela. Antes disso ele aparecia por um instante
+  // no meio da tela de abertura e era empurrado para baixo quando o conteúdo chegava.
+  let footerReady = false;
+  onRoute(() => {
+    if (!footerReady) {
+      footerReady = true;
+      renderFooter();
+    }
+    refresh();
+  });
   store.on('cart', refresh);
   store.on('auth', refresh);
   store.on('favs', refresh);
@@ -167,8 +184,8 @@ export function startShell() {
 
   on(document.body, 'click', '[data-back]', (_ev, el) => goBack(el.dataset.back || '/'));
 
-  // Sombra no cabeçalho ao rolar.
+  // Sombra no cabeçalho ao rolar. (A página abre no topo, então não é preciso conferir agora:
+  // ler a posição da rolagem neste ponto obrigava o navegador a calcular o layout antes da hora.)
   const onScroll = () => header.classList.toggle('is-scrolled', window.scrollY > 8);
   window.addEventListener('scroll', onScroll, { passive: true });
-  onScroll();
 }
