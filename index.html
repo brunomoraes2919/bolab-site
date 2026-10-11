@@ -15,12 +15,12 @@
     <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png" />
     <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- A fonte da marca mora aqui no site (assets/fonts): o app não depende da internet para ela. -->
+    <link rel="preload" as="font" type="font/woff2" href="assets/fonts/plus-jakarta-sans-latin.woff2" crossorigin />
     <link rel="preconnect" href="https://images.unsplash.com" />
 
     <script>
-      // DESEMPENHO DA ABERTURA (três atalhos; nenhum muda a aparência):
+      // DESEMPENHO DA ABERTURA (atalhos; nenhum muda a aparência):
       //
       // 1. A imagem do primeiro banner do início começa a baixar junto com o resto. Antes ela só
       //    era pedida depois de todo o JavaScript rodar. Se trocar a imagem do primeiro banner
@@ -33,35 +33,9 @@
         link.href = 'assets/img/cz-morango.webp';
         document.head.appendChild(link);
       })();
-
-      // 2. A fonte da marca não segura a primeira pintura (a folha de estilo dela vem de outro
-      //    servidor; no app, sem internet, a tela ficava esperando). Assim que a folha chega, o
-      //    arquivo da fonte já é pedido, para o texto não "pular" depois de aparecer. Enquanto
-      //    isso (ou sem internet), a loja usa a fonte do aparelho, ajustada em css/tokens.css.
-      function bolabFonts(link) {
-        if (link.rel === 'preload') {
-          link.rel = 'stylesheet'; // a folha chegou: aplica (este mesmo aviso dispara de novo depois de aplicada)
-          return;
-        }
-        link.onload = null;
-        if (!document.fonts || !document.fonts.load) return;
-        // Fonte variável: um arquivo só cobre todos os pesos (400 a 800).
-        ['500', '700', '800'].forEach(function (w) {
-          document.fonts.load(w + ' 1em "Plus Jakarta Sans"').catch(function () {});
-        });
-      }
     </script>
-    <link
-      rel="preload"
-      as="style"
-      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400..800&display=swap"
-      onload="bolabFonts(this)"
-    />
-    <noscript>
-      <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400..800&display=swap" rel="stylesheet" />
-    </noscript>
 
-    <!-- 3. Os arquivos de JavaScript da primeira tela são pedidos todos de uma vez, em vez de um
+    <!-- 2. Os arquivos de JavaScript da primeira tela são pedidos todos de uma vez, em vez de um
          descobrir o outro em fila. Se criar um arquivo novo usado na abertura, pode acrescentar
          aqui; se esquecer, nada quebra (ele só carrega um pouco depois). -->
     <link rel="modulepreload" href="js/app.js" />

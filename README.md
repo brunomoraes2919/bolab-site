@@ -43,7 +43,7 @@ A loja tem que parecer, em um segundo, um aplicativo de delivery de bolos: clara
 
 ### Fonte
 
-A Plus Jakarta Sans vem do Google Fonts (um arquivo variável, pedido sem segurar a primeira pintura; ver o começo do `index.html`). Enquanto ela não chega, ou no app sem internet, a loja usa a fonte do aparelho com o tamanho ajustado (`"Plus Jakarta Sans Fallback"` em `css/tokens.css`), então as quebras de linha ficam praticamente iguais. Para o app não depender da rede, dá para hospedar o arquivo aqui: salvar o woff2 "latin" em `assets/fonts/` junto com o texto da licença OFL, declarar o `@font-face` (com `font-display: swap`) em `css/tokens.css`, trocar o `<link>` do Google por `<link rel="preload" as="font" type="font/woff2" crossorigin>` e tirar os dois `preconnect` de fontes.
+A Plus Jakarta Sans está hospedada no próprio site: `assets/fonts/plus-jakarta-sans-latin.woff2` (um arquivo variável, pesos 400 a 800, caracteres latinos) com a licença em `assets/fonts/OFL.txt`. O `@font-face` fica em `css/tokens.css` e o `index.html` pede o arquivo logo no começo (`<link rel="preload" as="font">`). O site e o app não dependem de servidor externo para a fonte. Enquanto o arquivo carrega, a loja usa a fonte do aparelho com o tamanho ajustado (`"Plus Jakarta Sans Fallback"`), então as quebras de linha ficam praticamente iguais.
 
 ### Tokens principais (`css/tokens.css`)
 
