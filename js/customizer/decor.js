@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rng, hashString, makeCanvas, texture } from './textures.js';
 import { offsetPath, cleanOffset, pathAt, pointInPath, rayHit } from './geometry.js';
+import { allocate, plannedFor, plaqueSize, baseRingScale, signedDist } from './occupancy.js';
 import { getDecor, getQuantity, getPiping } from '../data/customizer.js';
 import { decorOptions } from './pricing.js';
 
@@ -402,19 +403,69 @@ function zigzagGeometry(D) {
  * Cada peça é uma onda completa. Eixo x = ao longo da borda, z = para fora do bolo.
  */
 function ruffleGeometry(D) {
-  const L = 0.115;
+  // Babado de bico pétala (104): uma fita de creme presa ao bolo pela base grossa, com a beira fina franzida em
+  // ondas REDONDAS — a beira anda mais devagar nas subidas e mais depressa nas cristas, então cada onda é um
+  // gomo largo em "U" (fita ondulada), e não um dente de serra. Uma peça = uma onda; emendadas, viram a fita.
+  const L = 0.13;
   const h = 0.092;
   // contorno da seção: [altura 0…1, face (1 = de fora, -1 = de dentro)]
-  const ring = [[0, 1], [0.35, 1], [0.72, 1], [1, 1], [0.72, -1], [0.35, -1], [0, -1]];
+  const ring = [[0, 1], [0.3, 1], [0.62, 1], [0.86, 1], [1, 1], [0.86, -1], [0.62, -1], [0.3, -1], [0, -1]];
   const nv = ring.length;
-  return surface(D < 1 ? 8 : 14, nv, (u, v, p) => {
+  return surface(D < 0.5 ? 9 : D < 1 ? 12 : 20, nv, (u, v, p) => {
     const [t, face] = ring[Math.round(v * nv) % nv];
-    const wave = Math.sin(u * TAU);
-    const thick = 0.02 * (1 - 0.82 * t) + 0.003;
-    const out = 0.012 + t * 0.05 + 0.03 * Math.pow(t, 1.4) * wave; // inclina para fora e a ponta ondula
-    p.set((u - 0.5) * L * 1.03, h * t * (1 - 0.1 * wave * t), out + (face * thick) / 2);
-    return (0.66 + 0.34 * Math.pow(t, 0.7)) * (1 - 0.2 * Math.max(0, -wave) * t) * (face > 0 ? 1 : 0.86);
+    const ph = u * TAU;
+    const wave = Math.sin(ph);
+    const free = Math.pow(t, 1.5); // a base não mexe; a beira ondula solta
+    const thick = 0.022 * (1 - 0.8 * t) + 0.0045; // base gorda, beira fina mas arredondada
+    // a beira avança e recua ao longo da fita (−sin 2φ): cristas largas e redondas, subidas curtas
+    const along = (u - 0.5) * L * 1.03 - 0.0085 * Math.sin(2 * ph) * free;
+    const out = 0.012 + t * 0.046 + 0.03 * free * wave; // inclina para fora e a beira ondula
+    // a beira fecha em meia-cana (sem quina) e levanta um pouco nas cristas
+    const top = h * (t - 0.035 * Math.pow(t, 6)) * (1 - 0.07 * wave * t);
+    p.set(along, top, out + (face * thick) / 2);
+    return (0.64 + 0.36 * Math.pow(t, 0.7)) * (1 - 0.22 * Math.max(0, -wave) * t) * (face > 0 ? 1 : 0.86);
   }, { wrapV: true, shade: true, orient: true });
+}
+
+/**
+ * Pingo de tinta dourada: mancha chata (quase sem altura), de contorno irregular, levemente abaulada no meio
+ * para pegar o brilho. kind 0/1 = pingos (dois contornos diferentes) · 2 = risco: gota comprida, com a cabeça
+ * gorda numa ponta e o rabo fino na outra (eixo x = sentido em que a tinta voou). Fica no plano xz (y = para fora).
+ */
+function splatGeometry(kind, D) {
+  const r = rng(700 + kind * 31);
+  const n = kind === 2 ? (D < 1 ? 10 : 16) : D < 1 ? 10 : 16;
+  const p0 = r() * TAU;
+  const p1 = r() * TAU;
+  const rim = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU;
+    if (kind === 2) {
+      // gota: cabeça em +x, rabo afinando até −x
+      const c = Math.cos(a);
+      const w = 0.34 * Math.pow((1 + c) / 2, 0.55) + 0.045;
+      rim.push([1.25 * c - 0.25, w * Math.sin(a) * (0.9 + r() * 0.2)]);
+    } else {
+      // pingo: redondo e liso, só de leve irregular; o segundo tipo tem um "dedo" que escorreu
+      let rad = 0.9 + 0.09 * Math.sin(a * 2 + p0) + 0.06 * Math.sin(a * 3 + p1);
+      if (kind === 1) rad += 0.5 * Math.pow(Math.max(0, Math.cos(a - p1)), 14);
+      rim.push([rad * Math.cos(a), rad * Math.sin(a) * (kind === 1 ? 0.86 : 1)]);
+    }
+  }
+  const pos = [0, 0.22, 0];
+  const uv = [0.5, 0.5];
+  rim.forEach(([x, z]) => {
+    pos.push(x, 0, z);
+    uv.push(0.5 + x * 0.3, 0.5 + z * 0.3);
+  });
+  const index = [];
+  for (let i = 0; i < n; i++) index.push(0, 1 + ((i + 1) % n), 1 + i);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uv), 2));
+  geo.setIndex(index);
+  geo.computeVertexNormals();
+  return geo;
 }
 
 /** Lacinho de creme: dois laços, o nó e duas pontas. Fica deitado na lateral (x = para os lados, y = para cima, z = para fora). */
@@ -687,9 +738,10 @@ export function createDecorLibrary(tex, tier = { detail: 1, physical: true }) {
       pipedLeaf: piped('pipedLeaf', pipedLeafGeometry),
       rope: () => geo('rope', () => ropeGeometry(D)),
       zigzag: () => geo('zigzag', () => zigzagGeometry(D)),
-      ruffle: () => geo('ruffle', () => ruffleGeometry(D)),
+      ruffle: piped('ruffle', ruffleGeometry),
       bow: () => geo('bow', () => bowGeometry(D)),
       fleck: () => geo('fleck', () => (D < 1 ? new THREE.OctahedronGeometry(1, 0) : new THREE.SphereGeometry(1, 6, 4)).scale(1, 0.22, 0.75)),
+      splat: (kind) => geo(`splat${kind}`, () => splatGeometry(kind, D)),
       strawberry: () => geo('strawberry', () => strawberryGeometry(D)),
       calyx: () => geo('calyx', () => calyxGeometry(D)),
       blueberry: () => geo('blueberry', () => blueberryGeometry(D)),
@@ -723,6 +775,8 @@ export function createDecorLibrary(tex, tier = { detail: 1, physical: true }) {
       confetti: () => mat('confetti', () => S({ color: 0xffffff, roughness: 0.5 })),
       pearl: () => mat('pearl', () => P({ color: 0xfff6ec, roughness: 0.16, clearcoat: 1, clearcoatRoughness: 0.1, iridescence: 0.75, iridescenceIOR: 1.35, sheen: 0.4, sheenColor: 0xffd9e6 })),
       gold: () => mat('gold', () => S({ color: 0xe6ba5c, metalness: 0.9, roughness: 0.26, emissive: 0x6b4a10, emissiveIntensity: 0.3 })),
+      // tinta dourada (respingo): metal liso e bem brilhante, com um granulado fino que quebra o reflexo
+      goldPaint: () => mat('goldPaint', () => S({ color: 0xf6cc6a, metalness: 0.62, roughness: 0.3, normalMap: tex.glitterNormal(), normalScale: new THREE.Vector2(0.5, 0.5), emissive: 0x9a6410, emissiveIntensity: 0.62, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })),
       glitter: () => mat('glitter', () => S({ color: 0xeec063, metalness: 0.82, roughness: 0.36, normalMap: tex.glitterNormal(), normalScale: new THREE.Vector2(0.9, 0.9), emissive: 0x7a5412, emissiveIntensity: 0.55 })),
       chocolate: () => mat('chocolate', () => P({ color: 0xffffff, roughness: 0.4, clearcoat: 0.3, clearcoatRoughness: 0.35, side: THREE.DoubleSide })),
       petal: () => mat('petal', () => P({ color: 0xffffff, roughness: 0.62, sheen: 0.25, sheenRoughness: 0.5, sheenColor: 0xffffff, side: THREE.DoubleSide, vertexColors: true })),
@@ -769,60 +823,132 @@ const PIPE = {
   perolao: { r: 0.098, step: 0.188, inset: 0.94, out: 0.62, lean: 0.3, scale: 1.52 },
   corda: { r: 0.046, step: 0.138, inset: 0.95, out: 0.7, lean: 0.35, along: true },
   ziguezague: { r: 0.075, step: 0.13, inset: 0.98, out: 0.78, lean: 0.4, along: true },
-  babado: { r: 0.05, step: 0.115, inset: 0.3, out: 0.12, lean: 0.95, topLean: 0.9, along: true, outward: true },
+  babado: { r: 0.05, step: 0.13, inset: 0.3, out: 0.12, lean: 0.95, topLean: 0.9, along: true, outward: true },
 };
 PIPE.vintage = PIPE.conchas; // o conjunto vintage usa conchas no topo e na base
 
 
 /**
- * Decide a posição de cada decoração de acordo com o que mais está no bolo, para que nada
- * se sobreponha: centro (velas, topo, plaquinha, ou um arranjo), meias-luas e coroa.
+ * O que o distribuidor de decorações precisou adaptar neste bolo, em frases prontas para o painel.
+ * adapted = alguma peça mudou de lugar, de quantidade ou de tamanho para caber · messages = o que dizer à pessoa
+ * (ex.: "Reorganizamos para caber: macarons e brigadeiros dividem a coroa") · unfit = o que não coube de jeito
+ * nenhum, com a sugestão (essas frases também vêm em messages, que é o que o painel mostra).
+ * É barato: reaproveita o plano já calculado para o bolo que está na tela.
+ */
+export function decorNotes(config) {
+  try {
+    const found = plannedFor(config);
+    if (!found?.m) return { adapted: false, messages: [], unfit: [] };
+    const notes = (found.plan || decorLayout(config, found.m)).notes;
+    return { adapted: Boolean(notes.adapted), messages: notes.messages.slice(), unfit: notes.unfit.slice(), unfitIds: (notes.unfitIds || []).slice() };
+  } catch (err) {
+    console.error('[personalizador] avisos das decorações', err);
+    return { adapted: false, messages: [], unfit: [] };
+  }
+}
+
+/**
+ * A que altura fica o pé da plaquinha. Com velas de número (que ficam bem na frente dela) a plaquinha sobe,
+ * para a mensagem aparecer por cima dos algarismos em vez de ficar escondida atrás deles.
+ */
+export function plaqueLiftOf(config) {
+  const d = config?.decor || {};
+  const numbered = (d.items || []).includes('velas') && d.candleStyle === 'numero' && /\d/.test(String(d.number ?? ''));
+  return numbered ? 0.66 : 0.34;
+}
+
+const NO_PLAN = () => ({
+  key: 'sem-plano',
+  zones: {},
+  plan: {},
+  party: { plaque: null, topper: null, stars: [], candles: null, numbers: null, sparkler: null, text: null },
+  notes: { adapted: false, messages: [], unfit: [], unfitIds: [] },
+  occ: null,
+  edge: 0.03,
+  necklace: 0,
+  sides: [],
+  fenceOut: 0,
+  heights: { decor: 0, extra: 0, party: 0 },
+  stage: {},
+  centerTaken: false,
+});
+
+/**
+ * Quem fica onde no bolo. As medidas da borda saem daqui; os lugares de cada peça vêm do distribuidor
+ * (occupancy.js), que é calculado uma vez por configuração — todos os construtores leem o mesmo plano:
+ *   plan[id] = { zone, pieces, regions, scale, unfit }  ·  party = plaquinha, estrelas, velas, escrita, nome
+ *   occ = o que já está ocupado (os confeitos de cobertura consultam antes de cair)  ·  key = muda quando o plano muda
  */
 export function decorLayout(config, m) {
   const items = config.decor.items;
   const has = (id) => items.includes(id);
-  const combo = Boolean(getPiping(config.piping.style)?.combo);
-  const pipeTop = config.piping.style !== 'liso' && (combo || config.piping.where !== 'base');
-  const pipe = PIPE[config.piping.style];
-  const border = pipeTop ? pipe.r * 2 + 0.012 : 0.03; // faixa da borda ocupada pelo bico
+  const style = config.piping.style;
+  const combo = Boolean(getPiping(style)?.combo);
+  const pipeTop = style !== 'liso' && (combo || config.piping.where !== 'base');
+  const pipe = PIPE[style];
+  // com a cerca de chocolate em volta, o bico que passaria da beira recua para dentro (não atravessa as barrinhas)
+  const fenceIn = pipeTop && has('wafer') ? (style === 'folhas' ? 0.09 : style === 'babado' ? 0.085 : 0) : 0;
+  // faixa da borda ocupada pelo bico (as peças esticam até uns 16% para fechar a volta sem vão)
+  const border = pipeTop ? Math.max(pipe.r * 2 + 0.012, pipe.r * (pipe.inset + 1.2) + 0.004) + (style === 'folhas' ? fenceIn : 0) : 0.03;
   const rho = m.rMin;
   const topY = (m.y0 || 0) + m.Ht + (config.drip.on ? 0.017 : 0);
   const text = config.decor.message || '';
   const message = config.decor.messageMode === 'bico' ? '' : text; // plaquinha no palito
   const script = config.decor.messageMode === 'bico' ? text : ''; // escrita com bico no topo
   const opt = (id) => decorOptions(config, id);
-  // o que fica espetado no meio do bolo
-  const sticks = has('velas') || has('topo') || Boolean(message) || Boolean(config.decor.topper?.text) || has('baloes') || has('pirulitos');
-  let centerTaken = sticks || Boolean(script);
-
-  // Quem fica onde: primeiro as escolhas da pessoa, depois o que está no automático ocupa o que sobrou.
-  const zones = {};
-  const sides = ['left', 'right'];
-  let half = 0;
-  const area = items.filter((id) => getDecor(id)?.arrs.some((a) => a === 'centro' || a === 'coroa' || a === 'meialua'));
-  area.forEach((id) => {
-    const arr = opt(id).arr;
-    if (arr === 'centro') {
-      // só uma decoração cabe no centro: a segunda vira coroa em volta dela
-      zones[id] = Object.values(zones).includes('center') ? 'crown' : 'center';
-      centerTaken = true;
-    } else if (arr === 'coroa') zones[id] = 'crown';
-    else if (arr === 'meialua') zones[id] = sides[half++ % 2];
-    else if (arr === 'espalhado') zones[id] = 'scatter';
-    else if (arr === 'cascata') zones[id] = 'cascade';
-  });
-  // "na frente", "no palito" e "na lateral" não ocupam o topo: só quem está no automático disputa os lugares
-  const autos = area.filter((id) => !zones[id] && opt(id).arr === 'auto');
-  if (autos.length === 1) zones[autos[0]] = centerTaken ? 'crown' : 'center';
-  else {
-    autos.forEach((id, i) => {
-      if (i < 2) zones[id] = sides[(half + i) % 2];
-      else zones[id] = centerTaken ? 'crown' : 'center';
-    });
+  const named = Boolean(config.decor.topper?.text?.trim()); // topo personalizado (nome em acrílico)
+  const plaqueLift = plaqueLiftOf(config);
+  let alloc;
+  try {
+    alloc = allocate(config, m, { border, rho, topY, pipe, pipeTop, message, script, named, plaqueLift });
+  } catch (err) {
+    // nunca derruba o bolo: sem plano, ele aparece só com a cobertura e o bico
+    console.error('[personalizador] distribuição das decorações', err);
+    alloc = NO_PLAN();
   }
   // até onde (fração do raio) um anel de decoração pode ir sem encostar no bico
   const ringK = Math.max(0.35, Math.min(0.74, 1 - (border + 0.12) / rho));
-  return { has, opt, pipeTop, pipe, border, rho, topY, message, script, centerTaken, zones, ringK, backFree: !message && !has('topo') && !config.decor.topper?.text };
+  return {
+    has,
+    opt,
+    pipeTop,
+    pipe,
+    border,
+    fenceIn,
+    rho,
+    topY,
+    message,
+    script,
+    named,
+    plaqueLift,
+    centerTaken: alloc.centerTaken,
+    zones: alloc.zones,
+    ringK,
+    backFree: !message && !has('topo') && !named,
+    plan: alloc.plan,
+    party: alloc.party,
+    occ: alloc.occ,
+    edge: alloc.edge,
+    necklace: alloc.necklace,
+    sides: alloc.sides,
+    fenceOut: alloc.fenceOut,
+    heights: alloc.heights,
+    stage: alloc.stage,
+    notes: alloc.notes,
+    key: alloc.key,
+  };
+}
+
+/** Junta volumes ([[x, y, z, r, classe]]) aos que a peça declara (part.volumes), para o teste de sobreposição. */
+function addVol(part, vol) {
+  if (!part.volumes) part.volumes = [];
+  if (!vol) return;
+  for (let i = 0; i < vol.length; i++) part.volumes.push({ x: vol[i][0], y: vol[i][1], z: vol[i][2], r: vol[i][3], kind: vol[i][4] || 'solid' });
+}
+
+/** Há alguma peça neste lugar? (confeitos de cobertura consultam antes de cair; soft = outro confeito não conta) */
+function taken(layout, x, y, z, r, pad = 0.004) {
+  return layout.occ ? layout.occ.hit(x, y, z, r, pad, -1, true) : false;
 }
 
 /** Fator de fartura de uma decoração (0,6 · 1 · 1,5). */
@@ -1072,6 +1198,7 @@ export function buildPiping(ctx) {
   const { config, m, lib, layout } = ctx;
   const style = config.piping.style;
   const part = newPart();
+  part.volumes = [];
   if (style === 'liso') return part;
   const combo = style === 'vintage';
   const kind = combo ? 'conchas' : style; // o vintage usa conchas no topo e na base
@@ -1097,6 +1224,8 @@ export function buildPiping(ctx) {
   const up = new THREE.Vector3();
   const pt = {};
   const unit = spec.scale || 1;
+  const fenced = config.decor.items.includes('wafer'); // a cerca de wafer cobre a lateral inteira
+  const fenceIn = layout.fenceIn || 0;
 
   /**
    * Folhas: guirlanda de pares em V. Em cada par, uma folha é puxada para fora e um pouco para trás e a outra
@@ -1104,8 +1233,13 @@ export function buildPiping(ctx) {
    * apenas se encostam — lê-se como folhas, não como serra. No topo as pontas passam um pouco da borda e vergam;
    * na base ficam deitadas no prato. Ângulo, comprimento, largura e altura variam de leve de folha para folha.
    */
-  const garland = (path, y, base) => {
+  const garland = (path, y, base, ledge = null) => {
+    const cls = base ? 'pipebase' : 'pipe';
     ringSlots(path, m.shape, spec.step * 2).forEach(({ s, k }) => {
+      if (ledge) {
+        pathAt(path, s, pt);
+        if (signedDist(ledge, pt.x + pt.nx * 0.16, pt.z + pt.nz * 0.16) < 0.02) return; // a folha não cabe no degrau aqui
+      }
       const gap = Math.min(0.046, spec.step * 2 * k * 0.28);
       const open = 0.33 * Math.max(0.85, Math.min(1.15, k)); // pares mais afastados abrem um pouco mais
       for (let side = -1; side <= 1; side += 2) {
@@ -1116,22 +1250,34 @@ export function buildPiping(ctx) {
         _x.copy(normal).multiplyScalar(Math.cos(a)).addScaledVector(tangent, side * Math.sin(a));
         _x.y = (base ? 0.07 : -0.06) + (r() - 0.5) * 0.06;
         frameQuat(_x, Y, _q);
-        batch.add(pt.x, y + (side > 0 ? 0.008 : 0.002), pt.z, _q, [0.9 + r() * 0.2, 0.94 + r() * 0.12, 0.95 + r() * 0.1], null, 0.1);
+        const len = 0.9 + r() * 0.2;
+        const yy = y + (side > 0 ? 0.008 : 0.002);
+        batch.add(pt.x, yy, pt.z, _q, [len, 0.94 + r() * 0.12, 0.95 + r() * 0.1], null, 0.1);
+        // a folha: duas esferas ao longo dela (calcanhar gordo, ponta fina)
+        _z.copy(_x).normalize();
+        addVol(part, [
+          [pt.x + _z.x * 0.055 * len, yy + 0.02 + _z.y * 0.055 * len, pt.z + _z.z * 0.055 * len, 0.052, cls],
+          [pt.x + _z.x * 0.135 * len, yy + 0.015 + _z.y * 0.135 * len, pt.z + _z.z * 0.135 * len, 0.04, cls],
+        ]);
       }
     });
   };
 
-  const ring = (path, y, base) => {
-    if (kind === 'folhas') return garland(path, y, base);
-    const size = base ? spec.baseScale || 1 : 1;
+  const ring = (path, y, base, baseSize = spec.baseScale || 1, ledge = null) => {
+    if (kind === 'folhas') return garland(path, y, base, ledge);
+    const cls = base ? 'pipebase' : 'pipe';
+    const size = base ? baseSize : 1;
     ringSlots(path, m.shape, spec.step * size).forEach(({ s, k }) => {
       pathAt(path, s, pt);
+      // na base de um andar de cima, a peça precisa caber no degrau (no coração, o degrau estreita na reentrância)
+      if (ledge && signedDist(ledge, pt.x, pt.z) < spec.r * size * 0.9) return;
       tangent.set(pt.tx, 0, pt.tz);
       normal.set(pt.nx, 0, pt.nz);
       const fit = Math.max(0.86, Math.min(1.16, k)) * size;
       const jit = 0.97 + r() * 0.06;
       // na base, a peça se apoia no canto entre o bolo e o prato, virada para fora
-      const lean = base ? spec.lean : spec.topLean || 0;
+      // (no topo, o babado cai para fora da borda — com a cerca em volta, fica em pé)
+      const lean = base ? spec.lean : fenced ? 0 : spec.topLean || 0;
       up.copy(Y).multiplyScalar(Math.cos(lean)).addScaledVector(normal, Math.sin(lean));
       if (kind === 'conchas' || spec.along) {
         // peças em fila, todas no mesmo sentido (a concha cobre a cauda da anterior; corda e babado se emendam)
@@ -1139,23 +1285,54 @@ export function buildPiping(ctx) {
         frameQuat(spec.outward ? _x.copy(tangent).negate() : tangent, up, _q);
         const tall = spec.along ? 1 : jit * size;
         batch.add(pt.x, y, pt.z, _q, [fit, tall * size, tall * size], null, spec.r);
+        if (kind === 'babado') {
+          // fita ondulada: sobe 9 mm e abre até 9 mm para o lado de fora (que, inclinado, cai para baixo)
+          const oy = 0.05 * Math.cos(lean) - 0.055 * Math.sin(lean);
+          const on = 0.05 * Math.sin(lean) + 0.055 * Math.cos(lean);
+          for (let q = -1; q <= 1; q += 2) {
+            addVol(part, [[pt.x + pt.nx * on + pt.tx * q * 0.033 * fit, y + oy, pt.z + pt.nz * on + pt.tz * q * 0.033 * fit, 0.056, cls]]);
+          }
+        } else if (kind === 'conchas') {
+          const rad = 0.086 * tall * size;
+          addVol(part, [
+            [pt.x + up.x * rad * 0.4 - pt.tx * 0.02 * fit, y + up.y * rad * 0.4, pt.z + up.z * rad * 0.4 - pt.tz * 0.02 * fit, rad, cls],
+            [pt.x + pt.tx * 0.1 * fit + up.x * 0.02, y + up.y * 0.02, pt.z + pt.tz * 0.1 * fit + up.z * 0.02, 0.052 * tall * size, cls],
+          ]);
+        } else {
+          // corda e zigue-zague: cordão contínuo → duas esferas por peça
+          const rad = spec.r * 1.02;
+          for (let q = -1; q <= 1; q += 2) {
+            addVol(part, [[pt.x + pt.tx * q * 0.034 * fit + up.x * rad * 0.5, y + up.y * rad * 0.5, pt.z + pt.tz * q * 0.034 * fit + up.z * rad * 0.5, rad, cls]]);
+          }
+        }
       } else {
         _x.copy(tangent).applyAxisAngle(up, kind === 'rosetas' ? (r() - 0.5) * 0.5 : r() * TAU);
         frameQuat(_x, up, _q);
-        batch.add(pt.x, y, pt.z, _q, fit * jit * unit, null, spec.r);
+        const sc = fit * jit * unit;
+        batch.add(pt.x, y, pt.z, _q, sc, null, spec.r);
+        // bolinha, pitanga ou roseta: uma esfera do tamanho da peça, apoiada na cobertura
+        const rad = (kind === 'estrelas' ? 0.092 : kind === 'rosetas' ? 0.158 : 0.064) * sc;
+        const lift = kind === 'rosetas' ? 0.12 : 0.3;
+        addVol(part, [[pt.x + up.x * rad * lift, y + up.y * rad * lift, pt.z + up.z * rad * lift, rad, cls]]);
       }
     });
   };
 
   // topo: em cima da borda do andar mais alto; base: no encontro de cada andar com o que está embaixo dele
   const where = combo ? 'both' : config.piping.where;
-  if (where !== 'base') ring(cleanOffset(m.topFlat, -spec.r * spec.inset), layout.topY - 0.002, false);
-  const fenced = config.decor.items.includes('wafer'); // a cerca de wafer cobre a lateral inteira
-  if (where !== 'top' && !fenced) stack.forEach((t) => ring(cleanOffset(t.frost, spec.r * spec.out * (spec.baseScale || 1)), t.y0 + (t.index ? 0.002 : -0.012), true));
+  if (where !== 'base') ring(cleanOffset(m.topFlat, -(spec.r * spec.inset + fenceIn)), layout.topY - 0.002, false);
+  if (where !== 'top' && !fenced) {
+    stack.forEach((t) => {
+      // com calda, o bico da base encolhe para ficar abaixo das gotas (ou sai, se nem assim couber)
+      const size = baseRingScale(config, t, spec);
+      if (size) ring(cleanOffset(t.frost, spec.r * spec.out * size), t.y0 + (t.index ? 0.002 : -0.012), true, size, t.index ? stack[t.index - 1].topFlat : null);
+    });
+  }
   part.add(batch, m);
 
-  if (combo && !fenced) {
+  if (combo && !fenced && !config.drip.on) {
     // Vintage (lambeth): guirlandas drapeadas em volta de cada andar, com um lacinho em cada encontro.
+    // (com calda escorrendo, as guirlandas ficariam por cima das gotas: o conjunto fica só com as conchas)
     const lod = lib.detail < 1 ? (far ? 0 : 1) : far ? 1 : 2; // 0 = de longe no celular · 1 = celular / de longe no computador · 2 = computador
     const bead = lib.shape(far ? 'swagBead~' : 'swagBead', () => paint(new THREE.SphereGeometry(1, [6, 8, 12][lod], [4, 5, 8][lod]), 1, 1, 1));
     const beads = new Batch(bead, lib.mat.piping(), { cast: false, receive: true });
@@ -1177,7 +1354,9 @@ export function buildPiping(ctx) {
             pathAt(wall, (g + x) * span, pt);
             tangent.set(pt.tx, 0, pt.tz);
             normal.set(pt.nx, 0, pt.nz);
-            beads.add(pt.x + pt.nx * rad * 0.5, yTop - depth * 4 * x * (1 - x), pt.z + pt.nz * rad * 0.5, null, [rad, rad, rad], null, 0.04);
+            const by = yTop - depth * 4 * x * (1 - x);
+            beads.add(pt.x + pt.nx * rad * 0.5, by, pt.z + pt.nz * rad * 0.5, null, [rad, rad, rad], null, 0.04);
+            addVol(part, [[pt.x + pt.nx * rad * 0.5, by, pt.z + pt.nz * rad * 0.5, rad, 'swag']]);
           }
         }
       };
@@ -1187,7 +1366,17 @@ export function buildPiping(ctx) {
         pathAt(wall, g * span, pt);
         tangent.set(-pt.tx, 0, -pt.tz); // eixo invertido: a frente do laço fica virada para fora do bolo
         frameQuat(tangent, Y, _q);
-        bows.add(pt.x + pt.nx * 0.004, yTop + 0.014, pt.z + pt.nz * 0.004, _q, 1.7, null, 0.07);
+        const bx = pt.x + pt.nx * 0.004;
+        const bz = pt.z + pt.nz * 0.004;
+        bows.add(bx, yTop + 0.014, bz, _q, 1.7, null, 0.07);
+        // lacinho: nó, duas alças e duas pontas
+        addVol(part, [
+          [bx + pt.nx * 0.025, yTop + 0.014, bz + pt.nz * 0.025, 0.034, 'swag'],
+          [bx + pt.nx * 0.03 + pt.tx * 0.075, yTop + 0.02, bz + pt.nz * 0.03 + pt.tz * 0.075, 0.052, 'swag'],
+          [bx + pt.nx * 0.03 - pt.tx * 0.075, yTop + 0.02, bz + pt.nz * 0.03 - pt.tz * 0.075, 0.052, 'swag'],
+          [bx + pt.nx * 0.025 + pt.tx * 0.04, yTop - 0.055, bz + pt.nz * 0.025 + pt.tz * 0.04, 0.032, 'swag'],
+          [bx + pt.nx * 0.025 - pt.tx * 0.04, yTop - 0.055, bz + pt.nz * 0.025 - pt.tz * 0.04, 0.032, 'swag'],
+        ]);
       }
     });
     part.add(beads, m);
@@ -1206,6 +1395,7 @@ function newPart() {
     objects: [], // objetos avulsos: { object, angle, dist, rad }
     flames: [],
     owned: [], // geometrias, materiais e texturas exclusivos desta peça
+    volumes: null, // esferas que a peça ocupa: [{ x, y, z, r, kind }] (teste de sobreposição)
     born: 0,
     add(batch, m) {
       const mesh = batch.build(m.center);
@@ -1254,119 +1444,33 @@ function leanQuat(outX, outZ, lean, yawJitter, out = _q) {
 
 function buildFruits(ctx, part) {
   const { m, lib, layout } = ctx;
-  const r = rng(hashString(`fruit${m.shape}${m.R}${layout.zones.frutas}`));
+  const pl = layout.plan.frutas;
+  part.volumes = [];
+  if (!pl) return;
+  const r = rng(hashString(`fruit${m.shape}${m.R}${pl.zone}`));
   const small = { cast: ctx.tier?.smallCastShadow !== false };
   const b = { berry: new Batch(lib.geo.strawberry(), lib.mat.strawberry()), calyx: new Batch(lib.geo.calyx(), lib.mat.calyx(), small), count: 0 };
   const blue = new Batch(lib.geo.blueberry(), lib.mat.blueberry(), small);
   const rasp = new Batch(lib.geo.raspberry(), lib.mat.raspberry(), small);
-  const y0 = layout.topY;
-  const zone = layout.zones.frutas;
-  const placed = [];
-  const free = (x, z, rad) => placed.every((p) => Math.hypot(p.x - x, p.z - z) > p.r + rad);
-  const blueAt = (x, z, y = y0, s = 1) => {
-    _q.setFromEuler(new THREE.Euler(r() * 0.9 - 0.45, r() * TAU, r() * 0.9 - 0.45));
-    const k = (0.86 + r() * 0.3) * s;
-    blue.add(x, y + 0.05 * k, z, _q, k, r() < 0.3 ? '#c9d2ff' : '#ffffff', 0.065);
-    placed.push({ x, z, r: 0.058 * k });
-  };
-  const raspAt = (x, z, y = y0, s = 1) => {
-    _q.setFromEuler(new THREE.Euler(r() * 0.5 - 0.25, r() * TAU, r() * 0.5 - 0.25));
-    const k = (0.9 + r() * 0.2) * s;
-    rasp.add(x, y - 0.004, z, _q, k, null, 0.08);
-    placed.push({ x, z, r: 0.078 * k });
-  };
-  const pt = {};
-
-  const more = quantityOf(ctx, 'frutas');
-  if (zone === 'scatter' || zone === 'cascade') {
-    // espalhadas pelo topo, ou em cascata descendo a lateral (as frutas ficam presas na cobertura)
-    decorSpots(ctx, zone, { size: 0.1, count: 9, k: more, seed: 'fruit' }).forEach((sp, i) => {
-      if (i % 3 === 2) {
-        raspAt(sp.x, sp.z, sp.y, sp.taper);
-        blueAt(sp.x + sp.oz * 0.09, sp.z - sp.ox * 0.09, sp.y, sp.taper);
-      } else {
-        leanQuat(sp.ox, sp.oz, sp.side ? 1.45 : 1.0 + r() * 0.4, (r() - 0.5) * 0.6);
-        const sc = (0.86 + r() * 0.2) * sp.taper;
-        addStrawberry(b, sp.x + (sp.side ? sp.ox * 0.04 : 0), sp.y + (sp.side ? 0 : 0.098 * sc), sp.z + (sp.side ? sp.oz * 0.04 : 0), _q, sc);
-      }
-    });
-  } else if (zone === 'center') {
-    // raio livre no centro do topo (com mensagem escrita no bolo, o arranjo encolhe para ela caber em volta)
-    const room = (layout.rho - layout.border) * (more < 1 ? 0.72 : 1) * (layout.script ? 0.58 : 1);
-    const pileR = Math.min(0.5 * layout.rho, room - 0.1);
-    const cx = m.center.x;
-    const cz = m.center.z;
-    // morango central em pé, ponta para cima
-    _q.setFromAxisAngle(_x.set(1, 0, 0), Math.PI).premultiply(_q2.setFromAxisAngle(Y, r() * TAU));
-    addStrawberry(b, cx, y0 + 0.16, cz, _q, 1.12);
-    placed.push({ x: cx, z: cz, r: 0.1 });
-    let ringR = 0.195;
-    while (ringR + 0.1 <= room) {
-      const n = Math.max(5, Math.round((TAU * ringR) / 0.235));
-      const phase = r() * TAU;
-      const outerRing = ringR > 0.25;
-      for (let i = 0; i < n; i++) {
-        const a = phase + (i / n) * TAU + (r() - 0.5) * 0.12;
-        const x = cx + Math.cos(a) * ringR;
-        const z = cz + Math.sin(a) * ringR;
-        if (outerRing && i % 2 === 1) {
-          // nos anéis de fora, morangos se alternam com framboesas e mirtilos
-          if (r() < 0.55) raspAt(x, z);
-          else blueAt(x, z);
-          blueAt(x + Math.cos(a + 1.2) * 0.1, z + Math.sin(a + 1.2) * 0.1);
-          continue;
-        }
-        const lean = 1.05 + r() * 0.35;
-        leanQuat(Math.cos(a), Math.sin(a), lean, (r() - 0.5) * 0.5);
-        const s = 0.9 + r() * 0.2;
-        addStrawberry(b, x, y0 + 0.098 * s, z, _q, s);
-        placed.push({ x, z, r: 0.1 });
-      }
-      ringR += 0.225;
+  // cada peça já vem com lugar, tamanho e inclinação decididos pelo distribuidor
+  pl.pieces.forEach((p) => {
+    if (p.t === 'U') {
+      // morango em pé, ponta para cima
+      _q.setFromAxisAngle(_x.set(1, 0, 0), Math.PI).premultiply(_q2.setFromAxisAngle(Y, r() * TAU));
+      addStrawberry(b, p.x, p.y, p.z, _q, p.s);
+    } else if (p.t === 'S') {
+      leanQuat(p.ox, p.oz, p.lean, p.yaw);
+      addStrawberry(b, p.x, p.y + 0.098 * p.s, p.z, _q, p.s);
+    } else if (p.t === 'B') {
+      _q.setFromEuler(new THREE.Euler(r() * 0.9 - 0.45, r() * TAU, r() * 0.9 - 0.45));
+      blue.add(p.x, p.y + 0.05 * p.k, p.z, _q, p.k, r() < 0.3 ? '#c9d2ff' : '#ffffff', 0.065);
+    } else if (p.t === 'R') {
+      _q.setFromEuler(new THREE.Euler(r() * 0.5 - 0.25, r() * TAU, r() * 0.5 - 0.25));
+      rasp.add(p.x, p.y, p.z, _q, p.k, null, 0.08);
     }
-    // frutas pequenas preenchendo os vãos e a borda do arranjo
-    const edge = Math.max(0.12, Math.min(pileR + 0.12, room - 0.05));
-    for (let i = 0; i < 260 && blue.items.length + rasp.items.length < 10 + pileR * 46; i++) {
-      const a = r() * TAU;
-      const d = Math.sqrt(r()) * edge;
-      const x = cx + Math.cos(a) * d;
-      const z = cz + Math.sin(a) * d;
-      const isRasp = r() < 0.38;
-      if (!free(x, z, isRasp ? 0.07 : 0.05)) continue;
-      if (isRasp) raspAt(x, z);
-      else blueAt(x, z);
-    }
-    groundBlob(ctx, part, cx, cz, Math.min(room, pileR + 0.22));
-    // um segundo andar de mirtilos sobre o centro
-    for (let i = 0; i < 3; i++) {
-      const a = (i / 3) * TAU + 0.5;
-      blueAt(cx + Math.cos(a) * 0.115, cz + Math.sin(a) * 0.115, y0 + 0.13);
-    }
-  } else {
-    // coroa (volta inteira) ou meia-lua: morangos intercalados com frutas pequenas
-    const pts = arcPoints(m, zone, layout.ringK, 0.2 / Math.pow(more, 0.6));
-    pts.forEach((p, i) => {
-      const { ox, oz, taper } = p;
-      if (i % 2 === 0) {
-        leanQuat(ox, oz, 1.0 + r() * 0.4, (r() - 0.5) * 0.6);
-        const s = (0.88 + r() * 0.2) * taper;
-        addStrawberry(b, p.x, y0 + 0.098 * s, p.z, _q, s);
-        placed.push({ x: p.x, z: p.z, r: 0.1 * s });
-      } else {
-        const inward = 0.03 + r() * 0.03;
-        const x = p.x - ox * inward;
-        const z = p.z - oz * inward;
-        if (r() < 0.5) {
-          raspAt(x, z, y0, taper);
-          blueAt(x - ox * 0.11 + (r() - 0.5) * 0.04, z - oz * 0.11 + (r() - 0.5) * 0.04, y0, taper);
-        } else {
-          blueAt(x + oz * 0.04, z - ox * 0.04, y0, taper);
-          blueAt(x - oz * 0.05 - ox * 0.08, z + ox * 0.05 - oz * 0.08, y0, taper);
-          if (r() < 0.6) blueAt(x - ox * 0.02, z - oz * 0.02, y0 + 0.075, taper * 0.9);
-        }
-      }
-    });
-  }
+    addVol(part, p.vol);
+  });
+  if (pl.group && pl.blob) groundBlob(ctx, part, pl.group.x, pl.group.z, pl.blob + 0.12);
   part.add(b.berry, m);
   part.add(b.calyx, m);
   part.add(blue, m);
@@ -1385,109 +1489,51 @@ export function flowerTints(hex) {
 
 function buildFlowers(ctx, part) {
   const { m, lib, layout } = ctx;
-  const r = rng(hashString(`flower${m.shape}${m.R}${layout.zones.flores}`));
+  const pl = layout.plan.flores;
+  part.volumes = [];
+  if (!pl) return;
+  const r = rng(hashString(`flower${m.shape}${m.R}${pl.zone}`));
   const rose = new Batch(lib.geo.rose(), lib.mat.petal());
   const small = { cast: ctx.tier?.smallCastShadow !== false };
   const blossom = new Batch(lib.geo.blossom(), lib.mat.petal(), small);
   const centers = new Batch(lib.geo.pearl(), lib.mat.flowerCenter(), small);
   const leaves = new Batch(lib.geo.leaf(), lib.mat.leaf(), small);
-  const y0 = layout.topY;
-  const zone = layout.zones.flores;
-  const scale = Math.min(1.3, 0.74 + layout.rho * 0.42);
   const TINTS = flowerTints(layout.opt('flores').color);
-  const more = quantityOf(ctx, 'flores');
-
-  const roseAt = (x, z, s, tiltDir) => {
-    const tilt = 0.2 + r() * 0.2;
-    _y.set(tiltDir.x * Math.sin(tilt), Math.cos(tilt), tiltDir.z * Math.sin(tilt));
-    _x.set(1, 0, 0).applyAxisAngle(Y, r() * TAU);
-    frameQuat(_x, _y, _q);
-    rose.add(x, y0 + 0.005, z, _q, s * scale * 1.12, TINTS[Math.floor(r() * 4)], 0.18 * s * scale);
-    // duas ou três folhas saindo de baixo da rosa
-    const n = 2 + (r() < 0.5 ? 1 : 0);
-    const a0 = r() * TAU;
-    for (let i = 0; i < n; i++) {
-      const a = a0 + (i / n) * TAU + (r() - 0.5) * 0.7;
-      _x.set(Math.cos(a), 0.12, Math.sin(a));
+  const side = new THREE.Vector3();
+  pl.pieces.forEach((p) => {
+    if (p.side) {
+      // na lateral, cada flor "olha" para fora do bolo
+      side.set(p.ox, 0.35, p.oz).normalize();
+      if (p.t === 'leaf') {
+        _x.set(-p.oz, 0.5, p.ox);
+        frameQuat(_x, side, _q);
+        leaves.add(p.x, p.y, p.z, _q, p.L, '#dcefc8', 0.1);
+      } else {
+        _x.set(-p.oz, 0, p.ox);
+        frameQuat(_x, side, _q);
+        if (p.t === 'rose') rose.add(p.x, p.y, p.z, _q, p.K, TINTS[Math.floor(r() * 4)], 0.14);
+        else {
+          blossom.add(p.x, p.y, p.z, _q, p.k, TINTS[3 + Math.floor(r() * 2)], 0.08);
+          centers.add(p.x + p.ox * 0.016, p.y + 0.006, p.z + p.oz * 0.016, null, 0.015, null, 0.02);
+        }
+      }
+    } else if (p.t === 'rose') {
+      _y.set(p.tx * Math.sin(p.tilt), Math.cos(p.tilt), p.tz * Math.sin(p.tilt));
+      _x.set(1, 0, 0).applyAxisAngle(Y, r() * TAU);
+      frameQuat(_x, _y, _q);
+      rose.add(p.x, p.y + 0.005, p.z, _q, p.K, TINTS[Math.floor(r() * 4)], 0.17 * p.K);
+    } else if (p.t === 'blossom') {
+      _q.setFromEuler(new THREE.Euler((r() - 0.5) * 0.4, r() * TAU, (r() - 0.5) * 0.4));
+      blossom.add(p.x, p.y + 0.004, p.z, _q, p.k, r() < 0.5 ? '#ffffff' : TINTS[3 + Math.floor(r() * 2)], 0.075 * p.k);
+      centers.add(p.x, p.y + 0.016 * p.k, p.z, null, 0.014 * p.k, null, 0.02);
+    } else if (p.t === 'leaf') {
+      _x.set(Math.cos(p.a), 0.12, Math.sin(p.a));
       frameQuat(_x, Y, _q);
-      leaves.add(x + Math.cos(a) * 0.09 * s * scale, y0 + 0.004, z + Math.sin(a) * 0.09 * s * scale, _q, (0.9 + r() * 0.3) * scale, r() < 0.5 ? '#ffffff' : '#dcefc8', 0.12);
+      leaves.add(p.x, p.y, p.z, _q, p.L, p.tint ? '#ffffff' : '#dcefc8', 0.12);
     }
-  };
-  const blossomAt = (x, z, s) => {
-    _q.setFromEuler(new THREE.Euler((r() - 0.5) * 0.4, r() * TAU, (r() - 0.5) * 0.4));
-    const k = s * scale * (0.85 + r() * 0.3);
-    blossom.add(x, y0 + 0.004, z, _q, k, r() < 0.5 ? '#ffffff' : TINTS[3 + Math.floor(r() * 2)], 0.075 * k);
-    centers.add(x, y0 + 0.016 * k, z, null, 0.014 * k, null, 0.02);
-  };
-  const dir = { x: 0, z: 0 };
-
-  if (zone === 'scatter' || zone === 'cascade') {
-    // rosas e florzinhas espalhadas, ou em cascata pela lateral (cada flor "olha" para fora do bolo)
-    const side = new THREE.Vector3();
-    decorSpots(ctx, zone, { size: 0.11, count: 8, k: more, seed: 'flower' }).forEach((sp, i) => {
-      dir.x = sp.ox;
-      dir.z = sp.oz;
-      if (!sp.side) {
-        if (i % 2 === 0) roseAt(sp.x, sp.z, (0.66 + r() * 0.3) * sp.taper, dir);
-        else blossomAt(sp.x, sp.z, 0.95);
-        return;
-      }
-      side.set(sp.ox, 0.35, sp.oz).normalize();
-      _x.set(-sp.oz, 0, sp.ox);
-      frameQuat(_x, side, _q);
-      const sc = (0.6 + r() * 0.28) * sp.taper * scale;
-      if (i % 3 !== 1) rose.add(sp.x - sp.ox * 0.02, sp.y, sp.z - sp.oz * 0.02, _q, sc, TINTS[Math.floor(r() * 4)], 0.14);
-      else {
-        blossom.add(sp.x, sp.y, sp.z, _q, sc * 1.25, TINTS[3 + Math.floor(r() * 2)], 0.08);
-        centers.add(sp.x + sp.ox * 0.016, sp.y + 0.006, sp.z + sp.oz * 0.016, null, 0.015, null, 0.02);
-      }
-      _x.set(-sp.oz, 0.5, sp.ox);
-      frameQuat(_x, side, _q);
-      leaves.add(sp.x, sp.y - 0.02, sp.z, _q, 1.1 * scale, '#dcefc8', 0.1);
-    });
-  } else if (zone === 'center') {
-    const cx = m.center.x;
-    const cz = m.center.z;
-    // buquê: uma rosa maior no meio, outras em volta e florzinhas preenchendo
-    const room = layout.rho - layout.border;
-    const spread = Math.min(0.21 * scale, room * 0.5);
-    roseAt(cx - spread * 0.2, cz + spread * 0.1, 1.1, { x: 0, z: 0.4 });
-    const around = room > 0.62 ? 4 : room > 0.4 ? 3 : 2;
-    for (let i = 0; i < around; i++) {
-      const a = 0.9 + (i / around) * TAU + (r() - 0.5) * 0.4;
-      dir.x = Math.cos(a);
-      dir.z = Math.sin(a);
-      roseAt(cx + dir.x * spread * 1.18, cz + dir.z * spread * 1.18, 0.76 + r() * 0.14, dir);
-    }
-    groundBlob(ctx, part, cx, cz, Math.min(room, spread * 2.1));
-    const smalls = 5 + around * 2;
-    for (let i = 0; i < smalls; i++) {
-      const a = (i / smalls) * TAU + r() * 0.5;
-      const d = spread * (1.75 + r() * 0.55);
-      if (d < room - 0.07) blossomAt(cx + Math.cos(a) * d, cz + Math.sin(a) * d, 1);
-    }
-  } else {
-    // meia-lua de rosas (a maior no meio) com florzinhas nas pontas e entre elas
-    const k = layout.ringK - 0.03;
-    const arcZone = zone === 'crown' ? 'left' : zone;
-    const pts = arcPoints(m, arcZone, k, 0.3);
-    pts.forEach((p, i) => {
-      dir.x = p.ox;
-      dir.z = p.oz;
-      const ends = i === 0 || i === pts.length - 1;
-      if (ends && pts.length > 2) blossomAt(p.x, p.z, 0.9);
-      else roseAt(p.x - p.ox * 0.03, p.z - p.oz * 0.03, 0.72 + 0.36 * Math.sin(Math.PI * p.u), dir);
-    });
-    arcPoints(m, arcZone, Math.max(0.3, k - 0.2), 0.21).forEach((p, i) => {
-      if (i % 2 === 0) blossomAt(p.x, p.z, 0.8 + 0.2 * p.taper);
-    });
-    if (zone === 'crown') {
-      // contraponto discreto do outro lado
-      arcPoints(m, 'right', k, 0.24).forEach((p, i, all) => {
-        if (i > 0 && i < all.length - 1 && i % 2 === 1) blossomAt(p.x, p.z, 0.85);
-      });
-    }
-  }
+    addVol(part, p.vol);
+  });
+  if (pl.group && pl.blob) groundBlob(ctx, part, pl.group.x, pl.group.z, pl.blob);
   part.add(leaves, m);
   part.add(rose, m);
   part.add(blossom, m);
@@ -1498,38 +1544,64 @@ const CHOC_TINTS = ['#3b1e0f', '#4a2614', '#5e3219', '#6f3f22'];
 
 function buildShavings(ctx, part) {
   const { m, lib, layout } = ctx;
-  const r = rng(hashString(`shave${m.shape}${m.R}${layout.zones.raspas}`));
+  const pl = layout.plan.raspas;
+  part.volumes = [];
+  if (!pl || !pl.regions.length) return;
+  const r = rng(hashString(`shave${m.shape}${m.R}${pl.zone}`));
   const small = { cast: ctx.tier?.smallCastShadow !== false };
   const curls = new Batch(lib.geo.curl(), lib.mat.chocolate(), small);
   const shards = new Batch(lib.geo.shard(), lib.mat.chocolate(), small);
   const y0 = layout.topY;
-  const zone = layout.zones.raspas;
+  const regions = pl.regions;
+  // a lasca inteira (as duas pontas) tem de cair dentro da área reservada às raspas
+  const inside = (x, z, rad) => regions.some((g) => Math.hypot(x - g.x, z - g.z) + rad <= g.r);
+  const euler = new THREE.Euler();
   const put = (x, z, lift, s) => {
     const curl = r() < 0.42;
-    _q.setFromEuler(new THREE.Euler((r() - 0.5) * (curl ? 0.5 : 1.3), r() * TAU, (r() - 0.5) * (curl ? 0.5 : 1.3)));
     const k = s * (0.75 + r() * 0.5);
-    (curl ? curls : shards).add(x, y0 + lift, z, _q, curl ? [k, k, k] : [k * 1.2, k, k * 1.2], CHOC_TINTS[Math.floor(r() * CHOC_TINTS.length)], 0.07);
+    const yaw = r() * TAU;
+    euler.set((r() - 0.5) * (curl ? 0.5 : 1.0), yaw, (r() - 0.5) * (curl ? 0.5 : 1.0));
+    _q.setFromEuler(euler);
+    // meio comprimento da lasca e o eixo dela no plano
+    const half = (curl ? 0.095 : 0.066) * k;
+    const rad = (curl ? 0.036 : 0.03) * k;
+    const ax = Math.cos(yaw);
+    const az = -Math.sin(yaw);
+    const ex = ax * (half - rad);
+    const ez = az * (half - rad);
+    if (!inside(x + ex, z + ez, rad) || !inside(x - ex, z - ez, rad)) return false;
+    const tint = CHOC_TINTS[Math.floor(r() * CHOC_TINTS.length)];
+    (curl ? curls : shards).add(x, y0 + lift, z, _q, curl ? [k, k, k] : [k * 1.2, k, k * 1.2], tint, 0.07);
+    const yc = y0 + lift + (curl ? 0.031 * k : 0.012 * k);
+    addVol(part, [
+      [x + ex, yc, z + ez, rad, 'solid'],
+      [x, yc, z, rad, 'solid'],
+      [x - ex, yc, z - ez, rad, 'solid'],
+    ]);
+    return true;
   };
-  if (zone === 'center') {
-    const moundR = Math.min(0.48 * layout.rho, layout.rho - layout.border - 0.12);
-    const n = Math.round((26 + moundR * 70) * quantityOf(ctx, 'raspas'));
-    for (let i = 0; i < n; i++) {
-      const a = r() * TAU;
-      const d = Math.pow(r(), 0.75) * moundR;
-      const h = Math.max(0, 1 - (d / moundR) ** 2) * (0.07 + moundR * 0.16) * r();
-      put(m.center.x + Math.cos(a) * d, m.center.z + Math.sin(a) * d, h, 1);
+  const more = quantityOf(ctx, 'raspas');
+  regions.forEach((g) => {
+    if (g.mound) {
+      // montinho: mais alto no meio, rareando para a beira
+      const n = Math.round((26 + g.r * 70) * more);
+      for (let i = 0; i < n; i++) {
+        const a = r() * TAU;
+        const d = Math.pow(r(), 0.75) * Math.max(0, g.r - 0.05);
+        const h = Math.max(0, 1 - (d / g.r) ** 2) * Math.max(0, g.h - 0.075) * r();
+        put(g.x + Math.cos(a) * d, g.z + Math.sin(a) * d, h, 1);
+      }
+    } else {
+      // faixa junto à borda: lascas menores, deitadas
+      const n = Math.round(9 * more);
+      let got = 0;
+      for (let i = 0; i < n * 4 && got < n; i++) {
+        const a = r() * TAU;
+        const d = Math.sqrt(r()) * Math.max(0, g.r - 0.035);
+        if (put(g.x + Math.cos(a) * d, g.z + Math.sin(a) * d, r() * Math.max(0, g.h - 0.06), 0.62)) got++;
+      }
     }
-  } else {
-    const pts = arcPoints(m, zone, layout.ringK - 0.02, 0.036);
-    const pt2 = {};
-    pts.forEach((p) => {
-      const taper = zone === 'crown' ? 1 : Math.sin(Math.PI * p.u);
-      const inward = r() * 0.24 * (0.35 + 0.65 * taper) * layout.rho;
-      pt2.x = p.x - p.ox * inward + (r() - 0.5) * 0.03;
-      pt2.z = p.z - p.oz * inward + (r() - 0.5) * 0.03;
-      put(pt2.x, pt2.z, r() * 0.05 * taper, 0.9);
-    });
-  }
+  });
   part.add(curls, m);
   part.add(shards, m);
 }
@@ -1537,25 +1609,34 @@ function buildShavings(ctx, part) {
 const SPRINKLE_TINTS = ['#2e160a', '#3d1f0f', '#54301a', '#27120a'];
 const CONFETTI_TINTS = ['#ff8fb3', '#ffd166', '#7fdcb0', '#7cc4ff', '#b79cff', '#ffffff', '#ff8c6b', '#d96b82'];
 
-function scatter(ctx, part, { geometry, material, tints, perArea, perSide, flat, sideBand, seed, lift = 0, id = '' }) {
+function scatter(ctx, part, { geometry, material, tints, perArea, perSide, flat, sideBand, seed, lift = 0, id = '', rad = 0.026 }) {
   const { m, layout } = ctx;
   const more = id ? quantityOf(ctx, id) : 1;
   const r = rng(hashString(`${seed}${m.shape}${m.R}${m.n}`));
   const batch = new Batch(geometry, material, { cast: false, receive: true });
   const pt = {};
   const density = (ctx.tier?.density || 1) * more;
+  // volumes (só para o teste): um por confeito, tirados do lote na hora em que forem pedidos
+  Object.defineProperty(part, 'volumes', { configurable: true, get: () => batch.items.map((it) => ({ x: it.x, y: it.y + 0.01, z: it.z, r: rad * it.s[0], kind: 'coating' })) });
+  // confeito de cobertura: cai em todo o topo livre — nunca debaixo de uma peça, da escrita ou do bico
   const nTop = Math.round(topArea(m) * perArea * density);
   for (let i = 0; i < nTop; i++) {
-    randomTop(m, r, layout.border + 0.012, pt);
+    randomTop(m, r, layout.border + 0.012 + rad, pt);
     if (flat) _q.setFromEuler(new THREE.Euler((r() - 0.5) * 0.5, r() * TAU, (r() - 0.5) * 0.5));
     else _q.setFromEuler(new THREE.Euler((r() - 0.5) * 0.3, r() * TAU, (r() - 0.5) * 0.3));
-    batch.add(pt.x, layout.topY + lift, pt.z, _q, 0.85 + r() * 0.35, tints[Math.floor(r() * tints.length)], 0.03);
+    const sc = 0.85 + r() * 0.35;
+    const tint = tints[Math.floor(r() * tints.length)];
+    if (taken(layout, pt.x, layout.topY + lift + 0.01, pt.z, rad * sc)) continue;
+    batch.add(pt.x, layout.topY + lift, pt.z, _q, sc, tint, 0.03);
   }
   const normal = new THREE.Vector3();
   const tangent = new THREE.Vector3();
-  (m.stack || [m]).forEach((t) => {
-    if (t.naked || !perSide) return;
-    // na lateral de cada andar: mais concentrado embaixo, rareando para cima
+  const fenced = layout.has('wafer'); // atrás da cerca de chocolate a lateral não aparece
+  (m.stack || [m]).forEach((t, ti) => {
+    if (t.naked || !perSide || fenced) return;
+    // na lateral de cada andar: mais concentrado embaixo, rareando para cima — só na faixa livre
+    // (acima do bico da base, abaixo da calda e das guirlandas)
+    const band = layout.sides?.[ti];
     const side = offsetPath(t.frost, 0.002);
     const sideH = t.Ht - t.rf - 0.04;
     const nSide = Math.round(side.length * perSide * density);
@@ -1565,7 +1646,11 @@ function scatter(ctx, part, { geometry, material, tints, perArea, perSide, flat,
       normal.set(pt.nx, 0, pt.nz);
       tangent.set(pt.tx, 0, pt.tz).applyAxisAngle(normal, r() * TAU);
       frameQuat(tangent, normal, _q);
-      batch.add(pt.x, y, pt.z, _q, 0.85 + r() * 0.35, tints[Math.floor(r() * tints.length)], 0.03);
+      const sc = 0.85 + r() * 0.35;
+      const tint = tints[Math.floor(r() * tints.length)];
+      if (band && (y - rad * sc < band.lo || y + rad * sc > band.hi)) continue;
+      if (taken(layout, pt.x, y + 0.01, pt.z, rad * sc)) continue;
+      batch.add(pt.x, y, pt.z, _q, sc, tint, 0.03);
     }
   });
   part.add(batch, m);
@@ -1578,18 +1663,24 @@ function buildPearls(ctx, part) {
   const white = new Batch(lib.geo.pearl(), lib.mat.pearl(), { cast, receive: true });
   const gold = new Batch(lib.geo.pearl(), lib.mat.gold(), { cast, receive: true });
   const pt = {};
-  // colar de pérolas rente ao bico (ou à borda)
-  const ringPath = offsetPath(m.topFlat, -(layout.border + 0.022));
+  // volumes (só para o teste): um por pérola, tirados dos lotes na hora em que forem pedidos
+  Object.defineProperty(part, 'volumes', { configurable: true, get: () => [...white.items, ...gold.items].map((it) => ({ x: it.x, y: it.y, z: it.z, r: it.rad, kind: 'coating' })) });
+  // colar de pérolas rente ao bico (ou à borda): o distribuidor deixa essa faixa livre só para ele
+  const ringPath = cleanOffset(m.topFlat, -(layout.border + 0.024));
   const n = Math.max(12, Math.round(ringPath.length / 0.062));
   for (let i = 0; i < n; i++) {
     pathAt(ringPath, (i / n) * ringPath.length, pt);
     const big = i % 3 === 0;
     const rad = big ? 0.026 : 0.016;
-    (i % 6 === 3 ? gold : white).add(pt.x, layout.topY + rad * 0.82, pt.z, null, rad, null, rad);
+    const y = layout.topY + rad * 0.82;
+    if (taken(layout, pt.x, y, pt.z, rad)) continue;
+    (i % 6 === 3 ? gold : white).add(pt.x, y, pt.z, null, rad, null, rad);
   }
   const more = quantityOf(ctx, 'perolas');
-  (m.stack || [m]).forEach((t) => {
-    if (t.naked) return;
+  const fenced = layout.has('wafer');
+  (m.stack || [m]).forEach((t, ti) => {
+    if (t.naked || fenced) return;
+    const band = layout.sides?.[ti];
     const side = t.frost;
     const sideH = t.Ht - t.rf;
     const count = Math.round(side.length * 13 * (ctx.tier?.density || 1) * more);
@@ -1598,7 +1689,13 @@ function buildPearls(ctx, part) {
       const up = Math.pow(r(), 2.4);
       const rad = 0.012 + (1 - up) * 0.014 * r() + 0.004;
       const y = t.y0 + 0.02 + up * sideH * 0.7;
-      (r() < 0.2 ? gold : white).add(pt.x + pt.nx * rad * 0.55, y, pt.z + pt.nz * rad * 0.55, null, rad, null, rad);
+      const isGold = r() < 0.2;
+      const x = pt.x + pt.nx * rad * 0.55;
+      const z = pt.z + pt.nz * rad * 0.55;
+      // só na faixa livre da lateral (acima do bico da base, abaixo da calda e das guirlandas) e longe das peças
+      if (band && (y - rad < band.lo || y + rad > band.hi)) continue;
+      if (taken(layout, x, y, z, rad)) continue;
+      (isGold ? gold : white).add(x, y, z, null, rad, null, rad);
     }
   });
   part.add(white, m);
@@ -1607,82 +1704,106 @@ function buildPearls(ctx, part) {
 
 /** Respingo dourado (estilo de cobertura): salpicos de ouro comestível batidos com o pincel, mais juntos de um lado. */
 function buildSplatter(ctx, part) {
+  // Respingo dourado de verdade: tinta comestível batida com o pincel. Fica chapada na cobertura, em pingos de
+  // tamanhos MUITO diferentes (muitos pontinhos, poucos pingos grandes), alguns riscos em gota no sentido em
+  // que o pincel foi batido, mais juntos de um lado do bolo e rareando em volta.
   const { m, lib, layout } = ctx;
-  const batch = new Batch(lib.geo.fleck(), lib.mat.gold(), { cast: false, receive: true });
+  part.volumes = []; // tinta: fica chapada na cobertura, não ocupa volume (as peças assentam por cima dela)
+  const mat = lib.mat.goldPaint();
+  const batches = [0, 1, 2].map((kind) => new Batch(lib.geo.splat(kind), mat, { cast: false, receive: false }));
   const r = rng(hashString(`splat${m.shape}${m.R}`));
   const pt = {};
   const normal = new THREE.Vector3();
   const tangent = new THREE.Vector3();
   const density = ctx.tier?.density || 1;
-  const fleck = () => {
-    const big = r() < 0.12;
-    const sz = big ? 0.016 + r() * 0.014 : 0.005 + r() * 0.008;
-    return [sz * (0.8 + r() * 0.9), sz, sz];
+  // raio do pingo: de 0,7 mm a 6 mm, com a distribuição bem puxada para os pequenos
+  const radius = () => 0.0045 * Math.pow(12, Math.pow(r(), 3));
+  const place = (x, y, z, flick, side) => {
+    const kindRoll = r();
+    const rad = radius();
+    if (kindRoll < 0.1) {
+      // risco: gota comprida no sentido da batida
+      const len = rad * (2.2 + r() * 2.6);
+      _x.copy(tangent).applyAxisAngle(normal, flick + (r() - 0.5) * 0.5);
+      frameQuat(_x, normal, _q);
+      batches[2].add(x, y, z, _q, [len, rad * 0.5, rad * (0.55 + r() * 0.3)], null, 0.03);
+    } else {
+      _x.copy(tangent).applyAxisAngle(normal, r() * TAU);
+      frameQuat(_x, normal, _q);
+      batches[kindRoll < 0.6 ? 0 : 1].add(x, y, z, _q, [rad * (0.85 + r() * 0.4), rad * 0.5, rad * (0.75 + r() * 0.35)], null, 0.03);
+      // os pingos grandes espirram pontinhos em volta
+      if (rad > 0.03 && side) {
+        const extra = 2 + Math.floor(r() * 4);
+        for (let k = 0; k < extra; k++) {
+          const a = r() * TAU;
+          const d = rad * (1.5 + r() * 2.2);
+          const tiny = 0.005 + r() * 0.006;
+          _x.copy(tangent).applyAxisAngle(normal, a);
+          batches[0].add(x + _x.x * d, y + _x.y * d, z + _x.z * d, _q, [tiny, tiny * 0.5, tiny], null, 0.02);
+        }
+      }
+    }
   };
   (m.stack || [m]).forEach((t) => {
     if (t.style !== 'respingo' || t.naked) return;
-    const side = offsetPath(t.frost, 0.003);
+    const side = offsetPath(t.frost, 0.0025);
     const sideH = t.Ht - t.rf;
-    const n = Math.round(side.length * sideH * 62 * density);
+    const n = Math.round(side.length * sideH * 58 * density);
     const focus = r() * side.length; // o lado em que o pincel bateu mais
+    const flick = -0.9 + r() * 0.5; // sentido da batida (os riscos descem enviesados, todos mais ou menos iguais)
+    // manchas de batida: três ou quatro pontos onde a tinta se concentrou
+    const hits = Array.from({ length: 3 + Math.floor(r() * 2) }, () => ({ s: focus + (r() - 0.5) * side.length * 0.45, y: 0.15 + r() * 0.7 }));
     for (let i = 0; i < n; i++) {
-      const at = r() < 0.6 ? focus + (r() + r() + r() - 1.5) * side.length * 0.2 : r() * side.length;
+      let at;
+      let yk;
+      if (r() < 0.5) {
+        const hit = hits[Math.floor(r() * hits.length)];
+        at = hit.s + (r() + r() + r() - 1.5) * 0.55;
+        yk = hit.y + (r() + r() - 1) * 0.45;
+      } else {
+        at = r() * side.length;
+        yk = r();
+      }
+      yk = Math.max(0.04, Math.min(0.97, yk));
       pathAt(side, at, pt);
       normal.set(pt.nx, 0, pt.nz);
-      tangent.set(pt.tx, 0, pt.tz).applyAxisAngle(normal, r() * TAU);
-      frameQuat(tangent, normal, _q);
-      batch.add(pt.x, t.y0 + 0.03 + r() * (sideH - 0.05), pt.z, _q, fleck(), null, 0.03);
+      tangent.set(pt.tx, 0, pt.tz);
+      place(pt.x, t.y0 + 0.02 + yk * (sideH - 0.04), pt.z, flick, true);
     }
     if (t.isTop) {
-      for (let i = 0; i < n * 0.22; i++) {
-        randomTop(m, r, layout.border + 0.01, pt);
-        _q.setFromAxisAngle(Y, r() * TAU);
-        batch.add(pt.x, layout.topY + 0.001, pt.z, _q, fleck(), null, 0.03);
+      normal.copy(Y);
+      tangent.set(1, 0, 0);
+      for (let i = 0; i < n * 0.24; i++) {
+        randomTop(m, r, layout.border + 0.02, pt);
+        place(pt.x, layout.topY + 0.0012, pt.z, flick, false);
       }
     }
   });
-  part.add(batch, m);
+  batches.forEach((b) => b.items.length && part.add(b, m));
 }
 
 const CANDLE_COLORS = ['#f08fb0', '#f6c453', '#6fcfa8', '#6fb6f2', '#b497f0'];
 
 function buildCandles(ctx, part) {
-  const { config, m, lib, layout } = ctx;
-  const n = config.decor.candles;
-  // com plaquinha, velas um pouco mais baixas: as chamas não cobrem a mensagem
-  const h = layout.message ? 0.4 : 0.5;
-  const y0 = layout.topY - 0.03;
-  const spots = [];
-  const cx = m.center.x;
-  const cz = m.center.z;
-  const centerFree = !layout.message && !layout.has('topo') && !Object.values(layout.zones).includes('center');
-  if (centerFree) {
-    if (n === 1) spots.push([cx, cz]);
-    else {
-      const ringR = Math.min(layout.rho - layout.border - 0.1, Math.max(0.13, (n * 0.105) / TAU + 0.08));
-      for (let i = 0; i < n; i++) {
-        const a = Math.PI / 2 + ((i + 0.5) / n) * TAU;
-        spots.push([cx + Math.cos(a) * ringR, cz + Math.sin(a) * ringR]);
-      }
-    }
-  } else {
-    // centro ocupado: as velas formam um arco na frente
-    const k = Math.min(0.62, layout.ringK - 0.06);
-    const span = Math.min(2.5, 0.42 * (n - 1));
-    const pt = {};
-    for (let i = 0; i < n; i++) {
-      const a = Math.PI / 2 + (n === 1 ? 0 : (i / (n - 1) - 0.5) * span);
-      polarPoint(m, a, k, pt);
-      spots.push([pt.x, pt.z]);
-    }
-  }
+  const { m, lib, layout } = ctx;
+  const plan = layout.party.candles;
+  part.volumes = [];
+  if (!plan || !plan.spots.length) return;
+  // o distribuidor já escolheu os lugares: roda no meio, em volta do arranjo do centro ou em arco
+  const { h, y0, spots } = plan;
+  const n = spots.length;
   const wick = new Batch(lib.geo.wick(), lib.mat.wick(), { cast: false });
   const byColor = new Map();
   const r = rng(77 + n);
-  spots.forEach(([x, z], i) => {
+  let sx = 0;
+  let sz = 0;
+  spots.forEach((sp, i) => {
+    const { x, z } = sp;
+    sx += x / n;
+    sz += z / n;
     const hex = CANDLE_COLORS[i % CANDLE_COLORS.length];
     if (!byColor.has(hex)) byColor.set(hex, new Batch(lib.geo.candle(h), lib.mat.candle(hex)));
-    const lean = new THREE.Euler((r() - 0.5) * 0.07, r() * TAU, (r() - 0.5) * 0.07);
+    const lean = new THREE.Euler((r() - 0.5) * 0.05, r() * TAU, (r() - 0.5) * 0.05);
     _q.setFromEuler(lean);
     byColor.get(hex).add(x, y0, z, _q, 1, null, 0.04);
     _p.set(0, h + 0.004, 0).applyQuaternion(_q);
@@ -1697,29 +1818,11 @@ function buildCandles(ctx, part) {
     flame.scale.set(0.06, 0.125, 1);
     part.addObject(flame, m, 0.04);
     part.flames.push({ flame, glow, phase: r() * TAU, sx: 0.06, sy: 0.125 });
+    addVol(part, sp.vol);
   });
   byColor.forEach((b) => part.add(b, m));
   part.add(wick, m);
-  part.lightAt = new THREE.Vector3(cx, y0 + h + 0.12, cz + (centerFree ? 0 : layout.rho * 0.35));
-}
-
-function plaqueSize(text, rho) {
-  const lines = splitMessage(text);
-  const longest = Math.max(...lines.map((l) => l.length));
-  const w = Math.min(rho * 1.9, Math.max(0.58, 0.25 + longest * 0.097));
-  const h = lines.length > 1 ? 0.52 : 0.36;
-  return { w, h, lines };
-}
-
-function splitMessage(text) {
-  const t = text.trim();
-  if (t.length <= 14 || !t.includes(' ')) return [t];
-  // quebra no espaço mais próximo do meio
-  let best = -1;
-  for (let i = 0; i < t.length; i++) {
-    if (t[i] === ' ' && (best < 0 || Math.abs(i - t.length / 2) < Math.abs(best - t.length / 2))) best = i;
-  }
-  return [t.slice(0, best), t.slice(best + 1)];
+  part.lightAt = new THREE.Vector3(sx, y0 + h + 0.12, sz);
 }
 
 function plaqueTexture(lines, w, h, px = 384) {
@@ -1764,19 +1867,14 @@ function plaqueTexture(lines, w, h, px = 384) {
 
 /** Plaquinha com a mensagem (e as estrelas do topo de festa, quando houver, ao lado dela). */
 function buildMessageAndTopper(ctx, part) {
-  const { config, m, lib, layout } = ctx;
+  const { m, lib, layout } = ctx;
   const y0 = layout.topY;
-  const cx = m.center.x;
-  const text = layout.message;
-  const hasTopper = layout.has('topo');
-  let plaqueHalf = 0;
-  const backZ = m.center.z - Math.min(0.34, layout.rho * 0.36);
+  const plaque = layout.message ? layout.party.plaque : null;
+  part.volumes = [];
 
-  if (text) {
-    const { w, h, lines } = plaqueSize(text, layout.rho);
-    plaqueHalf = w / 2;
+  if (plaque) {
+    const { w, h, lines, lift } = plaque;
     const group = new THREE.Group();
-    const lift = 0.34;
     const shape = roundedRectShape(w, h, 0.05);
     const body = new THREE.ExtrudeGeometry(shape, { depth: 0.014, bevelEnabled: true, bevelThickness: 0.005, bevelSize: 0.005, bevelSegments: 2, curveSegments: 10 });
     body.translate(0, 0, -0.007);
@@ -1802,38 +1900,29 @@ function buildMessageAndTopper(ctx, part) {
     [-1, 1].forEach((sgn) => {
       const stick = new THREE.Mesh(lib.geo.stick(), lib.mat.stick());
       stick.scale.set(1, lift + h * 0.5 + 0.06, 1);
-      stick.position.set(sgn * w * 0.3, -0.06, -0.012);
+      // os palitos ficam onde o distribuidor reservou (num topo pequeno, mais juntos: nunca em cima do bico)
+      stick.position.set(sgn * plaque.stickX, -0.06, -0.012);
       stick.castShadow = true;
       group.add(stick);
     });
-    group.position.set(cx, y0, backZ);
+    group.position.set(plaque.x, y0, plaque.z);
     part.addObject(group, m, 0.14); // fica atrás do centro: só some se a fatia retirada chegar até ela
-    part.plaque = { x: cx, y: y0 + lift + h / 2, z: backZ, w, h }; // para a câmera encarar a plaquinha enquanto a pessoa digita
+    part.plaque = { x: plaque.x, y: y0 + lift + h / 2, z: plaque.z, w, h }; // para a câmera encarar a plaquinha enquanto a pessoa digita
     part.owned.push(body, faceGeo, faceMat, map);
+    addVol(part, plaque.vol);
   }
 
-  if (hasTopper) {
+  const starsPlan = layout.has('topo') ? layout.party.stars : [];
+  if (starsPlan.length) {
+    // as estrelas ladeiam a plaquinha, vão para as pontas do nome em acrílico ou, sozinhas, ficam no centro
     const stars = new Batch(lib.geo.starShape(), lib.mat.glitter());
     const sticks = new Batch(lib.geo.stick(), lib.mat.stick());
-    const k = Math.min(1.1, 0.7 + layout.rho * 0.35);
-    const set = text
-      ? [
-          [-(plaqueHalf + 0.11), 0.02, 0.64, 0.15, -0.2],
-          [plaqueHalf + 0.1, 0.0, 0.5, 0.115, 0.25],
-          [plaqueHalf + 0.2, 0.09, 0.3, 0.08, -0.15],
-        ]
-      : [
-          [0, 0, 0.78 * k, 0.2 * k, 0.05],
-          [-0.24 * k, 0.07, 0.52 * k, 0.13 * k, -0.3],
-          [0.23 * k, 0.06, 0.4 * k, 0.105 * k, 0.28],
-        ];
-    const limit = layout.rho - layout.border - 0.06;
-    set.forEach(([dx, dz, height, size, roll]) => {
-      const x = cx + Math.max(-limit, Math.min(limit, dx));
-      const z = (text ? backZ : m.center.z - layout.rho * 0.14) + dz;
-      _q.setFromEuler(new THREE.Euler(0, roll * 0.6, roll));
+    starsPlan.forEach(({ x, z, height, size, roll, vol }) => {
+      // gira só no plano da estrela (as pontas ficam onde o distribuidor reservou)
+      _q.setFromEuler(new THREE.Euler(0, 0, roll));
       stars.add(x, y0 + height, z, _q, [size, size, size * 0.5], null, 0.05);
       sticks.add(x, y0 - 0.05, z - 0.004, null, [1, height + 0.05 - size * 0.4, 1], null, 0.03);
+      addVol(part, vol);
     });
     part.add(sticks, m);
     part.add(stars, m);
@@ -1854,9 +1943,9 @@ export function buildDecor(id, ctx) {
   else if (id === 'velas') buildCandles(ctx, part);
   else if (id === 'toppers') buildMessageAndTopper(ctx, part);
   else if (id === 'granulado') {
-    scatter(ctx, part, { geometry: lib.geo.sprinkle(), material: lib.mat.sprinkle(), tints: SPRINKLE_TINTS, perArea: 135, perSide: 34, flat: true, sideBand: 2.2, seed: 'gran', id });
+    scatter(ctx, part, { geometry: lib.geo.sprinkle(), material: lib.mat.sprinkle(), tints: SPRINKLE_TINTS, perArea: 135, perSide: 34, flat: true, sideBand: 2.2, seed: 'gran', id, rad: 0.029 });
   } else if (id === 'confete') {
-    scatter(ctx, part, { geometry: lib.geo.confetti(), material: lib.mat.confetti(), tints: CONFETTI_TINTS, perArea: 78, perSide: 20, flat: true, sideBand: 1.3, seed: 'conf', id });
+    scatter(ctx, part, { geometry: lib.geo.confetti(), material: lib.mat.confetti(), tints: CONFETTI_TINTS, perArea: 78, perSide: 20, flat: true, sideBand: 1.3, seed: 'conf', id, rad: 0.022 });
   } else if (id === 'respingo') buildSplatter(ctx, part);
   return part;
 }
@@ -1865,14 +1954,31 @@ export function buildDecor(id, ctx) {
 export function decorHeight(config) {
   const items = config.decor.items;
   let h = config.piping.style !== 'liso' && (config.piping.where !== 'base' || config.piping.style === 'vintage') ? 0.11 : 0.02;
+  // o que o distribuidor colocou de verdade (frutas, rosas, raspas, velas clássicas, plaquinha, estrelas)
+  const planned = plannedHeights(config);
+  if (planned) return Math.max(h, planned.decor);
   if (items.includes('frutas')) h = Math.max(h, 0.3);
   if (items.includes('flores')) h = Math.max(h, 0.16);
   if (items.includes('raspas')) h = Math.max(h, 0.14);
   if (items.includes('velas')) h = Math.max(h, 0.66);
-  if (config.decor.message && config.decor.messageMode !== 'bico') h = Math.max(h, config.decor.message.length > 14 && config.decor.message.includes(' ') ? 0.94 : 0.78);
+  if (config.decor.message && config.decor.messageMode !== 'bico') h = Math.max(h, plaqueLiftOf(config) + (config.decor.message.length > 14 && config.decor.message.includes(' ') ? 0.6 : 0.44));
   if (items.includes('topo')) h = Math.max(h, 1.02);
   return h;
 }
 
+/**
+ * Alturas (acima do topo do bolo) do que o distribuidor colocou, por família: { decor, extra, party }.
+ * Usa o plano já calculado para a configuração; se ainda não houver, calcula.
+ */
+export function plannedHeights(config) {
+  try {
+    const found = plannedFor(config);
+    if (!found?.m) return null;
+    return (found.plan || decorLayout(config, found.m)).heights || null;
+  } catch {
+    return null;
+  }
+}
+
 // Peças e ajudantes que os outros módulos de decoração (decor2.js, party.js) reaproveitam.
-export { frameQuat, surface, paint, plain, segs, smooth, gomo, polarPoint, arcPoints, randomTop, topArea, newPart, groundBlob, leanQuat, roundedRectShape };
+export { frameQuat, surface, paint, plain, segs, smooth, gomo, polarPoint, arcPoints, randomTop, topArea, newPart, groundBlob, leanQuat, roundedRectShape, addVol, taken };

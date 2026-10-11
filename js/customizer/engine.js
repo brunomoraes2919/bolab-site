@@ -19,7 +19,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createTextureKit, paintFinish } from './textures.js';
-import { cakeMetrics, buildFrosting, buildSponge, buildFillingBand, buildTopCream, buildScrapeCoat, buildDrip, buildCutFaces, buildStand } from './geometry.js';
+import { cakeMetrics, buildFrosting, buildSponge, buildFillingBand, buildJamThread, buildTopCream, buildScrapeCoat, buildDrip, buildCutFaces, buildStand } from './geometry.js';
 import { createDecorLibrary, decorLayout, buildPiping, buildDecor, decorHeight, inWedge, newPart } from './decor.js';
 import { EXTRA_DECOR, extraDecorHeight } from './decor2.js';
 import { PARTY_DECOR, partyHeight } from './party.js';
@@ -91,7 +91,7 @@ const COVERING_LOOK = {
   glace: { roughness: 0.14, clearcoat: 1, clearcoatRoughness: 0.07, sheen: 0, normal: 'soft', normalScale: 0.05, topNormal: 'soft', topScale: 0.05, env: 1.1 },
   chocolate: { roughness: 0.4, clearcoat: 0.28, clearcoatRoughness: 0.32, sheen: 0, normal: 'streak', normalScale: 0.5, topNormal: 'swirl', topScale: 0.5, env: 1 },
   mousse: { roughness: 0.76, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.5, normal: 'pore', normalScale: 0.45, topNormal: 'pore', topScale: 0.45, env: 0.95 },
-  naked: { roughness: 0.74, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.6, normal: 'soft', normalScale: 0.45, topNormal: 'swirl', topScale: 0.35, env: 1 },
+  naked: { roughness: 0.78, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.6, normal: 'soft', normalScale: 0.7, topNormal: 'rustic', topScale: 1.7, env: 0.9 },
 };
 
 export function createCakeScene(canvas, { onContextLost, onContextRestored, onInteract, onFrame, insets, tier: forcedTier } = {}) {
@@ -208,7 +208,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       const top = new THREE.MeshPhysicalMaterial({ color: 0xffffff, sheenColor: 0xffffff, sheenRoughness: 0.55, ...clipped });
       const cut = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72, emissiveIntensity: 0.12 });
       cut.emissive = cut.color;
-      frostTiers[i] = { side, top, cut, scrape: null, canvas: null, map: null, mapKey: '', mapped: false };
+      frostTiers[i] = { side, top, cut, scrape: null, canvas: null, map: null, mapKey: '', mapped: false, topRustic: null };
     }
     return frostTiers[i];
   };
@@ -222,10 +222,11 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const f = frostOf(i);
     const t = m.stack[i] || m;
     const dense = Boolean(t.semi);
-    if (!f.scrape || f.scrape.userData.dense !== dense) {
+    const key = `${t.n}|${dense}`;
+    if (!f.scrape || f.scrape.userData.key !== key) {
       f.scrape?.dispose();
-      f.scrape = new THREE.MeshStandardMaterial({ color: 0xffffff, map: dense ? tex.scrapeDense() : tex.scrape(), transparent: true, roughness: 0.8, depthWrite: false, ...clipped });
-      f.scrape.userData.dense = dense;
+      f.scrape = new THREE.MeshStandardMaterial({ color: 0xffffff, map: tex.scrapeFilm(t.n, dense), transparent: true, roughness: 0.86, depthWrite: false, ...clipped });
+      f.scrape.userData.key = key;
     }
     displayColor(t.cover.color, f.scrape.color);
     return f.scrape;
@@ -238,8 +239,8 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     if (name === 'gold') return gold;
     if (!standMats[name]) {
       standMats[name] =
-        name === 'wood'
-          ? new THREE.MeshStandardMaterial({ map: tex.wood(), color: 0xe9ddd2, roughness: 0.7 })
+        name === 'wood' || name === 'plank'
+          ? new THREE.MeshStandardMaterial({ map: name === 'wood' ? tex.wood() : tex.plank(), roughness: 0.72 })
           : name === 'marble'
             ? new THREE.MeshPhysicalMaterial({ map: tex.marble(), roughness: tier.physical ? 0.2 : 0.14, clearcoat: coat(0.55), clearcoatRoughness: 0.15 })
             : name === 'silver'
@@ -260,7 +261,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   };
   const crustMat = (i) =>
     layerMat(crustMats, i, () => {
-      const mat = new THREE.MeshStandardMaterial({ map: tex.crust(), bumpMap: tex.crumbBump(), bumpScale: 1.4, roughness: 0.88, ...clipped });
+      const mat = new THREE.MeshStandardMaterial({ map: tex.crust(), bumpMap: tex.crustBump(), bumpScale: 3, roughness: 0.97, envMapIntensity: 0.2, ...clipped });
       mat.color.set(flavorOf(i).crust);
       return mat;
     });
@@ -271,7 +272,15 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       mat.color.set(flavorOf(i).crumb);
       return mat;
     });
-  const bandMat = (i) => layerMat(bandMats, i, () => new THREE.MeshPhysicalMaterial({ roughness: 0.5, ...clipped }));
+  const bandMat = (i) => layerMat(bandMats, i, () => new THREE.MeshPhysicalMaterial({ roughness: 0.8, envMapIntensity: 0.7, ...clipped }));
+  // geleia dos recheios de fruta: o fio escuro e brilhante junto ao creme (por fora, no naked, e no corte)
+  const jamMats = [];
+  const cutJamMats = [];
+  const jamMat = (i) => layerMat(jamMats, i, () => new THREE.MeshPhysicalMaterial({ roughness: tier.physical ? 0.22 : 0.14, clearcoat: coat(0.7), clearcoatRoughness: 0.15, ...clipped }));
+  const cutJamMat = (i) => layerMat(cutJamMats, i, () => new THREE.MeshStandardMaterial({ roughness: 0.3, vertexColors: true }));
+  let fruitMat = null;
+  const fruitPieces = () => (fruitMat ||= new THREE.MeshStandardMaterial({ map: tex.fruit(), alphaTest: 0.5, roughness: 0.5, side: THREE.DoubleSide }));
+  const fillingOf = (i) => getFilling(config.fillings[Math.min(i, config.fillings.length - 1)]);
   const cutFillMat = (i) =>
     layerMat(cutFillMats, i, () => {
       const mat = new THREE.MeshPhysicalMaterial({ roughness: 0.5, vertexColors: true, emissiveIntensity: 0.16 });
@@ -535,7 +544,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const round = m.shape === 'round';
     let sideMap = look.normal;
     let sideScale = look.normalScale;
-    let topMap = look.topNormal === 'swirl' && !round ? look.normal : look.topNormal;
+    let topMap = look.topNormal === 'swirl' && !round ? look.normal : look.topNormal; // (o naked usa as marcas de espátula)
     let topScale = look.topScale;
     if (t.style === 'rustico') {
       sideMap = topMap = 'rustic';
@@ -560,14 +569,26 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       mat.clearcoatRoughness = look.clearcoatRoughness;
       mat.sheen = tier.physical ? Math.max(0.002, look.sheen) : 0;
       mat.envMapIntensity = look.env;
-      const map = NORMALS[mapName] ? NORMALS[mapName]() : null;
+      let map = NORMALS[mapName] ? NORMALS[mapName]() : null;
+      if (map && isTop && mapName === 'rustic') {
+        // espatulado no topo: a mesma textura da lateral, mas com cópia própria — os golpes ficam do mesmo
+        // tamanho dos da lateral (o topo usa outra escala de UV) e atravessados, como quem alisa de lado a lado
+        if (!f.topRustic || f.topRustic.source !== map.source) {
+          f.topRustic?.dispose();
+          f.topRustic = map.clone();
+          f.topRustic.center.set(0.5, 0.5);
+          f.topRustic.rotation = 0.55;
+        }
+        f.topRustic.repeat.setScalar((2.9 * t.R) / 1.6);
+        map = f.topRustic;
+      }
       if (mat.normalMap !== map) {
         mat.normalMap = map;
         mat.needsUpdate = true;
       }
       mat.normalScale.setScalar(scale);
       // no topo, texturas que se repetem usam uma escala própria (a espiral cobre o topo inteiro)
-      if (map && isTop && mapName !== 'swirl') map.repeat.set(1, 1);
+      if (map && isTop && mapName !== 'swirl' && mapName !== 'rustic') map.repeat.set(1, 1);
     });
     f.cut.roughness = Math.max(0.45, look.roughness);
 
@@ -610,13 +631,19 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
         g.add(mesh(buildSponge(t, i), [mat, mat]));
       });
       // semi-naked: entre as camadas aparece o próprio creme da cobertura, não o recheio
-      t.fillY.forEach((_, i) => g.add(mesh(buildFillingBand(t, i), t.semi ? f.side : bandMat(i))));
-      g.add(mesh(buildTopCream(t), [f.side, f.top]));
-      t.layerY.forEach((_, i) => {
-        const coat = mesh(buildScrapeCoat(t, i), scrapeOf(ti), { cast: false });
-        coat.renderOrder = 2;
-        g.add(coat);
+      t.fillY.forEach((_, i) => {
+        g.add(mesh(buildFillingBand(t, i), t.semi ? f.side : bandMat(i)));
+        // recheio de fruta no naked: o fio de geleia aparece junto ao creme
+        if (!t.semi && fillingOf(i)?.cream) {
+          jamMat(i).color.set(fillingOf(i).color);
+          g.add(mesh(buildJamThread(t, i), jamMat(i), { cast: false }));
+        }
       });
+      g.add(mesh(buildTopCream(t), [f.side, f.top]));
+      // a raspada de creme: um véu só sobre a lateral inteira do andar
+      const veil = mesh(buildScrapeCoat(t), scrapeOf(ti), { cast: false });
+      veil.renderOrder = 2;
+      g.add(veil);
     });
   }
 
@@ -636,15 +663,19 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     });
     config.fillings.forEach((id, i) => {
       const f = getFilling(id);
+      // recheio é creme: fosco, com um brilho discreto só nos mais lisos (brigadeiro, doce de leite)
       [bandMat(i), cutFillMat(i)].forEach((mat) => {
-        mat.roughness = (0.72 - f.gloss * 0.5) * (tier.physical ? 1 : 1 - 0.3 * f.gloss);
-        mat.clearcoat = tier.physical ? Math.max(0.002, f.gloss * 0.7) : 0;
-        mat.clearcoatRoughness = 0.25;
+        mat.roughness = 0.86 - f.gloss * 0.3;
+        mat.clearcoat = tier.physical ? Math.max(0.002, f.gloss * 0.12) : 0;
+        mat.clearcoatRoughness = 0.5;
       });
+      // recheio de fruta: o que se vê é o creme; a geleia (a cor da fruta) é um fio junto dele
+      const body = f.cream || f.color;
+      if (f.cream) [jamMats[i], cutJamMats[i]].forEach((mat) => mat?.color.set(f.color));
       if (instant) {
-        bandMat(i).color.set(f.color);
-        cutFillMat(i).color.set(f.color);
-      } else tweenColor(`fill${i}`, [bandMat(i), cutFillMat(i)], f.color);
+        bandMat(i).color.set(body);
+        cutFillMat(i).color.set(body);
+      } else tweenColor(`fill${i}`, [bandMat(i), cutFillMat(i)], body);
     });
   }
 
@@ -672,6 +703,12 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       cutGroup.add(g);
       faces.sponge.forEach((geo, i) => geo && g.add(mesh(geo, crumbMat(i), opts)));
       faces.filling.forEach((geo, i) => geo && g.add(mesh(geo, cutFillMat(i), opts)));
+      faces.jam.forEach((geo, i) => {
+        if (!geo) return;
+        cutJamMat(i).color.set(fillingOf(i).color);
+        g.add(mesh(geo, cutJamMat(i), opts));
+      });
+      if (faces.pieces) g.add(mesh(faces.pieces, fruitPieces(), opts));
       if (faces.frost) g.add(mesh(faces.frost, frostOf(ti).cut, opts));
       if (faces.drip) g.add(mesh(faces.drip, cutDrip, opts));
     });
@@ -715,7 +752,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
           const t = (age - i * 0.03) / 0.34;
           f = t <= 0 ? 0 : t >= 1 ? 1 : backOut(t);
         }
-        const hidden = w && inWedge(o, w);
+        const hidden = w && !o.clipped && inWedge(o, w); // peça "clipped" é cortada pelos mesmos planos do bolo
         o.object.visible = !hidden && f > 0.001;
         if (!o.object.isSprite) o.object.scale.copy(o.scale).multiplyScalar(Math.max(f, 0.001));
       });
@@ -731,7 +768,8 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   }
 
   function buildContext() {
-    return { config, m, lib, layout, tier };
+    // clip = planos de corte do "ver por dentro", para as peças que são fatiadas junto com o bolo (a escrita)
+    return { config, m, lib, layout, tier, clip: clipped };
   }
 
   /** Lista das peças de decoração de uma configuração: id → chave (muda a chave, reconstrói). */
@@ -971,11 +1009,12 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     // o que muda a GEOMETRIA: formato, tamanho, andares, base; e, no corpo, camadas, altura e tipo/estilo de cada andar
     const styles = m.stack.map((t) => `${t.type}:${t.style}`).join();
     const kStand = `${config.shape}|${config.size}|${config.tiers}|${config.base}`;
-    const kBody = `${kStand}|${m.n}|${config.height}|${styles}`;
+    // (recheios de fruta ganham um fio de geleia por fora, no naked: trocar o recheio pode mudar a geometria)
+    const kBody = `${kStand}|${m.n}|${styles}|${m.naked || m.stack.some((t) => t.naked) ? config.fillings.map((id) => (getFilling(id)?.cream ? 1 : 0)).join('') : ''}`;
     const kDrip = `${kBody}|${config.drip.on}`;
     const kPipe = `${kDrip}|${config.piping.style}|${config.piping.where}|${config.decor.items.includes('wafer')}`;
     const kLayers = `${config.layers.join()}|${config.fillings.join()}`;
-    const sig = `${kPipe}|${[...config.decor.items].sort().join()}|${config.decor.message ? config.decor.messageMode : 0}|${JSON.stringify(config.decor.opts)}|${config.decor.candleStyle}`;
+    const sig = `${kPipe}|${[...config.decor.items].sort().join()}|${config.decor.message ? config.decor.messageMode : 0}|${JSON.stringify(config.decor.opts)}|${config.decor.candleStyle}|${layout.key || ''}`;
 
     const standChanged = kStand !== keys.stand;
     const bodyChanged = kBody !== keys.body;
@@ -1675,7 +1714,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     warmQueue.push(() => {
       const group = new THREE.Group();
       const geo = new THREE.PlaneGeometry(0.01, 0.01);
-      ['wood', 'marble', 'silver', 'goldfoil'].forEach((name) => group.add(new THREE.Mesh(geo, standMat(name))));
+      ['wood', 'plank', 'marble', 'silver', 'goldfoil'].forEach((name) => group.add(new THREE.Mesh(geo, standMat(name))));
       const done = () => geo.dispose();
       renderer.compileAsync(group, camera, scene).then(done, done);
     });
@@ -1819,7 +1858,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     plateShade.material.dispose();
     floor.material.dispose();
     contact.material.dispose();
-    [porcelain, gold, dripMat, cutDrip, ...Object.values(standMats), ...frostTiers.flatMap((f) => (f ? [f.side, f.top, f.cut, f.scrape, f.map] : [])), ...crustMats, ...crumbMats, ...bandMats, ...cutFillMats].forEach((mt) => mt?.dispose());
+    [porcelain, gold, dripMat, cutDrip, ...Object.values(standMats), ...frostTiers.flatMap((f) => (f ? [f.side, f.top, f.cut, f.scrape, f.map, f.topRustic] : [])), ...crustMats, ...crumbMats, ...bandMats, ...cutFillMats, ...jamMats, ...cutJamMats, fruitMat].forEach((mt) => mt?.dispose());
     lib.dispose();
     tex.dispose();
     envTarget?.dispose();
@@ -1878,6 +1917,22 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       },
       get pending() {
         return jobs.length;
+      },
+      /**
+       * Volumes ocupados por cada peça do bolo (para o teste de colisões): [{ id, volumes: [{ x, y, z, r }] }].
+       * Usa part.volumes quando a peça declara os seus; senão, deriva dos lotes (posição + raio ocupado de cada
+       * instância, com o centro meio raio acima do pé) e dos objetos avulsos.
+       */
+      volumes() {
+        const of = (id, part) => {
+          if (!part) return null;
+          if (Array.isArray(part.volumes)) return { id, volumes: part.volumes.map((v) => ({ x: v.x, y: v.y, z: v.z, r: v.r, kind: v.kind || '' })) };
+          const volumes = [];
+          part.batches.forEach((b) => b.items.forEach((it) => volumes.push({ x: it.x, y: it.y + it.rad * 0.5, z: it.z, r: it.rad, kind: '' })));
+          part.objects.forEach((o) => volumes.push({ x: o.object.position.x, y: o.object.position.y + o.rad * 0.5, z: o.object.position.z, r: o.rad, kind: 'objeto' }));
+          return { id, volumes };
+        };
+        return [of('bico', pipingPart), ...[...decorParts.entries()].map(([id, part]) => of(id, part))].filter(Boolean);
       },
     },
   };

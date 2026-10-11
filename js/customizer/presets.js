@@ -464,11 +464,8 @@ export function randomConfig(current) {
     palette = rnd(COLOR_PALETTES.filter((p) => Boolean(p.dark) === Boolean(recipe.dark) && !(recipe.light && p.id !== 'neutro' && p.id !== 'pastel')));
     if (!current || palette.cover !== current.covering?.color || recipe.finish !== current.covering?.style) break;
   }
-  const count = weighted([
-    [2, 3],
-    [3, 5],
-    [4, 1],
-  ]);
+  // a surpresa mantém a altura que a pessoa escolheu (= o número de camadas de massa)
+  const count = current?.layers?.length >= 2 ? current.layers.length : 3;
   const main = recipe.dark ? rnd(['chocolate', 'chocolate', 'baunilha', 'redvelvet']) : rnd(FLAVORS).id;
   const second = Math.random() < 0.3 ? rnd(FLAVORS).id : main;
   const layers = Array.from({ length: count }, (_, i) => (i % 2 ? second : main));
@@ -490,7 +487,7 @@ export function randomConfig(current) {
     ]),
     size: current?.size || 'p',
     tiers: current?.tiers || 1,
-    height: current?.height || 'padrao',
+    v: 3,
     base: current?.base || 'boleira',
     backdrop: current?.backdrop,
     layers,

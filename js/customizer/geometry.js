@@ -3,7 +3,8 @@
 // Unidades: 1 = 10 cm. O bolo apoia em y = 0 e cresce para cima.
 import * as THREE from 'three';
 import { rng } from './textures.js';
-import { getSize, getHeight, tierRadii } from '../data/customizer.js';
+import { getSize, getFilling, tierRadii, LAYER_CM, FILLING_CM, SINGLE_CM } from '../data/customizer.js';
+import { rng as seeded } from './textures.js';
 
 const TAU = Math.PI * 2;
 const smoothstep = (a, b, x) => {
@@ -316,20 +317,24 @@ const FROST = {
   glace: { t: 0.032, rf: 0.085, skirt: 0.016 },
   chocolate: { t: 0.048, rf: 0.05, lip: 0.005 },
   mousse: { t: 0.052, rf: 0.07 },
-  naked: { t: 0, rf: 0.024 },
+  naked: { t: 0, rf: 0.04 },
 };
 
 /**
  * Medidas de UM andar. layerY[i] = base da camada i · fillY[i] = base do recheio acima da camada i,
  * sempre a partir do pé do andar (y0 diz a que altura do bolo esse pé fica).
  */
+const NAKED_OUT = 0.028; // quanto o creme do topo (e o recheio estufado) passam da massa no bolo naked
+
 function tierMetrics(config, R, cover, y0, detail) {
   const type = cover.type;
   const semi = cover.style === 'seminaked' && type !== 'naked';
   const naked = type === 'naked' || semi;
   const n = config.layers.length;
-  const layerH = (n === 1 ? 0.5 : n === 2 ? 0.38 : n === 3 ? 0.31 : 0.275) * (getHeight(config.height)?.k || 1);
-  const fillH = 0.066;
+  // camadas finas de massa e recheio quase da mesma espessura (1 unidade = 10 cm): a altura vem do número de
+  // camadas. O bolo de 1 camada é o bolo simples, sem recheio: uma massa só, mais alta.
+  const layerH = (n === 1 ? SINGLE_CM : LAYER_CM) / 10;
+  const fillH = FILLING_CM / 10;
   const { t, rf, lip = 0, skirt = 0 } = naked ? FROST.naked : FROST[type] || FROST.buttercream;
   const layerY = [];
   const fillY = [];
@@ -343,20 +348,20 @@ function tierMetrics(config, R, cover, y0, detail) {
     }
   }
   const H = y;
-  const tTop = naked ? 0.058 : t + 0.006;
+  const tTop = naked ? 0.07 : t + 0.006; // naked: uma camada generosa de creme por cima
   const sponge = shapePath(config.shape, R, detail);
-  const frost = offsetPath(sponge, naked ? 0.014 : t); // superfície externa (cobertura ou borda do creme)
+  const frost = offsetPath(sponge, naked ? NAKED_OUT : t); // superfície externa (cobertura ou borda do creme)
   const isHeart = config.shape === 'heart';
   // no coração, o centro fica onde cabe o maior círculo (arranjos e velas ganham espaço)
   const center = { x: 0, z: isHeart ? 0.08 * R : 0 };
   const bounds = pathBounds(frost);
-  const topFlat = offsetPath(sponge, (naked ? 0.014 : t) - rf); // limite da área plana do topo
+  const topFlat = offsetPath(sponge, (naked ? NAKED_OUT : t) - rf); // limite da área plana do topo
   // menor distância do centro até a borda plana do topo: dá a escala das decorações
   let rMin = Infinity;
   for (let i = 0; i < topFlat.n; i++) rMin = Math.min(rMin, Math.hypot(topFlat.x[i] - center.x, topFlat.z[i] - center.z));
   // espatulado e riscado não deixam a coroinha lisa na borda
   const crown = cover.style === 'rustico' || cover.style === 'pente' ? 0 : lip;
-  return { R, type, naked, semi, style: cover.style || 'liso', cover, n, layerH, fillH, t, rf, lip: crown, skirt, detail, tTop, layerY, fillY, H, Ht: H + tTop, y0, sponge, frost, topFlat, center, bounds, rMin, shape: config.shape };
+  return { R, type, naked, semi, style: cover.style || 'liso', cover, n, fillIds: config.fillings.slice(), layerH, fillH, t, rf, lip: crown, skirt, detail, tTop, layerY, fillY, H, Ht: H + tTop, y0, sponge, frost, topFlat, center, bounds, rMin, shape: config.shape };
 }
 
 /**
@@ -511,72 +516,255 @@ export function buildFrosting(m) {
   return sweep(m.sponge, profile, { capTop: true, uRepeat, vScale: 1 / 1.6, capScale: 1 / (2.9 * m.R), center: m.center, wrap: true });
 }
 
-/** Uma camada de massa (bolo naked): bordas levemente arredondadas. */
+/* ───────── Bolo naked: discos de massa, recheio estufado, creme do topo e a raspada ─────────
+   Nada aqui é cilindro perfeito: cada disco tem a quina de cima arredondada (onde a massa cresceu e dourou),
+   um contorno de leve torto e fica um tico fora do prumo; o recheio é uma camada grossa de creme que estufa
+   entre os discos, com a beira irregular; o creme do topo é generoso e passa da borda. */
+
+/** Soma de ondas em volta do bolo: irregularidade suave e repetível. freqs = voltas por circunferência. */
+function waves(r, freqs) {
+  const ph = freqs.map(() => r() * TAU);
+  const total = freqs.reduce((a, _, i) => a + 1 / (i + 1), 0);
+  return (a) => freqs.reduce((sum, f, i) => sum + Math.sin(a * f + ph[i]) / (i + 1), 0) / total;
+}
+
+/** Deforma uma peça em volta do centro. f(ângulo, y, raio) → { k = escala radial, dy, dx, dz }. */
+function warp(geo, center, f) {
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i) - center.x;
+    const z = pos.getZ(i) - center.z;
+    const y = pos.getY(i);
+    const o = f(Math.atan2(z, x), y, Math.hypot(x, z));
+    pos.setXYZ(i, center.x + x * (o.k ?? 1) + (o.dx || 0), y + (o.dy || 0), center.z + z * (o.k ?? 1) + (o.dz || 0));
+  }
+  pos.needsUpdate = true;
+  return geo;
+}
+
+/** Refaz as normais de uma peça varrida depois de deformada (e costura a primeira coluna com a última). */
+function renormal(geo, cols, rows) {
+  geo.computeVertexNormals();
+  const nor = geo.attributes.normal;
+  for (let j = 0; j < rows; j++) {
+    const a = j;
+    const b = (cols - 1) * rows + j;
+    const x = nor.getX(a) + nor.getX(b);
+    const y = nor.getY(a) + nor.getY(b);
+    const z = nor.getZ(a) + nor.getZ(b);
+    const l = Math.hypot(x, y, z) || 1;
+    nor.setXYZ(a, x / l, y / l, z / l);
+    nor.setXYZ(b, x / l, y / l, z / l);
+  }
+  return geo;
+}
+
+const profileLength = (profile) => profile.reduce((sum, q, i) => (i ? sum + Math.hypot(q.d - profile[i - 1].d, q.y - profile[i - 1].y) : 0), 0);
+
+/**
+ * O "torto" de cada disco de massa do naked: tamanho um tico diferente, fora do prumo e contorno ondulado.
+ * Somado, nunca passa de ~2,3 mm — menos que a folga do creme do topo e da calda, que ficam sempre por fora.
+ */
+function spongeNoise(m, i) {
+  const r = seeded(m.n * 131 + i * 17 + Math.round(m.R * 100) + (m.index || 0) * 57);
+  const w = waves(r, [2, 3, 5, 9]);
+  const inv = 1 / Math.max(0.5, m.R);
+  const k0 = 1 + (r() - 0.5) * 0.012 * inv; // cada disco sai de um tamanho (1 mm de diferença)
+  const dx = (r() - 0.5) * 0.014; // e nunca fica bem no prumo
+  const dz = (r() - 0.5) * 0.014;
+  const amp = 0.009 * inv;
+  return (a) => ({ k: k0 + amp * w(a), dx, dz });
+}
+
+/** Um disco de massa do bolo naked: lateral assada, quina de cima arredondada, contorno de leve torto. */
 export function buildSponge(m, i) {
   const y0 = m.layerY[i];
   const y1 = y0 + m.layerH;
-  const b = 0.016;
+  const rt = Math.min(0.036, m.layerH * 0.2); // quina de cima: a massa cresce arredondada
+  const rb = 0.012; // quina de baixo: o canto da fôrma, quase vivo
   const profile = [
-    { d: -b, y: y0, nd: 0.5, ny: -0.86 },
-    { d: -0.003, y: y0 + b * 0.6, nd: 0.9, ny: -0.4 },
-    { d: 0, y: y0 + b * 1.4, nd: 1, ny: 0 },
-    { d: 0, y: y1 - b * 1.4, nd: 1, ny: 0 },
-    { d: -0.003, y: y1 - b * 0.6, nd: 0.9, ny: 0.4 },
-    { d: -b, y: y1, nd: 0.5, ny: 0.86 },
+    { d: -rb, y: y0, nd: 0.4, ny: -0.92 },
+    { d: -rb * 0.3, y: y0 + rb * 0.35, nd: 0.82, ny: -0.57 },
+    { d: 0, y: y0 + rb, nd: 1, ny: 0 },
+    { d: 0.0025, y: (y0 + y1) / 2, nd: 1, ny: 0 }, // leve barriga no meio
   ];
-  const uRepeat = Math.max(2, Math.round(m.sponge.length / 1.2));
-  return sweep(m.sponge, profile, { capTop: true, uRepeat, vScale: 1 / m.layerH, capScale: 1 / 0.6, center: m.center });
-}
-
-/** Faixa de recheio aparente entre duas camadas (bolo naked): levemente estufada. */
-export function buildFillingBand(m, i) {
-  const y0 = m.fillY[i] - 0.004;
-  const y1 = m.fillY[i] + m.fillH + 0.004;
-  const mid = (y0 + y1) / 2;
-  const half = (y1 - y0) / 2;
-  const bulge = 0.02;
-  const profile = [];
-  for (let k = 0; k <= 8; k++) {
-    const a = -Math.PI / 2 + (k / 8) * Math.PI;
-    profile.push({ d: -0.016 + bulge * Math.cos(a), y: mid + half * Math.sin(a), nd: Math.cos(a) * half, ny: Math.sin(a) * bulge });
+  const steps = m.detail < 1 ? 4 : 6;
+  for (let k = 0; k <= steps; k++) {
+    const a = (k / steps) * (Math.PI / 2);
+    profile.push({ d: -rt + rt * Math.cos(a), y: y1 - rt + rt * Math.sin(a), nd: Math.cos(a), ny: Math.sin(a) });
   }
-  // no semi-naked a faixa é feita do próprio creme da cobertura (mesmo material, mesmo conjunto de UV)
-  return sweep(m.sponge, profile, { uRepeat: 1, wrap: Boolean(m.semi) });
+  // a textura da casca é uma tira 4 × 1: quatro alturas de camada por volta de textura (os poros ficam redondos)
+  const uRepeat = Math.max(2, Math.round(m.sponge.length / (m.layerH * 4)));
+  const geo = sweep(m.sponge, profile, { capTop: true, uRepeat, vScale: 1 / profileLength(profile), capScale: 1 / 0.6, center: m.center });
+  if (m.semi) return geo; // no semi-naked a espátula deixa a lateral no prumo
+  return warp(geo, m.center, spongeNoise(m, i));
 }
 
-/** Creme do topo do bolo naked: disco macio com borda arredondada. */
+/**
+ * Recheio aparente entre dois discos (bolo naked): camada grossa de creme, fosca, que estufa um pouco para
+ * fora, com a beira irregular (aqui escapou mais, ali menos) e um resto de creme subindo e descendo nas massas.
+ * No semi-naked fica rente (a espátula raspou) e é do creme da cobertura.
+ */
+const BAND_BULGE = 0.012; // o creme fica quase rente à massa (a espátula passou em volta): escapa 1 mm, em média
+function bandNoise(m, i) {
+  const r = seeded(m.n * 71 + i * 29 + Math.round(m.R * 100) + (m.index || 0) * 13);
+  const swell = waves(r, [2, 3, 5, 8]); // trechos em que o creme escapou mais, outros em que ficou para dentro
+  const lump = waves(r, [13, 23, 37, 59]); // o ondulado miúdo de creme apertado
+  const creep = waves(r, [5, 11, 19]);
+  const inv = 1 / Math.max(0.5, m.R);
+  return { creep, out: (a) => inv * (0.01 * swell(a) + 0.003 * lump(a)) };
+}
+
+export function buildFillingBand(m, i) {
+  const y0 = m.fillY[i];
+  const y1 = y0 + m.fillH;
+  const mid = (y0 + y1) / 2;
+  const half = (y1 - y0) / 2 + 0.005;
+  const bulge = m.semi ? 0.004 : BAND_BULGE;
+  const steps = m.detail < 1 ? 7 : 10;
+  const profile = [{ d: -0.03, y: y0 - 0.004, nd: 0, ny: -1 }];
+  for (let k = 0; k <= steps; k++) {
+    const a = -Math.PI / 2 + (k / steps) * Math.PI;
+    const c = Math.pow(Math.max(0, Math.cos(a)), 0.3); // face quase reta, só a quina arredonda junto das massas
+    profile.push({ d: -0.008 + (bulge + 0.008) * c, y: mid + half * Math.sin(a), nd: Math.max(0.2, c), ny: Math.sin(a) * 0.7 });
+  }
+  profile.push({ d: -0.03, y: y1 + 0.004, nd: 0, ny: 1 });
+  // no semi-naked a faixa é feita do próprio creme da cobertura (mesmo material, mesmo conjunto de UV)
+  const geo = sweep(m.sponge, profile, { uRepeat: 1, wrap: Boolean(m.semi) });
+  if (m.semi) return geo;
+  const { creep, out } = bandNoise(m, i);
+  const inv = 1 / Math.max(0.5, m.R);
+  warp(geo, m.center, (a, y) => {
+    const side = (y - mid) / half; // −1 embaixo, +1 em cima
+    const edge = Math.pow(Math.min(1, Math.abs(side)), 3); // 0 no meio da faixa, 1 no encontro com a massa
+    // o creme cede com o peso: a barriga fica um pouco abaixo do meio e a beira de baixo desce sobre a massa
+    const sag = side < 0 ? -edge * (0.004 + 0.012 * Math.max(0, creep(a))) : edge * 0.006 * (0.3 + 0.7 * creep(a + 1.7));
+    return { k: 1 + out(a) * (1 - edge * 0.6) - inv * 0.003 * side * (1 - edge), dy: sag };
+  });
+  return renormal(geo, m.sponge.n + 1, profile.length);
+}
+
+/** Fio de geleia junto ao creme (recheios de fruta no bolo naked): fino, escuro e brilhante, sobre a massa de baixo. */
+export function buildJamThread(m, i) {
+  const y = m.fillY[i] + 0.016;
+  const rad = 0.011;
+  const profile = [];
+  for (let k = 0; k <= 6; k++) {
+    const a = -Math.PI / 2 + (k / 6) * Math.PI;
+    profile.push({ d: 0.012 + rad * Math.cos(a), y: y + rad * 0.8 * Math.sin(a), nd: Math.cos(a), ny: Math.sin(a) });
+  }
+  const geo = sweep(m.sponge, profile, { uRepeat: 1 });
+  const r = seeded(m.n * 53 + i * 31 + Math.round(m.R * 100));
+  const wob = waves(r, [5, 9, 17, 29]);
+  const amp = 0.01 / Math.max(0.5, m.R);
+  // a geleia escorre aqui e some ali: o fio engrossa, afina e às vezes entra no creme
+  return warp(geo, m.center, (a) => ({ k: 1 + amp * wob(a) - (wob(a * 1.3 + 2) > 0.45 ? amp * 2.2 : 0), dy: 0.004 * wob(a + 1) }));
+}
+
+/**
+ * Creme do topo do bolo naked: uma camada generosa, com volume, que passa da borda e pende um pouco —
+ * mais aqui, menos ali — sobre o disco de cima. As marcas de espátula vêm do relevo do material.
+ */
+const TOP_LIP = 0.03; // quanto a beira do creme do topo desce abaixo do alto da massa (antes da irregularidade)
+function creamNoise(m) {
+  const r = seeded(m.n * 37 + Math.round(m.R * 100) + (m.index || 0) * 91);
+  const droop = waves(r, [3, 5, 8, 13]);
+  const amp = 0.016 / Math.max(0.5, m.R);
+  return {
+    droop,
+    amp,
+    side: (a) => amp * 0.85 * droop(a * 1.7 + 4), // a lateral do creme ondula (foi alisada à mão)
+    hang: (a) => {
+      const d = 0.5 + 0.5 * droop(a);
+      return 0.006 + 0.075 * d * d * d; // a beira pende sobre o disco de cima: aqui um dedo de creme, ali quase nada
+    },
+  };
+}
+
 export function buildTopCream(m) {
   const rr = m.rf;
-  const out = 0.014;
-  const y0 = m.H - 0.004;
+  const out = NAKED_OUT + 0.002;
+  const lip = TOP_LIP;
   const y1 = m.Ht;
-  const profile = [];
-  for (let k = 0; k <= 5; k++) {
-    const a = -Math.PI / 2 + (k / 5) * (Math.PI / 2);
-    profile.push({ d: out - rr + rr * Math.cos(a), y: y0 + rr + rr * Math.sin(a), nd: Math.cos(a), ny: Math.sin(a) });
+  const profile = [
+    { d: -0.03, y: m.H + 0.004, nd: 0, ny: -1 }, // por baixo, escondido sobre a massa
+    { d: out - 0.02, y: m.H - lip * 0.5, nd: -0.25, ny: -0.97 },
+    { d: out - 0.006, y: m.H - lip, nd: 0.45, ny: -0.9 }, // a beira que passou da borda
+    { d: out, y: m.H - lip * 0.4, nd: 1, ny: -0.25 },
+  ];
+  // a borda é de creme mole, não de tampa: arredonda desde baixo (curva mais alta que larga), sem parede reta
+  const rv = Math.min(m.tTop - 0.014, rr * 1.6);
+  profile.push({ d: out, y: y1 - rv, nd: 1, ny: 0 });
+  const steps = m.detail < 1 ? 5 : 7;
+  for (let k = 1; k <= steps; k++) {
+    const a = (k / steps) * (Math.PI / 2);
+    profile.push({ d: out - rr + rr * Math.cos(a), y: y1 - rv + rv * Math.sin(a), nd: Math.cos(a) * rv, ny: Math.sin(a) * rr });
   }
-  filletUp(profile, out, y1, rr, 6);
-  return sweep(m.sponge, profile, { capTop: true, uRepeat: Math.max(2, Math.round(m.sponge.length / 1.6)), vScale: 1 / 1.6, capScale: 1 / (2.9 * m.R), center: m.center, wrap: true });
+  const geo = sweep(m.sponge, profile, { capTop: true, uRepeat: Math.max(2, Math.round(m.sponge.length / 1.6)), vScale: 1 / 1.6, capScale: 1 / (2.9 * m.R), center: m.center, wrap: true });
+  const noise = creamNoise(m);
+  const yEdge = m.H + 0.01;
+  warp(geo, m.center, (a, y) => {
+    const side = noise.side(a) * Math.min(1, Math.max(0, (y1 - y) / 0.03));
+    if (y > yEdge) return { k: 1 + side };
+    const w = Math.min(1, (yEdge - y) / (lip + 0.01));
+    return { k: 1 + side + noise.amp * noise.droop(a + 2) * w, dy: -w * noise.hang(a) };
+  });
+  return renormal(geo, m.sponge.n + 1, profile.length);
 }
 
-/** Véu fino de creme raspado sobre a lateral do bolo naked. */
-export function buildScrapeCoat(m, i) {
-  // um véu por camada: a textura sabe onde ficam as emendas (mais creme) e o meio (massa à mostra)
-  const y0 = m.layerY[i] + (i === 0 ? 0.004 : -0.002);
-  const y1 = m.layerY[i] + m.layerH + 0.002;
-  const profile = [
-    { d: 0.005, y: y0, nd: 1, ny: 0 },
-    { d: 0.005, y: y1, nd: 1, ny: 0 },
-  ];
-  return sweep(m.sponge, profile, { uRepeat: Math.max(2, Math.round(m.sponge.length / 1.6)), vScale: 1 / (y1 - y0) });
+/**
+ * Véu de creme raspado sobre a lateral inteira de um andar naked (a textura decide onde há creme):
+ * restos junto dos recheios no naked; uma película desigual, com a massa aparecendo em manchas, no semi-naked.
+ */
+export function buildScrapeCoat(m) {
+  const y0 = 0.004;
+  const y1 = m.H - 0.002;
+  const uRepeat = Math.max(2, Math.round(m.sponge.length / 1.6));
+  if (m.semi) {
+    // semi-naked: lateral no prumo, película rente por fora das faixas de creme
+    const d = 0.0085;
+    return sweep(m.sponge, [{ d, y: y0, nd: 1, ny: 0 }, { d, y: y1, nd: 1, ny: 0 }], { uRepeat, vScale: 1 / (y1 - y0) });
+  }
+  // naked: o véu acompanha o torto de cada disco, colado na massa (0,4 mm por fora), inclusive nas quinas de cima
+  // e de baixo — é ali, junto do recheio, que fica mais creme. Quatro linhas por disco; sobre o recheio é invisível.
+  const d = 0.004;
+  const rt = Math.min(0.036, m.layerH * 0.2);
+  const profile = [];
+  const rowDisc = [];
+  m.layerY.forEach((ly, i) => {
+    const top = ly + m.layerH;
+    profile.push(
+      { d: -0.002, y: Math.max(y0, ly + 0.003), nd: 0.8, ny: -0.6 },
+      { d, y: ly + 0.014, nd: 1, ny: 0 },
+      { d, y: top - rt * 0.72, nd: 1, ny: 0 },
+      { d: d - rt * 0.45, y: Math.min(y1, top - rt * 0.17), nd: 0.6, ny: 0.8 },
+    );
+    rowDisc.push(i, i, i, i);
+  });
+  const geo = sweep(m.sponge, profile, { uRepeat, vScale: 1 });
+  // v da textura = altura dentro do andar (a textura sabe onde ficam discos e recheios)
+  const uv = geo.attributes.uv;
+  const pos = geo.attributes.position;
+  for (let k = 0; k < uv.count; k++) uv.setY(k, (pos.getY(k) - y0) / (y1 - y0));
+  const noise = m.layerY.map((_, i) => spongeNoise(m, i));
+  const rows = profile.length;
+  let k = 0;
+  warp(geo, m.center, (a) => noise[rowDisc[k++ % rows]](a));
+  return geo;
 }
 
 /* ───────── Calda escorrendo ─────────
    Um lençol de espessura variável sobre o topo e a lateral: onde há calda ele fica para fora;
    onde não há, mergulha para dentro da cobertura e some. As gotas se fundem à borda como líquido. */
 const HIDDEN = -0.006; // calda mais de 0,6 mm para dentro da cobertura: não se vê
+
+/** Até onde a gota mais comprida da calda desce na lateral de um andar, medido do começo da quina do topo (m.Ht − m.rf). */
+export function dripReach(m) {
+  return Math.min((m.Ht - m.rf) * 0.74, 0.66);
+}
+
 export function buildDrip(m, seed = 1) {
-  const d0 = m.naked ? 0.014 : m.t;
+  const d0 = m.naked ? NAKED_OUT + 0.002 : m.t; // no naked a calda assenta no creme do topo
   const rf = m.rf;
   const yTop = m.Ht;
   const sideH = yTop - rf;
@@ -589,7 +777,7 @@ export function buildDrip(m, seed = 1) {
   const L = col.length;
 
   // sorteio das gotas: a maioria curta, algumas longas — como calda de verdade
-  const maxLen = Math.min(sideH * 0.74, 0.66);
+  const maxLen = dripReach(m);
   const drips = [];
   let s = r() * 0.1;
   while (s < L - 0.07) {
@@ -616,6 +804,9 @@ export function buildDrip(m, seed = 1) {
     const h = Math.max(K - Math.abs(a - b), 0) / K;
     return Math.min(a, b) - h * h * K * 0.25;
   };
+  // onde não há calda o lençol mergulha até sumir. No naked ele parte de 3 mm fora da massa (assenta no creme do
+  // topo), então precisa mergulhar mais: até 3 mm para dentro da massa, que é torta e recua aqui e ali.
+  const floor = m.naked ? -(d0 + 0.03) : -0.03;
   const thickness = (sx, v, near) => {
     let sd = v - lipAt(sx);
     let bulb = 0;
@@ -630,7 +821,7 @@ export function buildDrip(m, seed = 1) {
       const g = Math.exp(-((v - end) ** 2 + dsx * dsx) / (2 * (dr.w * 0.9) ** 2));
       if (g > bulb) bulb = g;
     }
-    if (sd >= 0) return Math.max(-0.03, -1.3 * sd);
+    if (sd >= 0) return Math.max(floor, -1.3 * sd);
     return (0.017 + 0.019 * bulb) * Math.sin((Math.PI / 2) * Math.min(1, -sd / 0.028));
   };
 
@@ -670,8 +861,8 @@ export function buildDrip(m, seed = 1) {
   const centerIndex = k;
   pos.set([m.center.x, yTop + t0, m.center.z], k * 3);
   const index = [];
-  // no naked a calda fica sobre o creme raspado (meio transparente): só some o que entra na massa
-  const hidden = m.naked ? -(d0 + 0.002) : HIDDEN;
+  // no naked só some o que entrou bem na massa (ela recua até uns 2,3 mm; o véu de creme é meio transparente)
+  const hidden = m.naked ? -(d0 + 0.026) : HIDDEN;
   for (let i = 0; i < cols; i++) {
     for (let j = 0; j < rows - 1; j++) {
       const a = i * rows + j;
@@ -834,6 +1025,8 @@ function merge(list) {
 export function buildCutFaces(m, { thetaA, thetaB, drip = false, seed = 1 }) {
   const sponge = m.layerY.map(() => []);
   const filling = m.fillY.map(() => []);
+  const jam = m.fillY.map(() => []); // recheios de fruta: a geleia espalhada sobre a massa de baixo
+  const bits = { pos: [], nor: [], uv: [], idx: [] }; // pedaços de fruta à mostra (quadradinhos com a foto da fatia)
   const frost = [];
   const dripGeo = [];
   const UV = 1 / 0.62;
@@ -871,20 +1064,60 @@ export function buildCutFaces(m, { thetaA, thetaB, drip = false, seed = 1 }) {
     m.fillY.forEach((y0, i) => {
       const y1 = y0 + m.fillH;
       const segs = 22;
-      const rEnd = rs + (m.naked ? 0.008 : 0);
+      // no naked o recheio aparece por fora: a face do corte vai até onde a faixa de creme chega neste ângulo
+      const rEnd = m.semi ? rs + 0.004 : m.naked ? (rs + BAND_BULGE) * (1 + bandNoise(m, i).out(theta)) - 0.001 : rs;
+      const fruit = getFilling(m.fillIds?.[i]);
       const top = [];
       const bottom = [];
       const ph1 = wob() * TAU;
       const ph2 = wob() * TAU;
       for (let k = 0; k <= segs; k++) {
         const rr = (k / segs) * rEnd;
-        const w1 = Math.sin(rr * 9 + ph1) * 0.006 + Math.sin(rr * 23 + ph2) * 0.003;
-        const w2 = Math.sin(rr * 11 + ph2) * 0.006 + Math.sin(rr * 19 + ph1) * 0.003;
+        // linhas quase retas, como num bolo bem montado: só um tremidinho de mão
+        const w1 = Math.sin(rr * 9 + ph1) * 0.0022 + Math.sin(rr * 23 + ph2) * 0.0012;
+        const w2 = Math.sin(rr * 11 + ph2) * 0.0022 + Math.sin(rr * 19 + ph1) * 0.0012;
         // o recheio "abraça" a massa: avança um pouco para cima e para baixo
         top.push([rr, y1 + 0.006 + w1, 1]);
         bottom.push([rr, y0 - 0.006 + w2, 0.92]);
       }
       filling[i].push(polyGeometry([...bottom, ...top.reverse()], basis, { uvScale: UV, lift: 0.0012 }));
+      if (fruit?.cream) {
+        // geleia: uma fita fina e irregular sobre a massa de baixo, que some antes da borda
+        const jt = [];
+        const jb = [];
+        const r1 = rs - 0.03;
+        for (let k = 0; k <= segs; k++) {
+          const rr = 0.01 + (k / segs) * (r1 - 0.01);
+          const thick = 0.016 + 0.009 * Math.sin(rr * 14 + ph1) + 0.005 * Math.sin(rr * 37 + ph2);
+          jb.push([rr, y0 - 0.004, 0.9]);
+          jt.push([rr, y0 + Math.max(0.006, thick) * Math.min(1, (r1 - rr) / 0.05 + 0.25), 1]);
+        }
+        jam[i].push(polyGeometry([...jb, ...jt.reverse()], basis, { uvScale: UV, lift: 0.0018 }));
+        // pedaços da fruta mergulhados no creme: fatias de morango de pé, ou framboesas
+        const cell = fruit.pieces === 'framboesa' ? 0.5 : 0;
+        const hh = Math.min(0.13, m.fillH * (fruit.pieces === 'framboesa' ? 0.62 : 0.84));
+        let rr = 0.1 + wob() * 0.1;
+        while (rr < rs - 0.1) {
+          const ww = hh * (fruit.pieces === 'framboesa' ? 1.05 : 0.86 + wob() * 0.2);
+          const yc = y0 + m.fillH * (0.54 + (wob() - 0.5) * 0.12);
+          const tilt = (wob() - 0.5) * 0.5;
+          const flipU = wob() < 0.5;
+          const base = bits.pos.length / 3;
+          [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([sx, sy]) => {
+            // canto do quadradinho, girado de leve no plano do corte
+            const lx = (sx * ww) / 2;
+            const ly = (sy * hh) / 2;
+            const px = rr + lx * Math.cos(tilt) - ly * Math.sin(tilt);
+            const py = yc + lx * Math.sin(tilt) + ly * Math.cos(tilt);
+            bits.pos.push(basis.ox + basis.ux * px + basis.nx * 0.0026, py, basis.oz + basis.uz * px + basis.nz * 0.0026);
+            bits.nor.push(basis.nx, 0, basis.nz);
+            bits.uv.push(cell + ((flipU ? -sx : sx) * 0.5 + 0.5) * 0.5, sy * 0.5 + 0.5);
+          });
+          if (basis.winding > 0) bits.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+          else bits.idx.push(base, base + 2, base + 1, base, base + 3, base + 2);
+          rr += ww * (1.25 + wob() * 0.9);
+        }
+      }
     });
 
     if (!m.naked) {
@@ -900,16 +1133,26 @@ export function buildCutFaces(m, { thetaA, thetaB, drip = false, seed = 1 }) {
       pts.push([0, m.Ht], [0, m.H], [rs, m.H]);
       frost.push(polyGeometry(pts, basis, { uvScale: UV, lift: 0.0006 }));
     } else {
+      // mesma seção da peça de fora (buildTopCream) neste ângulo: beira que pende, lateral arredondada
       const rr = m.rf;
-      const re = rs + 0.014;
-      const pts = [[0, m.H - 0.004]];
-      for (let k = 0; k <= 4; k++) {
-        const a = -Math.PI / 2 + (k / 4) * (Math.PI / 2);
-        pts.push([re - rr + rr * Math.cos(a), m.H - 0.004 + rr + rr * Math.sin(a)]);
-      }
-      for (let k = 0; k <= 4; k++) {
-        const a = (k / 4) * (Math.PI / 2);
-        pts.push([re - rr + rr * Math.cos(a), m.Ht - rr + rr * Math.sin(a)]);
+      const rv = Math.min(m.tTop - 0.014, rr * 1.6);
+      const noise = creamNoise(m);
+      const hang = noise.hang(theta);
+      const kSide = 1 + noise.side(theta);
+      const kLip = kSide + noise.amp * noise.droop(theta + 2);
+      const out = rs + NAKED_OUT + 0.002;
+      const wAt = (dy) => Math.min(1, (0.01 + dy) / (TOP_LIP + 0.01)); // quanto cada ponto acompanha a beira que pende
+      const pts = [
+        [0, m.H - 0.004],
+        [rs - 0.004, m.H - 0.004],
+        [(out - 0.02) * kLip, m.H - TOP_LIP * 0.5 - wAt(TOP_LIP * 0.5) * hang],
+        [(out - 0.006) * kLip, m.H - TOP_LIP - hang],
+        [out * kLip - 0.001, m.H - TOP_LIP * 0.4 - wAt(TOP_LIP * 0.4) * hang],
+      ];
+      const re = out * kSide - 0.001;
+      for (let k = 0; k <= 5; k++) {
+        const a = (k / 5) * (Math.PI / 2);
+        pts.push([re - rr + rr * Math.cos(a), m.Ht - rv + rv * Math.sin(a)]);
       }
       pts.push([0, m.Ht]);
       frost.push(polyGeometry(pts, basis, { uvScale: UV, lift: 0.0006 }));
@@ -934,9 +1177,19 @@ export function buildCutFaces(m, { thetaA, thetaB, drip = false, seed = 1 }) {
     }
   });
 
+  let pieces = null;
+  if (bits.idx.length) {
+    pieces = new THREE.BufferGeometry();
+    pieces.setAttribute('position', new THREE.BufferAttribute(new Float32Array(bits.pos), 3));
+    pieces.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(bits.nor), 3));
+    pieces.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(bits.uv), 2));
+    pieces.setIndex(bits.idx);
+  }
   return {
     sponge: sponge.map(merge),
     filling: filling.map(merge),
+    jam: jam.map((list) => (list.length ? merge(list) : null)),
+    pieces,
     frost: merge(frost),
     drip: merge(dripGeo),
   };
@@ -945,14 +1198,14 @@ export function buildCutFaces(m, { thetaA, thetaB, drip = false, seed = 1 }) {
 /* ───────── Boleira ───────── */
 
 /** Placa (tábua, cake board, mármore): contorno + espessura, com as quinas levemente chanfradas. */
-function slab(path, yTop, thick, bevel = 0.012) {
+function slab(path, yTop, thick, bevel = 0.012, capScale = 0.21) {
   const profile = [
     { d: -bevel, y: yTop - thick, nd: 0.4, ny: -0.9 },
     { d: 0, y: yTop - thick + bevel, nd: 1, ny: -0.2 },
     { d: 0, y: yTop - bevel, nd: 1, ny: 0.2 },
     { d: -bevel, y: yTop, nd: 0.4, ny: 0.9 },
   ];
-  return sweep(path, profile, { capTop: true, capBottom: true, capScale: 0.21 });
+  return sweep(path, profile, { capTop: true, capBottom: true, capScale });
 }
 
 /**
@@ -971,11 +1224,32 @@ export function buildStand(m, base = 'boleira') {
   const reach = (margin) => (round ? b.maxR + margin : Math.hypot(b.hx + margin, b.hz + margin) * 0.92);
   const shade = (margin) => (round ? { x: b.maxR + margin, z: b.maxR + margin } : { x: b.hx + margin, z: b.hz + margin });
 
-  if (base === 'madeira' || base === 'marmore') {
-    const margin = base === 'madeira' ? 0.26 : 0.24;
-    const thick = base === 'madeira' ? 0.075 : 0.05;
-    const geo = slab(outline(margin), -0.002, thick, base === 'madeira' ? 0.014 : 0.006);
-    return { parts: [{ geo, mat: base === 'madeira' ? 'wood' : 'marble' }], floorY: -0.002 - thick, plateRadius: reach(margin), standHeight: thick, shade: shade(margin - 0.03) };
+  if (base === 'madeira') {
+    const margin = 0.26;
+    const thick = 0.09;
+    if (round) {
+      // fatia de tronco: contorno meio torto (nenhuma árvore é um círculo) e a textura na escala exata da fatia,
+      // para os anéis e a casca caírem na beira
+      const R = b.maxR + margin;
+      const wood = new PathBuilder();
+      const n = low ? 80 : 128;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * TAU;
+        const k = 1 + 0.018 * Math.sin(a * 3 + 1.3) + 0.012 * Math.sin(a * 5 + 4.1) + 0.007 * Math.sin(a * 8 + 2.2);
+        wood.push(Math.cos(a) * R * k, Math.sin(a) * R * k, Math.cos(a), Math.sin(a));
+      }
+      const geo = slab(wood.finish(), -0.002, thick, 0.02, 0.42 / R);
+      return { parts: [{ geo, mat: 'wood' }], floorY: -0.002 - thick, plateRadius: R * 1.02, standHeight: thick, shade: shade(margin - 0.03) };
+    }
+    // quadrada ou retangular: tábua de ripas, com as ripas no sentido do comprimento
+    const geo = slab(outline(margin), -0.002, thick, 0.016, 0.48 / (Math.max(b.hx, b.hz) + margin));
+    return { parts: [{ geo, mat: 'plank' }], floorY: -0.002 - thick, plateRadius: reach(margin), standHeight: thick, shade: shade(margin - 0.03) };
+  }
+  if (base === 'marmore') {
+    const margin = 0.3;
+    const thick = 0.06;
+    const geo = slab(outline(margin), -0.002, thick, 0.007, 0.4 / (Math.max(b.hx, b.hz, b.maxR * (round ? 1 : 0)) + margin));
+    return { parts: [{ geo, mat: 'marble' }], floorY: -0.002 - thick, plateRadius: reach(margin), standHeight: thick, shade: shade(margin - 0.03) };
   }
   if (base === 'dourada' || base === 'prateada') {
     const margin = 0.14;
@@ -1011,7 +1285,10 @@ export function buildStand(m, base = 'boleira') {
   const board = sweep(m.sponge, boardProfile);
   const rho = Math.min(b.hx, b.hz) + margin;
   const yTop = top - 0.056;
-  const parts = [{ geo: plate, mat: 'porcelain' }, { geo: rim, mat: 'gold', cast: false }, { geo: board, mat: 'gold', cast: false }];
+  const parts = [{ geo: plate, mat: 'porcelain' }, { geo: rim, mat: 'gold', cast: false }];
+  // o disco dourado sob o bolo aparece nos bolos cobertos; no naked a massa assenta direto no prato
+  if (m.naked) board.dispose();
+  else parts.push({ geo: board, mat: 'gold', cast: false });
 
   if (base === 'prato') {
     // prato baixo: só um anel de apoio por baixo

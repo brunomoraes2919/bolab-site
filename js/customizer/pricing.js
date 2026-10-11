@@ -27,6 +27,8 @@ import {
   DECORS,
   BASES,
   HEIGHTS,
+  heightIdOf,
+  layersHeightCm,
   TIER_OPTIONS,
   QUANTITIES,
   CANDLE_STYLES,
@@ -59,11 +61,11 @@ const pick = (list, id, fallback) => (list.some((x) => x.id === id) ? id : fallb
 /** O bolo que aparece ao abrir o personalizador: bonito, equilibrado e com preço amigável. */
 export function defaultConfig() {
   return {
-    v: 2,
+    v: 3,
     shape: 'round',
     size: 'p',
     tiers: 1,
-    height: 'padrao',
+    height: 'padrao', // derivada do número de camadas (2 = baixo · 3 = padrão · 4 = alto)
     base: 'boleira',
     layers: ['baunilha', 'baunilha', 'baunilha'],
     fillings: ['morango', 'ninho'],
@@ -104,6 +106,30 @@ function normalizeCover(raw, fallback) {
   return { type, color, style, color2: hex(raw?.color2, fallback.color2 || '#ffffff') };
 }
 
+/**
+ * A mensagem escrita com bico cabe — e aparece — no topo deste bolo?
+ *  · bolo de 3 andares: o último andar fica alto e pequeno; de frente a escrita não se lê → só plaquinha;
+ *  · topo pequeno para o texto: com a letra mínima de um bico (uns 1,6 cm), não cabe nem em duas linhas.
+ * Devolve { ok, why: '' | 'alto' | 'pequeno', top (cm do último andar), perLine (letras que cabem por linha) }.
+ */
+export function scriptRoom(config) {
+  const tiers = TIER_OPTIONS.some((t) => t.n === Number(config?.tiers)) ? Number(config.tiers) : 1;
+  const radii = tierRadii((getSize(config?.size) || SIZES[0]).radius, tiers);
+  const top = Math.round(radii[radii.length - 1] * 20);
+  const style = config?.piping?.style;
+  const pipeTop = style && style !== 'liso' && (getPiping(style)?.combo || config.piping.where !== 'base');
+  // a borda de bico come espaço dos dois lados (as rosetas, o dobro)
+  const room = top - (pipeTop ? (style === 'rosetas' ? 6.6 : 3.6) : 1.6);
+  const perLine = Math.max(0, Math.floor(room / 0.8));
+  if (tiers >= 3) return { ok: false, why: 'alto', top, perLine };
+  const text = cleanMessage(config?.decor?.message).trim();
+  let longest = text.length;
+  for (let i = 1; i < text.length - 1; i++) {
+    if (text[i] === ' ') longest = Math.min(longest, Math.max(i, text.length - i - 1));
+  }
+  return { ok: longest <= perLine, why: longest <= perLine ? '' : 'pequeno', top, perLine };
+}
+
 /** Opções de uma decoração (arranjo, quantidade, cor), sempre válidas para aquela decoração. */
 export function decorOptions(config, id) {
   const d = getDecor(id);
@@ -120,7 +146,13 @@ export function decorOptions(config, id) {
 export function normalizeConfig(raw) {
   const d = defaultConfig();
   const c = raw && typeof raw === 'object' ? raw : {};
-  const layers = (Array.isArray(c.layers) && c.layers.length ? c.layers : d.layers).slice(0, MAX_LAYERS).map((id) => pick(FLAVORS, id, 'baunilha'));
+  let layers = (Array.isArray(c.layers) && c.layers.length ? c.layers : d.layers).slice(0, MAX_LAYERS).map((id) => pick(FLAVORS, id, 'baunilha'));
+  // Bolos guardados antes da anatomia nova (v < 3) tinham a "altura" como um esticador da massa. Agora a altura
+  // é o número de camadas: o "alto" ganha uma camada, o "baixo" perde uma (de 2 para cima; o simples continua simples).
+  if (!(Number(c.v) >= 3)) {
+    if (c.height === 'alto' && layers.length >= 2 && layers.length < MAX_LAYERS) layers = [...layers, layers[layers.length - 1]];
+    else if (c.height === 'baixo' && layers.length > 2) layers = layers.slice(0, -1);
+  }
   const rawFill = Array.isArray(c.fillings) ? c.fillings : d.fillings;
   const fillings = [];
   for (let i = 0; i < layers.length - 1; i++) {
@@ -137,11 +169,11 @@ export function normalizeConfig(raw) {
   });
   const pipingStyle = pick(PIPINGS, c.piping?.style, 'liso');
   return {
-    v: 2,
+    v: 3,
     shape: pick(SHAPES, c.shape, d.shape),
     size: pick(SIZES, c.size, d.size),
     tiers,
-    height: pick(HEIGHTS, c.height, d.height),
+    height: heightIdOf(layers.length),
     base: pick(BASES, c.base, d.base),
     layers,
     fillings,
@@ -160,7 +192,8 @@ export function normalizeConfig(raw) {
       candleStyle: pick(CANDLE_STYLES, c.decor?.candleStyle, 'classica'),
       number: String(c.decor?.number ?? '').replace(/\D/g, '').slice(0, 3),
       message: cleanMessage(c.decor?.message),
-      messageMode: c.decor?.messageMode === 'bico' ? 'bico' : 'placa',
+      // escrita no topo só onde ela cabe e aparece; senão a mensagem vai na plaquinha (ver scriptRoom)
+      messageMode: c.decor?.messageMode === 'bico' && scriptRoom(c).ok ? 'bico' : 'placa',
       script: pick(SCRIPTS, c.decor?.script, 'cursiva'),
       messageColor: hex(c.decor?.messageColor, d.decor.messageColor),
       topper: { text: cleanMessage(c.decor?.topper?.text, TOPPER_MAX), color: hex(c.decor?.topper?.color, d.decor.topper.color) },
@@ -181,9 +214,9 @@ export function coversOf(config) {
   return Array.from({ length: n }, (_, i) => (config.tierCover && config.tierCover[i]) || config.covering);
 }
 
-/** Fator de preço do bolo inteiro: tamanho × andares × altura. */
+/** Fator de preço do bolo inteiro: tamanho × andares (a altura entra pelas camadas e recheios a mais). */
 export function multOf(config) {
-  return round2(sizeOf(config).mult * getTierOption(config.tiers || 1).mult * (getHeight(config.height)?.mult || 1));
+  return round2(sizeOf(config).mult * getTierOption(config.tiers || 1).mult);
 }
 
 /** Quanto uma opção acrescenta ao preço no bolo atual (para os "+ R$" dos seletores). */
@@ -213,17 +246,17 @@ export function diametersOf(config) {
 
 /** Altura total do bolo em cm (sem a base e sem a decoração). */
 export function heightCmOf(config) {
-  const n = config.layers.length;
-  const layerH = (n === 1 ? 0.5 : n === 2 ? 0.38 : n === 3 ? 0.31 : 0.275) * (getHeight(config.height)?.k || 1);
-  const tier = n * layerH + (n - 1) * 0.066 + 0.05;
-  return Math.round(tier * 10 * (config.tiers || 1));
+  // camadas de massa + recheios + a cobertura do topo de cada andar
+  return Math.round((layersHeightCm(config.layers.length) + 0.5) * (config.tiers || 1));
 }
 
 /** Quantas fatias rende: "8 a 10 fatias". Um andar na altura padrão usa o texto do cardápio. */
 export function servesText(config) {
   const tiers = config.tiers || 1;
-  if (tiers === 1 && config.height === 'padrao') return sizeOf(config).serves;
-  const k = getHeight(config.height)?.k || 1;
+  const n = config.layers.length;
+  if (tiers === 1 && n === 3) return sizeOf(config).serves;
+  // bolo mais alto rende mais (fatias mais altas, que se cortam mais finas); o simples e o baixo, menos
+  const k = n <= 1 ? 0.7 : getHeight(heightIdOf(n))?.serves || 1;
   const area = diametersOf(config).reduce((s, d) => s + Math.PI * (d / 2) ** 2, 0) * k;
   // calibrado pelo cardápio: um bolo de 15 cm rende de 8 a 10 fatias
   const lo = Math.max(4, Math.round(area / 22));
@@ -285,10 +318,9 @@ export function breakdownOf(config) {
     (BASE_PRICE + shape.price) * m,
   );
   if (tiers > 1) add('tiers', 'Montagem dos andares', 'Sustentação interna e nivelamento', getTierOption(tiers).fee);
-  if (config.height !== 'padrao') add('height', `Altura: ${low(getHeight(config.height).name)}`, 'Já somada no valor do bolo', 0);
 
   const n = config.layers.length;
-  if (n > 1) add('layers', n - 1 === 1 ? '1 camada extra' : `${n - 1} camadas extras`, `${n} camadas de massa${tiers > 1 ? ' em cada andar' : ' no total'}`, (n - 1) * EXTRA_LAYER_PRICE * m);
+  if (n > 1) add('layers', n - 1 === 1 ? '1 camada extra' : `${n - 1} camadas extras`, `${n} camadas de massa${tiers > 1 ? ' em cada andar' : ''} · ${heightCmOf(config)} cm de altura`, (n - 1) * EXTRA_LAYER_PRICE * m);
 
   const flavorSum = config.layers.reduce((s, id) => s + (getFlavor(id)?.price || 0), 0);
   if (flavorSum > 0) add('flavors', 'Massas especiais', countList(config.layers.map((id) => getFlavor(id).name)), flavorSum * m);
@@ -436,7 +468,7 @@ export function summaryOf(config) {
       ? `Formato: ${getShape(config.shape).name}, ${tiers} andares (${joinPt(diametersOf(config).map(String))} cm)`
       : `Formato: ${getShape(config.shape).name}, tamanho ${sizeOf(config).label} (${sizeOf(config).diameter})`,
   ];
-  if (config.height !== 'padrao') out.push(`Altura: ${low(getHeight(config.height).name)}`);
+  out.push(`Altura: ${heightCmOf(config)} cm (${config.layers.length === 1 ? 'bolo simples, 1 camada' : `${config.layers.length} camadas de massa${(config.tiers || 1) > 1 ? ' por andar' : ''}`})`);
   out.push(
     mixedFlavor ? `Massa (da base ao topo): ${joinPt(names)}` : `Massa: ${p.massa}`,
     mixedFill ? `Recheio (de baixo para cima): ${joinPt(fills)}` : `Recheio: ${p.recheio}`,

@@ -5,9 +5,10 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rng, hashString, makeCanvas, texture } from './textures.js';
-import { cleanOffset, pathAt, pointInPath, rayHit } from './geometry.js';
+import { cleanOffset, pathAt } from './geometry.js';
 import { decorOptions } from './pricing.js';
-import { Batch, frameQuat, surface, paint, plain, smooth, gomo, newPart, groundBlob, leanQuat, quantityOf, decorSpots } from './decor.js';
+import { FENCE_AWAY, signedDist } from './occupancy.js';
+import { Batch, frameQuat, surface, paint, plain, smooth, gomo, newPart, groundBlob, leanQuat, addVol, plannedHeights } from './decor.js';
 
 const TAU = Math.PI * 2;
 const SRGB = THREE.SRGBColorSpace;
@@ -207,17 +208,22 @@ const stickMat = (lib) => lib.custom('x2-stick', () => new THREE.MeshStandardMat
 const goldLeaf = (lib) => lib.custom('x2-goldleaf', () => new THREE.MeshStandardMaterial({ color: 0xffd660, metalness: 0.6, roughness: 0.3, emissive: 0x8a6010, emissiveIntensity: 0.85, side: THREE.DoubleSide, flatShading: true }));
 
 const smallCast = (ctx) => ({ cast: ctx.tier?.smallCastShadow !== false });
-/** Com a cerca de chocolate em volta do bolo, o que vai na lateral fica por fora dela (a espessura de uma barrinha). */
-const wallOut = (ctx) => (ctx.layout.has('wafer') ? 0.066 : 0);
 
-/* ───────── Arranjo: ajudantes ───────── */
+/* ───────── Arranjo: ajudantes ─────────
+   Quem decide o lugar, o tamanho e a quantidade de cada peça é o distribuidor (occupancy.js): cada construtor
+   daqui lê o seu plano em ctx.layout.plan[id] — { zone, pieces: [{ t, x, y, z, s, …, vol }], group, blob } —,
+   desenha exatamente essas peças e declara os volumes delas (part.volumes), para o teste de sobreposição. */
 
-const ZONE_OF = { centro: 'center', coroa: 'crown', espalhado: 'scatter', cascata: 'cascade' };
-/** Zona da decoração: a que o layout resolveu; 'palito', 'lateral' e 'frente' vêm direto da escolha da pessoa. */
-function zoneOf(ctx, id) {
-  const arr = ctx.layout.opt(id).arr;
-  if (arr === 'palito' || arr === 'lateral' || arr === 'frente') return arr;
-  return ctx.layout.zones[id] || ZONE_OF[arr] || 'crown';
+/** Plano da decoração (ou null, se ela não coube em lugar nenhum). Já zera os volumes declarados da peça. */
+function planOf(ctx, part, id) {
+  part.volumes = [];
+  const pl = ctx.layout.plan?.[id];
+  return pl && (pl.pieces.length || pl.regions.length) ? pl : null;
+}
+
+/** Sombra de contato falsa (celular) sob um arranjo de centro. */
+function pileBlob(ctx, part, pl) {
+  if (pl.zone === 'center' && pl.group && pl.blob) groundBlob(ctx, part, pl.group.x, pl.group.z, pl.blob);
 }
 
 /** Em pé no topo, com giro livre e uma leve inclinação. */
@@ -257,104 +263,6 @@ function discQuat(dx, dz, elev, spin = 0, out = _q) {
   frameQuat(_x, _y, out);
   if (spin) out.multiply(_q2.setFromAxisAngle(Y, spin));
   return out;
-}
-
-/** Recua para dentro do topo um lugar que cairia em cima do bico da borda (r = raio da peça). */
-function keepInside(ctx, sp, r) {
-  const { m, layout } = ctx;
-  const dx = sp.x - m.center.x;
-  const dz = sp.z - m.center.z;
-  const d = Math.hypot(dx, dz);
-  if (d < 1e-4) return sp;
-  const limit = rayHit(m.topFlat, m.center.x, m.center.z, Math.atan2(dz, dx)) - layout.border - r;
-  if (d > limit && limit > 0) {
-    sp.x = m.center.x + (dx / d) * limit;
-    sp.z = m.center.z + (dz / d) * limit;
-  }
-  return sp;
-}
-
-/**
- * Lugares de uma decoração (decorSpots), já conferidos: espalhadas e cascatas não sobem no bico da borda.
- * r = raio real da peça; size = espaço que ela ocupa no arranjo.
- */
-function spotsFor(ctx, zone, { size, r = size, count = 8, k = 1, seed }) {
-  const { m, layout } = ctx;
-  if (zone === 'scatter') {
-    const want = Math.max(2, Math.round(count * k * 1.3));
-    const limit = cleanOffset(m.topFlat, -(layout.border + r * 0.9));
-    return decorSpots(ctx, zone, { size, count: count * 2.2, k, seed })
-      .filter((sp) => pointInPath(limit, sp.x, sp.z))
-      .slice(0, want);
-  }
-  const spots = decorSpots(ctx, zone, { size, count, k, seed });
-  const out = wallOut(ctx);
-  spots.forEach((sp) => {
-    if (sp.side) {
-      sp.x += sp.ox * out;
-      sp.z += sp.oz * out;
-    } else if (zone === 'cascade' && (layout.border > 0.06 || out)) keepInside(ctx, sp, r);
-  });
-  if (zone !== 'cascade') return spots;
-  // no topo, a cascata nasce da borda para dentro: peças largas demais para caber lado a lado dão lugar às vizinhas
-  const kept = [];
-  for (let i = spots.length - 1; i >= 0; i--) {
-    const sp = spots[i];
-    if (sp.side || kept.every((q) => q.side || Math.hypot(q.x - sp.x, q.z - sp.z) > r * 1.8)) kept.unshift(sp);
-  }
-  return kept;
-}
-
-/**
- * Montinho no centro: os lugares de baixo (decorSpots) e, por cima, peças apoiadas nos vãos entre elas.
- * rise = altura do segundo andar. → [{ x, y, z, ox, oz, level }]
- */
-function pileSpots(ctx, { size, count, k, seed, rise }) {
-  const base = decorSpots(ctx, 'center', { size, count, k, seed });
-  const out = base.map((sp) => ({ ...sp, level: 0 }));
-  if (base.length < 4) return out;
-  const c = base[0];
-  const ring = base.filter((sp) => Math.hypot(sp.x - c.x, sp.z - c.z) < size * 2.4).length - 1;
-  if (ring < 3) return out;
-  const a0 = Math.atan2(base[1].z - c.z, base[1].x - c.x);
-  const tops = clamp(Math.round((base.length - 1) / 3), 1, Math.min(3, Math.floor(ring / 2)));
-  for (let i = 0; i < tops; i++) {
-    const a = a0 + ((Math.round((i * ring) / tops) + 0.5) / ring) * TAU;
-    const d = size * 1.16;
-    out.push({ x: c.x + Math.cos(a) * d, y: c.y + rise, z: c.z + Math.sin(a) * d, ox: Math.cos(a), oz: Math.sin(a), side: false, u: 0.5, taper: 1, level: 1 });
-  }
-  return out;
-}
-
-/** Raio do montinho do centro (para a sombra de contato falsa do celular). */
-const pileRadius = (spots, c) => spots.reduce((d, sp) => Math.max(d, Math.hypot(sp.x - c.x, sp.z - c.z)), 0);
-
-/**
- * Lugares para o que vai espetado em palito: uma fileira de frente para quem olha, `depth` atrás do centro
- * (negativo = na frente), com as pontas um pouco recuadas. Com plaquinha ou topo de festa no meio do bolo,
- * a fileira se abre em dois grupos, um de cada lado. → [{ x, z, j }]  (j = posição na fileira, −1…1)
- */
-function stickRow(ctx, n, { depth, gap, gapMid = 0 }) {
-  const { m, layout } = ctx;
-  const room = layout.rho - layout.border - 0.1;
-  const d = clamp(depth, -room * 0.7, room * 0.7);
-  const half = Math.sqrt(Math.max(0.01, room * room - d * d)) * 0.92;
-  // meia largura reservada ao que está no meio (plaquinha, topo de festa ou, se pedido, as velas)
-  const hole = Math.min(half * 0.6, Math.max(gapMid, layout.backFree ? 0 : 0.42));
-  const count = Math.max(1, Math.min(n, Math.floor((2 * (half - hole)) / gap) + (hole ? 0 : 1)));
-  const out = [];
-  for (let i = 0; i < count; i++) {
-    let x = (i - (count - 1) / 2) * gap;
-    if (hole) {
-      // metade de cada lado, das beiradas para o meio
-      const left = i < Math.ceil(count / 2);
-      const k = left ? i : count - 1 - i;
-      x = (left ? -1 : 1) * (half - k * gap);
-    }
-    const j = half > 0.01 ? clamp(x / Math.max(half, gap), -1, 1) : 0;
-    out.push({ x: m.center.x + x, z: m.center.z - d - 0.1 * j * j * room, j });
-  }
-  return out.sort((a, b) => a.x - b.x);
 }
 
 /* ───────── Morangos banhados em chocolate ───────── */
@@ -435,9 +343,8 @@ function berryExtrasGeometry(D, darkLines) {
 
 function buildDippedBerries(ctx, part) {
   const { m, lib, layout } = ctx;
-  const zone = zoneOf(ctx, 'morangos');
-  const k = quantityOf(ctx, 'morangos');
-  const r = rng(hashString(`morangos${m.shape}${m.R}${zone}`));
+  const pl = planOf(ctx, part, 'morangos');
+  if (!pl) return;
   const picked = layout.opt('morangos').color;
   const tone = lightOf(picked) > 0.92 ? '#f6ead6' : picked; // chocolate branco é marfim, não branco puro
   const darkLines = lightOf(tone) > 0.8 && saturOf(tone) < 0.5;
@@ -450,28 +357,18 @@ function buildDippedBerries(ctx, part) {
     dip.add(x, y, z, q, s, tone, 0.12 * s);
     extras.add(x, y, z, q, s, null, 0.12 * s);
   };
-  const y0 = layout.topY;
-  if (zone === 'center') {
-    const spots = decorSpots(ctx, 'center', { size: 0.125, count: 7, k, seed: 'morangos' });
-    spots.forEach((sp, i) => {
-      if (i === 0) {
-        // o do meio em pé, com a ponta de chocolate para cima
-        _q.setFromAxisAngle(_x.set(1, 0, 0), Math.PI).premultiply(_q2.setFromAxisAngle(Y, 0.4));
-        put(sp.x, y0 + 0.162, sp.z, _q, 1.1);
-        return;
-      }
-      leanQuat(sp.ox, sp.oz, 1.0 + r() * 0.3, (r() - 0.5) * 0.5, _q);
-      const s = 0.9 + r() * 0.18;
-      put(sp.x, y0 + 0.098 * s, sp.z, _q, s);
-    });
-    groundBlob(ctx, part, m.center.x, m.center.z, pileRadius(spots, m.center) + 0.16);
-  } else {
-    decorSpots(ctx, zone, { size: 0.14, k, seed: 'morangos' }).forEach((sp) => {
-      leanQuat(sp.ox, sp.oz, 0.92 + r() * 0.3, (r() - 0.5) * 0.5, _q);
-      const s = (0.9 + r() * 0.18) * sp.taper;
-      put(sp.x, y0 + 0.098 * s, sp.z, _q, s);
-    });
-  }
+  pl.pieces.forEach((p) => {
+    if (p.t === 'U') {
+      // o do meio em pé, com a ponta de chocolate para cima
+      _q.setFromAxisAngle(_x.set(1, 0, 0), Math.PI).premultiply(_q2.setFromAxisAngle(Y, 0.4));
+      put(p.x, p.y, p.z, _q, p.s);
+    } else {
+      leanQuat(p.ox, p.oz, p.lean, p.yaw, _q);
+      put(p.x, p.y + 0.098 * p.s, p.z, _q, p.s);
+    }
+    addVol(part, p.vol);
+  });
+  pileBlob(ctx, part, pl);
   part.add(berry, m);
   part.add(dip, m);
   part.add(extras, m);
@@ -511,27 +408,19 @@ function cherryGeometry(D, variant) {
 const CHERRY_TINTS = ['#ffffff', '#f2d6d6', '#ffe4dc', '#e2c2c2'];
 
 function buildCherries(ctx, part) {
-  const { m, lib, layout } = ctx;
-  const zone = zoneOf(ctx, 'cerejas');
-  const k = quantityOf(ctx, 'cerejas');
-  const r = rng(hashString(`cerejas${m.shape}${m.R}${zone}`));
+  const { m, lib } = ctx;
+  const pl = planOf(ctx, part, 'cerejas');
+  if (!pl) return;
+  const r = rng(hashString(`cerejas${m.shape}${m.R}${pl.zone}`));
   const kinds = [0, 1].map((v) => new Batch(lib.shape(`x2-cherry${v}`, () => cherryGeometry(lib.detail, v)), candy(lib)));
-  const put = (x, y, z, ox, oz, tilt, s) => {
-    // o cabo cai um pouco para fora do arranjo
-    const a = Math.atan2(oz, ox) + (r() - 0.5) * 1.6;
-    _y.set(Math.cos(a) * Math.sin(tilt), Math.cos(tilt), Math.sin(a) * Math.sin(tilt));
-    axisQuat(_y, r() * TAU, _q);
-    kinds[r() < 0.5 ? 0 : 1].add(x, y - 0.006 * s, z, _q, s, pick(CHERRY_TINTS, r), 0.1 * s);
-  };
-  if (zone === 'center') {
-    const spots = pileSpots(ctx, { size: 0.104, count: 7, k, seed: 'cerejas', rise: 0.15 });
-    spots.forEach((sp, i) => put(sp.x, sp.y, sp.z, sp.ox, sp.oz, i === 0 && spots.length < 8 ? 0.1 : 0.2 + r() * 0.35, 0.94 + r() * 0.12));
-    groundBlob(ctx, part, m.center.x, m.center.z, pileRadius(spots, m.center) + 0.14);
-  } else {
-    spotsFor(ctx, zone, { size: zone === 'scatter' ? 0.13 : 0.125, r: 0.1, count: 8, k, seed: 'cerejas' }).forEach((sp) => {
-      put(sp.x, sp.y, sp.z, sp.ox, sp.oz, 0.08 + r() * 0.3, (0.9 + r() * 0.16) * sp.taper);
-    });
-  }
+  pl.pieces.forEach((p) => {
+    // o cabo cai um pouco para fora do arranjo (inclinação e giro vêm do plano: o cabinho tem lugar reservado)
+    _y.set(Math.cos(p.a) * Math.sin(p.tilt), Math.cos(p.tilt), Math.sin(p.a) * Math.sin(p.tilt));
+    axisQuat(_y, p.spin, _q);
+    kinds[p.v].add(p.x, p.y - 0.006 * p.s, p.z, _q, p.s, pick(CHERRY_TINTS, r), 0.1 * p.s);
+    addVol(part, p.vol);
+  });
+  pileBlob(ctx, part, pl);
   kinds.forEach((b) => part.add(b, m));
 }
 
@@ -544,7 +433,7 @@ function buildCherries(ctx, part) {
 function daisyGeometry(D) {
   const lowp = D < 1;
   const parts = [];
-  const layers = lowp ? [{ n: 14, len: 1, lift: 0.004, off: 0, tone: 1 }] : [{ n: 15, len: 1.04, lift: 0, off: 0.5, tone: 0.86 }, { n: 15, len: 1, lift: 0.007, off: 0, tone: 1 }];
+  const layers = lowp ? [{ n: 11, len: 1.05, lift: 0, off: 0.5, tone: 0.8 }, { n: 11, len: 1, lift: 0.007, off: 0, tone: 1 }] : [{ n: 15, len: 1.04, lift: 0, off: 0.5, tone: 0.84 }, { n: 15, len: 1, lift: 0.007, off: 0, tone: 1 }];
   layers.forEach((L) => {
     for (let i = 0; i < L.n; i++) {
       const wob = 0.92 + 0.16 * hash2(i, L.n + L.off * 7);
@@ -553,7 +442,7 @@ function daisyGeometry(D) {
         // estreita junto ao miolo, mais larga a 2/3 do comprimento, ponta arredondada
         const w = 0.0215 * (0.4 + 0.6 * smooth(0, 0.6, u)) * Math.pow(Math.max(0, 1 - Math.pow(u, 5)), 0.5);
         p.set(0.024 + u * 0.102 * L.len * wob, 0.01 + L.lift + 0.016 * Math.sin(Math.PI * u * 0.8) * wob - 0.012 * u * u * u + 0.42 * Math.abs(vv) * w, vv * w);
-        return L.tone * (0.6 + 0.4 * smooth(0, 0.55, u)) * (vv === 0 ? 0.86 : 1) * (0.94 + 0.06 * (i % 2));
+        return L.tone * (0.52 + 0.48 * smooth(0, 0.6, u)) * (vv === 0 ? 0.84 : 1) * (0.92 + 0.08 * (i % 2));
       }, { shade: true });
       g.rotateY(((i + L.off) / L.n) * TAU + (hash2(i, 3) - 0.5) * 0.1);
       parts.push(plain(g));
@@ -575,12 +464,20 @@ function daisyCoreGeometry(D) {
 
 function buildDaisies(ctx, part) {
   const { m, lib, layout } = ctx;
-  const zone = zoneOf(ctx, 'margaridas');
-  const k = quantityOf(ctx, 'margaridas');
-  const r = rng(hashString(`margaridas${m.shape}${m.R}${zone}`));
+  const pl = planOf(ctx, part, 'margaridas');
+  if (!pl) return;
+  const r = rng(hashString(`margaridas${m.shape}${m.R}${pl.zone}`));
   const color = shown(layout.opt('margaridas').color);
   const pale = lightOf(color) > 0.86;
-  const tints = pale ? [mix(color, '#efe9dc', 0.5), mix(color, '#efe9dc', 0.5), mix(color, '#f3e7cf', 0.6)] : [color, mix(color, '#ffffff', 0.25), mix(color, '#ffffff', 0.5)];
+  // bolo claro + margarida clara: branco sobre branco some. As pétalas vão para um creme quente (como margarida de
+  // verdade perto do miolo) e a volta de pétalas de baixo, mais escura, desenha o contorno.
+  const coverLight = lightOf(m.cover?.color || '#ffffff');
+  const lost = pale && coverLight > 0.8;
+  const tints = lost
+    ? [mix(color, '#e6cd92', 0.72), mix(color, '#ead6a2', 0.64), mix(color, '#e0c584', 0.7)]
+    : pale
+      ? [mix(color, '#efe9dc', 0.5), mix(color, '#efe9dc', 0.5), mix(color, '#f3e7cf', 0.6)]
+      : [color, mix(color, '#ffffff', 0.25), mix(color, '#ffffff', 0.5)];
   // miolo amarelo; em pétalas amarelas ou alaranjadas ele fica castanho para não sumir
   new THREE.Color(color).getHSL(_hsl, SRGB);
   const yellowish = _hsl.s > 0.4 && _hsl.h > 0.06 && _hsl.h < 0.2;
@@ -589,67 +486,29 @@ function buildDaisies(ctx, part) {
   const cores = new Batch(lib.shape('x2-daisyCore', () => daisyCoreGeometry(lib.detail)), matte(lib), { cast: false });
   const leaves = new Batch(lib.geo.leaf(), lib.mat.leaf(), { cast: false });
   let n = 0;
-  const leafAt = (x, y, z, a, s) => {
-    _x.set(Math.cos(a), 0.1, Math.sin(a));
-    frameQuat(_x, Y, _q2);
-    leaves.add(x + Math.cos(a) * 0.07 * s, y + 0.002, z + Math.sin(a) * 0.07 * s, _q2, 0.82 * s, n % 2 ? '#ffffff' : '#dcefc8', 0.1);
-  };
-  spotsFor(ctx, zone, { size: zone === 'scatter' ? 0.15 : 0.128, r: 0.125, count: 8, k, seed: 'margaridas' }).forEach((sp, i) => {
-    const s = (zone === 'scatter' ? 0.86 + r() * 0.3 : i % 2 ? 0.8 : 1.04) * sp.taper;
-    if (sp.side) {
-      wallQuat(sp.ox, sp.oz, r() * TAU, 0.3, _q);
-      const x = sp.x - sp.ox * 0.04;
-      const z = sp.z - sp.oz * 0.04;
-      petals.add(x, sp.y, z, _q, s, pick(tints, r), 0.12 * s);
-      cores.add(x, sp.y, z, _q, s, core, 0.04);
-      if (i % 2 === 0) {
-        _x.set(-sp.oz, 0.5, sp.ox);
-        frameQuat(_x, _y.set(sp.ox, 0.3, sp.oz), _q2);
-        leaves.add(x, sp.y - 0.02, z, _q2, 0.9 * s, '#dcefc8', 0.1);
+  // no topo (coroa, meia-lua, espalhadas, começo da cascata) e coladas na lateral (guirlanda, cascata, espalhadas)
+  pl.pieces.forEach((p) => {
+    if (p.t === 'leaf') {
+      if (p.side) {
+        _x.set(-p.oz, 0.5, p.ox);
+        frameQuat(_x, _y.set(p.ox, 0.3, p.oz), _q2);
+        leaves.add(p.x, p.y, p.z, _q2, p.L, '#dcefc8', 0.1);
+      } else {
+        _x.set(Math.cos(p.a), 0.1, Math.sin(p.a));
+        frameQuat(_x, Y, _q2);
+        leaves.add(p.x + Math.cos(p.a) * 0.07 * p.s, p.y + 0.002, p.z + Math.sin(p.a) * 0.07 * p.s, _q2, 0.82 * p.s, n++ % 2 ? '#ffffff' : '#dcefc8', 0.1);
       }
-      n++;
-      return;
+    } else if (p.side) {
+      wallQuat(p.ox, p.oz, p.roll, p.up, _q);
+      petals.add(p.x, p.y, p.z, _q, p.s, pick(tints, r), 0.12 * p.s);
+      cores.add(p.x, p.y, p.z, _q, p.s, core, 0.04);
+    } else {
+      uprightQuat(r, 0.08, _q);
+      petals.add(p.x, p.y + 0.002, p.z, _q, p.s, pick(tints, r), 0.12 * p.s);
+      cores.add(p.x, p.y + 0.002, p.z, _q, p.s, core, 0.04);
     }
-    // as da coroa alternam um pouco para dentro e para fora, como uma guirlanda
-    const inward = zone === 'scatter' || zone === 'cascade' ? 0 : i % 2 ? 0.035 : -0.012;
-    const x = sp.x - sp.ox * inward;
-    const z = sp.z - sp.oz * inward;
-    uprightQuat(r, 0.13, _q);
-    petals.add(x, sp.y + 0.002 + (i % 2) * 0.004, z, _q, s, pick(tints, r), 0.12 * s);
-    cores.add(x, sp.y + 0.002 + (i % 2) * 0.004, z, _q, s, core, 0.04);
-    if (n % 2 === 0) leafAt(x, sp.y, z, Math.atan2(sp.oz, sp.ox) + Math.PI + (r() - 0.5) * 2.4, s);
-    n++;
-    // guirlanda: a cada duas, mais uma na lateral, logo abaixo da borda (a coroa "transborda" e aparece de frente)
-    if ((zone === 'crown' || zone === 'left' || zone === 'right') && !m.naked && i % 2 === 0) {
-      const a = Math.atan2(sp.z - m.center.z, sp.x - m.center.x) + (r() - 0.5) * 0.08;
-      const d = rayHit(m.frost, m.center.x, m.center.z, a) + wallOut(ctx);
-      const s2 = (0.78 + r() * 0.26) * sp.taper;
-      wallQuat(Math.cos(a), Math.sin(a), r() * TAU, 0.12, _q);
-      const y = m.y0 + m.Ht - m.rf - 0.12 - r() * 0.1;
-      petals.add(m.center.x + Math.cos(a) * d, y, m.center.z + Math.sin(a) * d, _q, s2, pick(tints, r), 0.12 * s2);
-      cores.add(m.center.x + Math.cos(a) * d, y, m.center.z + Math.sin(a) * d, _q, s2, core, 0.04);
-    }
+    addVol(part, p.vol);
   });
-  if (zone === 'scatter' && !m.naked) {
-    // espalhadas: algumas também na lateral do andar de cima, mais juntas da borda e rareando para baixo
-    const pt = {};
-    const placed = [];
-    const sideH = m.Ht - m.rf;
-    const want = Math.round(m.frost.length * 1.1 * k);
-    for (let tries = 0; tries < want * 12 && placed.length < want; tries++) {
-      const at = r() * m.frost.length;
-      const y = m.y0 + sideH - 0.15 - Math.pow(r(), 1.5) * Math.min(0.55, sideH * 0.6);
-      if (y < m.y0 + 0.16 || placed.some((q) => Math.hypot(Math.min(Math.abs(q.at - at), m.frost.length - Math.abs(q.at - at)), q.y - y) < 0.27)) continue;
-      placed.push({ at, y });
-      pathAt(m.frost, at, pt);
-      const s = 0.8 + r() * 0.3;
-      wallQuat(pt.nx, pt.nz, r() * TAU, 0, _q);
-      const px = pt.x + pt.nx * wallOut(ctx);
-      const pz = pt.z + pt.nz * wallOut(ctx);
-      petals.add(px, y, pz, _q, s, pick(tints, r), 0.12 * s);
-      cores.add(px, y, pz, _q, s, core, 0.04);
-    }
-  }
   part.add(leaves, m);
   part.add(petals, m);
   part.add(cores, m);
@@ -664,18 +523,21 @@ function buildDaisies(ctx, part) {
  */
 function peonyGeometry(D) {
   const lowp = D < 1;
-  const nu = lowp ? 3 : 6;
-  const nv = lowp ? 4 : 8;
+  const nu = lowp ? 4 : 6;
+  const nv = lowp ? 6 : 8;
+  // no celular a pétala tem poucos vértices: babado e entalhe fortes viram pontas; ali a borda é quase lisa e redonda
+  const frill = lowp ? 0.4 : 1;
+  const cut = lowp ? 0.35 : 1;
+  const round = lowp ? 0.26 : 0.09;
   // de fora para dentro: n pétalas · r0 = onde a pétala nasce · r1 = raio da borda · h = altura da borda ·
   // span = meia-abertura (rad) · roll = quanto a borda fecha para dentro (negativo: abre)
   const rings = lowp
     ? [
-        { n: 5, r0: 0.05, r1: 0.238, h: 0.088, span: 0.7, roll: -0.018, tone: 0.97, off: 0 },
-        { n: 5, r0: 0.045, r1: 0.208, h: 0.14, span: 0.7, roll: -0.004, tone: 0.95, off: 0.5 },
-        { n: 6, r0: 0.036, r1: 0.158, h: 0.195, span: 0.6, roll: 0.012, tone: 0.9, off: 0.25 },
-        { n: 5, r0: 0.024, r1: 0.11, h: 0.218, span: 0.7, roll: 0.022, tone: 0.82, off: 0.7 },
-        { n: 4, r0: 0.012, r1: 0.064, h: 0.226, span: 0.9, roll: 0.024, tone: 0.72, off: 0.1 },
-        { n: 3, r0: 0.003, r1: 0.024, h: 0.21, span: 1.2, roll: 0.008, tone: 0.6, off: 0.3 },
+        { n: 5, r0: 0.05, r1: 0.238, h: 0.088, span: 0.72, roll: -0.018, tone: 1, off: 0 },
+        { n: 5, r0: 0.045, r1: 0.205, h: 0.142, span: 0.72, roll: -0.002, tone: 0.93, off: 0.5 },
+        { n: 5, r0: 0.036, r1: 0.156, h: 0.192, span: 0.74, roll: 0.014, tone: 0.84, off: 0.25 },
+        { n: 4, r0: 0.024, r1: 0.106, h: 0.214, span: 0.9, roll: 0.024, tone: 0.74, off: 0.7 },
+        { n: 3, r0: 0.01, r1: 0.056, h: 0.218, span: 1.15, roll: 0.022, tone: 0.62, off: 0.1 },
       ]
     : [
         { n: 6, r0: 0.05, r1: 0.238, h: 0.088, span: 0.6, roll: -0.018, tone: 0.97, off: 0 },
@@ -702,13 +564,13 @@ function peonyGeometry(D) {
             const edge = Math.pow(u, 3);
             const ruff = Math.cos(vv * 4.1 + ph); // babado: uma onda e pouco por pétala, cada uma começando num ponto
             const notch = Math.exp(-((vv / 0.24) ** 2));
-            const a = phi + vv * ring.span * wide;
+            const a = phi + vv * ring.span * wide * (1 - (lowp ? 0.16 : 0) * edge * vv * vv);
             // taça: a pétala sai quase deitada e vai ficando em pé até a borda
-            const rad = ring.r0 + (ring.r1 - ring.r0) * Math.pow(Math.sin(t), 0.85) - ring.roll * Math.pow(u, 4) + (0.014 * edge * ruff + 0.01 * vv * u) * size;
+            const rad = ring.r0 + (ring.r1 - ring.r0) * Math.pow(Math.sin(t), 0.85) - ring.roll * Math.pow(u, 4) + (0.014 * frill * edge * ruff + 0.01 * vv * u) * size;
             // borda larga, de cantos arredondados, com babado e um entalhe no meio
-            const y = ring.h * tall * Math.pow(1 - Math.cos(t), 0.82) * (1 - 0.03 * vv * vv * u - 0.09 * Math.pow(Math.abs(vv), 6) * edge) + (0.017 * edge * ruff - 0.03 * edge * notch + 0.008 * vv * u) * size;
+            const y = ring.h * tall * Math.pow(1 - Math.cos(t), 0.82) * (1 - 0.03 * vv * vv * u - round * Math.pow(Math.abs(vv), lowp ? 3 : 6) * edge) + (0.017 * frill * edge * ruff - 0.03 * cut * edge * notch + 0.008 * vv * u) * size;
             p.set(rad * Math.cos(a), y + 0.004, rad * Math.sin(a));
-            const base = k === 0 ? 0.74 : 0.34; // a taça de fora é vista por baixo: não escurece tanto
+            const base = k === 0 ? 0.74 : lowp ? 0.26 : 0.34; // a taça de fora é vista por baixo: não escurece tanto
             return ring.tone * (base + (1 - base) * Math.pow(u, 1.25)) * (1 - 0.08 * vv * vv) * (1 - 0.16 * edge * (1 - ruff) * 0.5);
           }, { shade: true }),
         ),
@@ -720,71 +582,40 @@ function peonyGeometry(D) {
 
 function buildPeonies(ctx, part) {
   const { m, lib, layout } = ctx;
-  const zone = zoneOf(ctx, 'peonias');
-  const k = quantityOf(ctx, 'peonias');
-  const r = rng(hashString(`peonias${m.shape}${m.R}${zone}`));
+  const pl = planOf(ctx, part, 'peonias');
+  if (!pl) return;
+  const r = rng(hashString(`peonias${m.shape}${m.R}${pl.zone}`));
   const color = shown(layout.opt('peonias').color);
   const tints = [shift(color, 0, 1.08, -0.03), color, mix(color, '#ffffff', 0.18), shift(color, 0.01, 1.1, -0.07)];
   const flowers = new Batch(lib.shape('x2-peony', () => peonyGeometry(lib.detail)), lib.mat.petal());
   const leaves = new Batch(lib.geo.leaf(), lib.mat.leaf(), smallCast(ctx));
-  const y0 = layout.topY;
-  const room = layout.rho - layout.border;
-  const scale = clamp(0.74 + layout.rho * 0.5, 0.95, 1.36);
   const dir = new THREE.Vector3();
-  const flowerAt = (x, z, s, ox, oz, tilt, tint) => {
-    _y.set(ox * Math.sin(tilt), Math.cos(tilt), oz * Math.sin(tilt)).normalize();
-    axisQuat(_y, r() * TAU, _q);
-    flowers.add(x, y0 + 0.004, z, _q, s, tint ?? pick(tints, r), 0.24 * s);
-    const n = 2 + (r() < 0.5 ? 1 : 0);
-    const a0 = r() * TAU;
-    for (let i = 0; i < n; i++) {
-      const a = a0 + (i / n) * TAU + (r() - 0.5) * 0.7;
-      _x.set(Math.cos(a), 0.14, Math.sin(a));
-      frameQuat(_x, Y, _q);
-      leaves.add(x + Math.cos(a) * 0.17 * s, y0 + 0.004, z + Math.sin(a) * 0.17 * s, _q, (1.25 + r() * 0.35) * s, r() < 0.5 ? '#ffffff' : '#dcefc8', 0.16);
-    }
-  };
-  if (zone === 'center') {
-    const cx = m.center.x;
-    const cz = m.center.z;
-    const main = Math.min(scale, (room - 0.02) / 0.26);
-    flowerAt(cx, cz, main, 0, 1, 0.1, tints[0]);
-    // em volta, flores menores encostadas na principal, viradas para fora
-    const around = k < 1 ? 0 : k > 1 ? 4 : 2;
-    const d = 0.34 * main;
-    const small = Math.min(0.64 * main, (room - d - 0.01) / 0.26);
-    if (small > 0.38) {
-      for (let i = 0; i < around; i++) {
-        const a = (around === 2 ? 0.25 + i * Math.PI * 0.9 : 0.6 + (i / around) * TAU) + (r() - 0.5) * 0.3;
-        flowerAt(cx + Math.cos(a) * d, cz + Math.sin(a) * d, small * (0.92 + r() * 0.14), Math.cos(a), Math.sin(a), 0.42, tints[1 + (i % 3)]);
+  // no centro (uma grande e, com fartura, menores encostadas), em meia-lua (a maior no meio) ou em cascata
+  pl.pieces.forEach((p) => {
+    if (p.t === 'leaf') {
+      if (p.side) {
+        dir.set(p.ox, 0.16, p.oz).normalize();
+        _x.set(-p.oz, 0.6, p.ox);
+        frameQuat(_x, dir, _q);
+        leaves.add(p.x - p.ox * 0.02, p.y - 0.03, p.z - p.oz * 0.02, _q, 1.4 * p.s, '#dcefc8', 0.14);
+      } else {
+        _x.set(Math.cos(p.a), 0.14, Math.sin(p.a));
+        frameQuat(_x, Y, _q);
+        leaves.add(p.x + Math.cos(p.a) * 0.17 * p.s, p.y, p.z + Math.sin(p.a) * 0.17 * p.s, _q, p.L, p.tint ? '#ffffff' : '#dcefc8', 0.16);
       }
-    }
-    groundBlob(ctx, part, cx, cz, Math.min(room, 0.3 * main + (around ? d : 0)));
-  } else if (zone === 'cascade') {
-    spotsFor(ctx, zone, { size: 0.2, r: 0.2 * scale, count: 5, k, seed: 'peonias' }).forEach((sp, i) => {
-      const s = scale * sp.taper * (i === 0 ? 0.82 : 0.5 + r() * 0.2);
-      if (!sp.side) {
-        keepInside(ctx, sp, 0.17 * s); // a flor do topo fica na borda, sem pender para fora
-        return flowerAt(sp.x, sp.z, s, sp.ox, sp.oz, 0.25);
-      }
+    } else if (p.side) {
       // na lateral: de frente para fora, quase sem inclinar, com a base encostada na cobertura
-      dir.set(sp.ox, 0.16, sp.oz).normalize();
-      axisQuat(dir, r() * TAU, _q);
-      const back = 0.07 - 0.03 * s;
-      flowers.add(sp.x - sp.ox * back, sp.y, sp.z - sp.oz * back, _q, s * 0.84, pick(tints, r), 0.2);
-      _x.set(-sp.oz, 0.6, sp.ox);
-      frameQuat(_x, dir, _q);
-      leaves.add(sp.x - sp.ox * 0.06, sp.y - 0.03, sp.z - sp.oz * 0.06, _q, 1.4 * s, '#dcefc8', 0.14);
-      return null;
-    });
-  } else {
-    // meia-lua: a maior no meio do arco, diminuindo para as pontas
-    const size = Math.min(0.2 * scale, (room - 0.02) / 2.2);
-    decorSpots(ctx, zone, { size, k: k * 0.8, seed: 'peonias' }).forEach((sp) => {
-      const s = (size / 0.2) * (0.62 + 0.4 * Math.sin(Math.PI * sp.u));
-      flowerAt(sp.x, sp.z, s * 0.8, sp.ox, sp.oz, 0.22);
-    });
-  }
+      dir.set(p.ox, 0.16, p.oz).normalize();
+      axisQuat(dir, p.spin, _q);
+      flowers.add(p.x, p.y, p.z, _q, p.s, pick(tints, r), 0.2);
+    } else {
+      _y.set(p.ox * Math.sin(p.tilt), Math.cos(p.tilt), p.oz * Math.sin(p.tilt)).normalize();
+      axisQuat(_y, r() * TAU, _q);
+      flowers.add(p.x, p.y + 0.004, p.z, _q, p.s, p.tint != null ? tints[p.tint % tints.length] : pick(tints, r), 0.24 * p.s);
+    }
+    addVol(part, p.vol);
+  });
+  pileBlob(ctx, part, pl);
   part.add(leaves, m);
   part.add(flowers, m);
 }
@@ -818,61 +649,26 @@ function macaronFillingGeometry(D) {
 
 function buildMacarons(ctx, part) {
   const { m, lib, layout } = ctx;
-  const zone = zoneOf(ctx, 'macarons');
-  const k = quantityOf(ctx, 'macarons');
-  const r = rng(hashString(`macarons${m.shape}${m.R}${zone}`));
+  const pl = planOf(ctx, part, 'macarons');
+  if (!pl) return;
+  const r = rng(hashString(`macarons${m.shape}${m.R}${pl.zone}`));
   const color = layout.opt('macarons').color;
   const tints = tintsOf(color);
   const creams = ['#f6eee0', '#f6eee0', mix(tints[0], '#ffffff', 0.7)];
   const shells = new Batch(lib.shape('x2-macaron', () => macaronShellsGeometry(lib.detail)), matte(lib));
   const filling = new Batch(lib.shape('x2-macaronFill', () => macaronFillingGeometry(lib.detail)), matte(lib), { cast: false });
   let n = 0;
-  const put = (x, y, z, q, s = 1) => {
+  // cada macaron vem com o centro e o eixo decididos: deitado (pilha, começo da cascata), apoiado no vizinho
+  // (coroa e meia-lua, como dominós caídos), em cima da pilha ou colado na lateral pela casquinha de baixo
+  pl.pieces.forEach((p) => {
+    _y.set(p.nx, p.ny, p.nz).normalize();
+    axisQuat(_y, r() * TAU, _q);
     const t = n++ % tints.length;
-    shells.add(x, y, z, q, s, tints[t], 0.15 * s);
-    filling.add(x, y, z, q, s, creams[t], 0.15 * s);
-  };
-  const y0 = layout.topY;
-  const R = 0.153;
-  const flat = (x, z, y = y0) => {
-    uprightQuat(r, 0.05, _q);
-    put(x, y + MAC_T / 2 - 0.004, z, _q);
-  };
-  if (zone === 'center') {
-    // pilha: uma roda de macarons deitados e outros apoiados por cima, inclinados
-    const spots = pileSpots(ctx, { size: 0.158, count: 6, k, seed: 'macarons', rise: MAC_T - 0.01 });
-    spots.forEach((sp) => {
-      if (!sp.level) return flat(sp.x, sp.z);
-      discQuat(sp.ox, sp.oz, 1.12 + r() * 0.2, r() * TAU, _q);
-      put(sp.x, sp.y + MAC_T / 2 + 0.03, sp.z, _q);
-      return null;
-    });
-    groundBlob(ctx, part, m.center.x, m.center.z, pileRadius(spots, m.center) + 0.2);
-  } else if (zone === 'cascade') {
-    spotsFor(ctx, zone, { size: 0.155, r: R, count: 5, k, seed: 'macarons' }).forEach((sp, i) => {
-      if (!sp.side) return flat(sp.x, sp.z);
-      // na lateral ficam colados pela casquinha de baixo, de frente para fora; um sim, um não, apoiado
-      // sobre os vizinhos (mais para fora e um pouco inclinado), como telhas
-      const over = i % 2 ? 1 : 0;
-      wallQuat(sp.ox, sp.oz, r() * TAU, over * 0.2 + (r() - 0.5) * 0.12, _q);
-      const d = MAC_T / 2 - 0.155 * 0.35 - 0.012 + over * 0.07;
-      put(sp.x + sp.ox * d, sp.y, sp.z + sp.oz * d, _q, 0.9 + 0.1 * sp.taper - (i % 3 === 2 ? 0.08 : 0));
-      return null;
-    });
-  } else {
-    // coroa / meia-lua: em fila, cada um deitado sobre o anterior (como dominós caídos)
-    const spots = decorSpots(ctx, zone, { size: 0.16, k: k * 1.75, seed: 'macarons' });
-    const open = zone !== 'crown';
-    spots.forEach((sp, i) => {
-      const prev = spots[(i + spots.length - 1) % spots.length];
-      const step = Math.hypot(sp.x - prev.x, sp.z - prev.z) || 0.24;
-      // tangente no sentido da fila; a normal do disco aponta para a frente da fila e para cima
-      let elev = Math.acos(clamp((MAC_T * 0.97) / step, 0, 1));
-      if (open && i === 0) elev = Math.PI / 2 - 0.04; // o primeiro da meia-lua não tem em quem se apoiar: fica deitado
-      discQuat(-sp.oz, sp.ox, elev, r() * TAU, _q);
-      put(sp.x, y0 + R * Math.cos(elev) + (MAC_T / 2) * Math.sin(elev) - 0.004, sp.z, _q);
-    });
-  }
+    shells.add(p.x, p.y, p.z, _q, p.s, tints[t], 0.15 * p.s);
+    filling.add(p.x, p.y, p.z, _q, p.s, creams[t], 0.15 * p.s);
+    addVol(part, p.vol);
+  });
+  pileBlob(ctx, part, pl);
   part.add(shells, m);
   part.add(filling, m);
 }
@@ -930,25 +726,20 @@ function cupGeometry(D, { r0 = 0.062, grow = 0.068, h = 0.086 } = {}) {
 }
 
 function buildBrigadeiros(ctx, part) {
-  const { m, lib, layout } = ctx;
-  const zone = zoneOf(ctx, 'brigadeiros');
-  const k = quantityOf(ctx, 'brigadeiros');
-  const r = rng(hashString(`brigadeiros${m.shape}${m.R}${zone}`));
+  const { m, lib } = ctx;
+  const pl = planOf(ctx, part, 'brigadeiros');
+  if (!pl) return;
+  const r = rng(hashString(`brigadeiros${m.shape}${m.R}${pl.zone}`));
   const balls = new Batch(lib.shape('x2-brigadeiro', () => brigadeiroGeometry(lib.detail)), chocolate(lib));
   const cups = new Batch(lib.shape('x2-cup', () => cupGeometry(lib.detail)), paper(lib), smallCast(ctx));
   const CUPS = ['#ffffff', '#fff6e8', '#ffffff'];
-  const put = (sp, s) => {
+  pl.pieces.forEach((p) => {
     _q.setFromAxisAngle(Y, r() * TAU);
-    balls.add(sp.x, sp.y, sp.z, _q, s, r() < 0.3 ? '#f1e4de' : '#ffffff', 0.13 * s);
-    cups.add(sp.x, sp.y + 0.002, sp.z, _q, s, pick(CUPS, r), 0.13 * s);
-  };
-  if (zone === 'center') {
-    const spots = decorSpots(ctx, 'center', { size: 0.136, count: 7, k, seed: 'brigadeiros' });
-    spots.forEach((sp) => put(sp, 0.96 + r() * 0.08));
-    groundBlob(ctx, part, m.center.x, m.center.z, pileRadius(spots, m.center) + 0.16);
-  } else {
-    decorSpots(ctx, zone, { size: 0.16, k, seed: 'brigadeiros' }).forEach((sp) => put(sp, (0.96 + r() * 0.08) * (0.8 + 0.2 * sp.taper)));
-  }
+    balls.add(p.x, p.y, p.z, _q, p.s, r() < 0.3 ? '#f1e4de' : '#ffffff', 0.13 * p.s);
+    cups.add(p.x, p.y + 0.002, p.z, _q, p.s, pick(CUPS, r), 0.13 * p.s);
+    addVol(part, p.vol);
+  });
+  pileBlob(ctx, part, pl);
   part.add(cups, m);
   part.add(balls, m);
 }
@@ -1032,24 +823,19 @@ const BOMBOM_KINDS = [
 
 function buildBombons(ctx, part) {
   const { m, lib } = ctx;
-  const zone = zoneOf(ctx, 'bombons');
-  const k = quantityOf(ctx, 'bombons');
-  const r = rng(hashString(`bombons${m.shape}${m.R}${zone}`));
+  const pl = planOf(ctx, part, 'bombons');
+  if (!pl) return;
+  const r = rng(hashString(`bombons${m.shape}${m.R}${pl.zone}`));
   const batches = BOMBOM_KINDS.map((kind) => new Batch(lib.shape(kind.key, () => kind.make(lib.detail)), chocolate(lib)));
   let n = 0;
-  const put = (sp, s, tilt = 0.04) => {
+  pl.pieces.forEach((p) => {
     const idx = n++;
     const kind = BOMBOM_KINDS[idx % 3];
-    uprightQuat(r, tilt, _q);
-    batches[idx % 3].add(sp.x, sp.y - 0.002, sp.z, _q, s, kind.tints[Math.floor(idx / 3) % kind.tints.length], 0.12 * s);
-  };
-  if (zone === 'center') {
-    const spots = pileSpots(ctx, { size: 0.124, count: 7, k, seed: 'bombons', rise: 0.128 });
-    spots.forEach((sp) => put(sp, 0.96 + r() * 0.08, sp.level ? 0.14 : 0.04));
-    groundBlob(ctx, part, m.center.x, m.center.z, pileRadius(spots, m.center) + 0.15);
-  } else {
-    spotsFor(ctx, zone, { size: 0.145, r: 0.12, count: 8, k, seed: 'bombons' }).forEach((sp) => put(sp, (0.94 + r() * 0.1) * (0.82 + 0.18 * sp.taper)));
-  }
+    uprightQuat(r, p.level ? 0.1 : 0.04, _q);
+    batches[idx % 3].add(p.x, p.y - 0.002, p.z, _q, p.s, kind.tints[Math.floor(idx / 3) % kind.tints.length], 0.12 * p.s);
+    addVol(part, p.vol);
+  });
+  pileBlob(ctx, part, pl);
   batches.forEach((b) => part.add(b, m));
 }
 
@@ -1077,25 +863,17 @@ function meringueGeometry(D) {
 
 function buildMeringues(ctx, part) {
   const { m, lib, layout } = ctx;
-  const zone = zoneOf(ctx, 'suspiros');
-  const k = quantityOf(ctx, 'suspiros');
-  const r = rng(hashString(`suspiros${m.shape}${m.R}${zone}`));
+  const pl = planOf(ctx, part, 'suspiros');
+  if (!pl) return;
+  const r = rng(hashString(`suspiros${m.shape}${m.R}${pl.zone}`));
   const tints = tintsOf(layout.opt('suspiros').color);
   const batch = new Batch(lib.shape('x2-meringue', () => meringueGeometry(lib.detail)), matte(lib));
-  const put = (sp, s, tilt = 0.06) => {
-    uprightQuat(r, tilt, _q);
-    batch.add(sp.x, sp.y - 0.003, sp.z, _q, [s, s * (0.94 + r() * 0.14), s], pick(tints, r), 0.11 * s);
-  };
-  if (zone === 'center') {
-    const spots = pileSpots(ctx, { size: 0.112, count: 7, k, seed: 'suspiros', rise: 0.14 });
-    spots.forEach((sp, i) => put(sp, i === 0 ? 1.1 : 0.88 + r() * 0.16, sp.level ? 0.25 : 0.06));
-    groundBlob(ctx, part, m.center.x, m.center.z, pileRadius(spots, m.center) + 0.14);
-  } else {
-    const scatter = zone === 'scatter';
-    spotsFor(ctx, zone, { size: scatter ? 0.13 : 0.125, r: 0.11, count: 9, k, seed: 'suspiros' }).forEach((sp, i) => {
-      put(sp, (scatter ? 0.72 + r() * 0.4 : i % 2 ? 0.84 : 1.04) * (0.8 + 0.2 * sp.taper));
-    });
-  }
+  pl.pieces.forEach((p) => {
+    uprightQuat(r, p.level ? 0.12 : 0.05, _q);
+    batch.add(p.x, p.y - 0.003, p.z, _q, [p.s, p.s * p.tall, p.s], pick(tints, r), 0.11 * p.s);
+    addVol(part, p.vol);
+  });
+  pileBlob(ctx, part, pl);
   part.add(batch, m);
 }
 
@@ -1119,9 +897,9 @@ function marshmallowGeometry(D) {
 
 function buildMarshmallows(ctx, part) {
   const { m, lib, layout } = ctx;
-  const zone = zoneOf(ctx, 'marshmallows');
-  const k = quantityOf(ctx, 'marshmallows');
-  const r = rng(hashString(`marshmallows${m.shape}${m.R}${zone}`));
+  const pl = planOf(ctx, part, 'marshmallows');
+  if (!pl) return;
+  const r = rng(hashString(`marshmallows${m.shape}${m.R}${pl.zone}`));
   const picked = layout.opt('marshmallows').color;
   const pale = lightOf(picked) > 0.94;
   const color = shown(picked);
@@ -1129,37 +907,23 @@ function buildMarshmallows(ctx, part) {
   const tints = pale ? [WHITE, '#f3cdd8', '#f3e3b6', WHITE] : [color, WHITE, mix(color, '#ffffff', 0.4), WHITE, color];
   const batch = new Batch(lib.shape('x2-marshmallow', () => marshmallowGeometry(lib.detail)), matte(lib));
   let n = 0;
-  /** em pé (lying = false) ou deitado, rolado para um lado qualquer */
-  const put = (x, y, z, s, lying, squash = 1) => {
+  // p.y já é o centro da peça: em pé (um pouco achatada) ou deitada, rolada para um lado qualquer;
+  // os mini marshmallows (escala 0,5) vão soltos entre os grandes
+  pl.pieces.forEach((p) => {
     const tint = tints[n++ % tints.length];
-    if (lying) {
+    if (p.lying) {
       const a = r() * TAU;
       _y.set(Math.cos(a), (r() - 0.5) * 0.16, Math.sin(a)).normalize();
       _x.set(0, 1, 0);
       frameQuat(_x, _y, _q);
-      batch.add(x, y + 0.1 * s - 0.004, z, _q, s, tint, 0.11 * s);
+      batch.add(p.x, p.y, p.z, _q, p.s, tint, 0.11 * p.s);
     } else {
-      uprightQuat(r, 0.07, _q);
-      batch.add(x, y + 0.1 * s * squash - 0.004, z, _q, [s, s * squash, s], tint, 0.11 * s);
+      uprightQuat(r, 0.06, _q);
+      batch.add(p.x, p.y, p.z, _q, [p.s, p.s * p.squash, p.s], tint, 0.11 * p.s);
     }
-  };
-  const minis = [];
-  if (zone === 'center') {
-    const spots = pileSpots(ctx, { size: 0.108, count: 8, k, seed: 'marshmallows', rise: 0.19 });
-    spots.forEach((sp, i) => put(sp.x, sp.y, sp.z, 0.94 + r() * 0.1, sp.level ? r() < 0.6 : i % 3 === 1, 0.9 + r() * 0.15));
-    groundBlob(ctx, part, m.center.x, m.center.z, pileRadius(spots, m.center) + 0.14);
-    minis.push(...spots.filter((sp) => !sp.level));
-  } else {
-    const spots = spotsFor(ctx, zone, { size: zone === 'scatter' ? 0.135 : 0.118, r: 0.11, count: 9, k, seed: 'marshmallows' });
-    spots.forEach((sp, i) => put(sp.x, sp.y, sp.z, (0.92 + r() * 0.12) * sp.taper, zone === 'scatter' ? r() < 0.4 : i % 3 === 2, 0.88 + r() * 0.16));
-    minis.push(...spots);
-  }
-  // mini marshmallows soltos entre os grandes
-  if (zone === 'scatter') {
-    spotsFor(ctx, 'scatter', { size: 0.06, r: 0.06, count: 6, k, seed: 'minimarsh' })
-      .filter((sp) => minis.every((q) => Math.hypot(q.x - sp.x, q.z - sp.z) > 0.19))
-      .forEach((sp) => put(sp.x, sp.y, sp.z, 0.5, r() < 0.5));
-  }
+    addVol(part, p.vol);
+  });
+  pileBlob(ctx, part, pl);
   part.add(batch, m);
 }
 
@@ -1256,67 +1020,26 @@ function cookieCreamGeometry(D) {
 const COOKIE_T = 0.098;
 
 function buildCookies(ctx, part) {
-  const { m, lib, layout } = ctx;
-  const zone = zoneOf(ctx, 'biscoitos');
-  const k = quantityOf(ctx, 'biscoitos');
-  const r = rng(hashString(`biscoitos${m.shape}${m.R}${zone}`));
+  const { m, lib } = ctx;
+  const pl = planOf(ctx, part, 'biscoitos');
+  if (!pl) return;
+  const r = rng(hashString(`biscoitos${m.shape}${m.R}${pl.zone}`));
   const mat = lib.custom('x2-cookie', () => {
     const map = lib.custom('x2-cookieTex', () => texture(cookieCanvas(lib.detail < 1 ? 128 : 256), { repeat: false, srgb: true, aniso: 4 }));
     return new THREE.MeshStandardMaterial({ color: 0xffffff, map, bumpMap: map, bumpScale: 1.6, roughness: 0.9, vertexColors: true });
   });
   const wafers = new Batch(lib.shape('x2-cookie', () => cookieGeometry(lib.detail)), mat);
   const cream = new Batch(lib.shape('x2-cookieCream', () => cookieCreamGeometry(lib.detail)), matte(lib), { cast: false });
-  const put = (x, y, z, q, s = 1) => {
-    wafers.add(x, y, z, q, s, null, 0.15 * s);
-    cream.add(x, y, z, q, s, '#f6f0e4', 0.15 * s);
-  };
-  const y0 = layout.topY;
-  const R = 0.15;
-  if (zone === 'center') {
-    // uma pilha no meio e outros apoiados nela, em volta
-    const cx = m.center.x;
-    const cz = m.center.z;
-    const stack = k < 1 ? 2 : 3;
-    for (let i = 0; i < stack; i++) {
-      uprightQuat(r, 0.03, _q);
-      put(cx + (r() - 0.5) * 0.025, y0 + COOKIE_T * (i + 0.5) - 0.003, cz + (r() - 0.5) * 0.025, _q);
-    }
-    const room = layout.rho - layout.border;
-    const a0 = 0.5 + r() * 0.6;
-    // três encostados na pilha, de face para fora e para cima…
-    if (room > 0.4) {
-      for (let i = 0; i < 3; i++) {
-        const a = a0 + (i / 3) * TAU + (r() - 0.5) * 0.2;
-        const elev = 0.56 + r() * 0.1;
-        discQuat(Math.cos(a), Math.sin(a), elev, r() * TAU, _q);
-        const d = R + 0.03 + R * Math.sin(elev) * 0.5;
-        put(cx + Math.cos(a) * d, y0 + R * Math.cos(elev) + (COOKIE_T / 2) * Math.sin(elev) - 0.006, cz + Math.sin(a) * d, _q);
-      }
-    }
-    // …e, nos vãos entre eles, outros deitados na cobertura
-    const flat = room > 0.56 ? (k > 1 ? 3 : k < 1 ? 0 : 2) : 0;
-    for (let i = 0; i < flat; i++) {
-      const a = a0 + ((i + 0.5) / 3) * TAU + (r() - 0.5) * 0.15;
-      const d = Math.min(0.38, room - R - 0.02);
-      discQuat(Math.cos(a), Math.sin(a), Math.PI / 2 - 0.05, r() * TAU, _q);
-      put(cx + Math.cos(a) * d, y0 + COOKIE_T / 2 - 0.004, cz + Math.sin(a) * d, _q);
-    }
-    groundBlob(ctx, part, cx, cz, flat ? R * 3.2 : R * 2.4);
-  } else {
-    // coroa / meia-lua: em pé, fincados na cobertura, com a face em relevo virada para fora
-    const spots = decorSpots(ctx, zone, { size: 0.175, k, seed: 'biscoitos' });
-    spots.forEach((sp, i) => {
-      const prev = spots[(i + spots.length - 1) % spots.length];
-      const step = spots.length > 1 ? Math.hypot(sp.x - prev.x, sp.z - prev.z) : 1;
-      // apertados, giram de lado e se sobrepõem como escamas
-      const yaw = step < 0.3 ? Math.acos(clamp((step - 0.02) / 0.31, 0.3, 1)) : (r() - 0.5) * 0.24;
-      const a = Math.atan2(sp.oz, sp.ox) + yaw;
-      const elev = 0.2 + r() * 0.12;
-      discQuat(Math.cos(a), Math.sin(a), elev, r() * TAU, _q);
-      const s = 0.86 + 0.14 * sp.taper;
-      put(sp.x, y0 + (R * Math.cos(elev) + (COOKIE_T / 2) * Math.sin(elev)) * s - 0.034, sp.z, _q, s);
-    });
-  }
+  // centro: uma pilha, outros encostados nela e, nos vãos, deitados · coroa / meia-lua: em pé, fincados na
+  // cobertura, com a face em relevo para fora (apertados, giram de lado e se sobrepõem como escamas)
+  pl.pieces.forEach((p) => {
+    _y.set(p.nx, p.ny, p.nz).normalize();
+    axisQuat(_y, r() * TAU, _q);
+    wafers.add(p.x, p.y, p.z, _q, p.s, null, 0.15 * p.s);
+    cream.add(p.x, p.y, p.z, _q, p.s, '#f6f0e4', 0.15 * p.s);
+    addVol(part, p.vol);
+  });
+  pileBlob(ctx, part, pl);
   part.add(wafers, m);
   part.add(cream, m);
 }
@@ -1343,15 +1066,18 @@ function fingerGeometry(D) {
 }
 
 function buildWaferFence(ctx, part) {
-  const { m, lib } = ctx;
+  const { config, m, lib } = ctx;
   const r = rng(hashString(`wafer${m.shape}${m.R}`));
   const batch = new Batch(lib.shape('x2-finger', () => fingerGeometry(lib.detail)), chocolate(lib), { cast: true, receive: true });
   const TINTS = ['#6a3c20', '#643820', '#704226', '#5f351d'];
   const pt = {};
+  part.volumes = [];
+  // com calda, as barrinhas encostam nas gotas (ficam um pouco afastadas da cobertura) em vez de atravessá-las
+  const away = config.drip?.on ? FENCE_AWAY : 0;
   (m.stack || [m]).forEach((t) => {
     // as barrinhas são distribuídas pelo meio da espessura delas: nas quinas, o vão de fora fica pela metade
     const mid = 0.034;
-    const wall = cleanOffset(t.frost, mid);
+    const wall = cleanOffset(t.frost, mid + away);
     const n = Math.max(8, Math.round(wall.length / 0.1005));
     const step = wall.length / n;
     const base = t.y0 - (t.index ? 0 : 0.01);
@@ -1360,7 +1086,18 @@ function buildWaferFence(ctx, part) {
       _x.set(pt.nz, 0, -pt.nx); // x = Y × normal → a frente (+Z) da barrinha olha para fora
       frameQuat(_x, Y, _q);
       const h = t.y0 + t.Ht + 0.1 + (r() - 0.5) * 0.035 - base;
-      batch.add(pt.x - pt.nx * (mid - 0.003), base, pt.z - pt.nz * (mid - 0.003), _q, [Math.min(1.06, step / 0.1) * 1.005, h, 1], pick(TINTS, r), 0.06);
+      const wide = Math.min(1.06, step / 0.1) * 1.005;
+      // numa reentrância (o "v" do coração) as barrinhas dos dois lados se encontram: a que entraria na
+      // cobertura (ou na calda) do outro lado fica de fora
+      const reach = mid + away - 0.007;
+      if (m.shape === 'heart' && (-signedDist(t.frost, pt.x - pt.tx * 0.022 * wide, pt.z - pt.tz * 0.022 * wide) < reach || -signedDist(t.frost, pt.x + pt.tx * 0.022 * wide, pt.z + pt.tz * 0.022 * wide) < reach)) continue;
+      batch.add(pt.x - pt.nx * (mid - 0.003), base, pt.z - pt.nz * (mid - 0.003), _q, [wide, h, 1], pick(TINTS, r), 0.06);
+      // a barrinha: duas colunas de esferas no meio da espessura dela
+      const rows = Math.max(2, Math.ceil((h - 0.04) / 0.052));
+      for (let j = 0; j <= rows; j++) {
+        const y = base + 0.03 + ((h - 0.06) * j) / rows;
+        for (let q = -1; q <= 1; q += 2) part.volumes.push({ x: pt.x - pt.tx * q * 0.022 * wide, y, z: pt.z - pt.tz * q * 0.022 * wide, r: 0.031, kind: 'fence' });
+      }
     }
   });
   part.add(batch, m);
@@ -1397,7 +1134,8 @@ function swirlArmGeometry(D) {
 
 function buildLollipops(ctx, part) {
   const { m, lib, layout } = ctx;
-  const k = quantityOf(ctx, 'pirulitos');
+  const pl = planOf(ctx, part, 'pirulitos');
+  if (!pl) return;
   const r = rng(hashString(`pirulitos${m.shape}${m.R}`));
   const color = layout.opt('pirulitos').color;
   const pale = lightOf(color) > 0.92;
@@ -1405,30 +1143,20 @@ function buildLollipops(ctx, part) {
   const tints = pale ? ['#ef7fa0', '#6fb6f2', '#f6c453', '#6fcfa8', '#b497f0'] : [vivid, shift(vivid, 0.03, 1, -0.05), shift(vivid, -0.04, 1, 0.04), mix(vivid, '#ffffff', 0.2)];
   const swirl = new Batch(lib.shape('x2-swirl', () => swirlArmGeometry(lib.detail)), candy(lib));
   const sticks = new Batch(lib.geo.stick(), stickMat(lib));
-  const want = k < 1 ? 2 : k > 1 ? 5 : 3;
-  // no meio do bolo; com velas no centro, vão para trás delas; com balões (que ficam no fundo), um pouco à frente
-  const candles = layout.has('velas');
-  const depth = layout.has('baloes') ? (candles ? 0 : -0.08) : candles ? 0.44 : 0.1;
-  // com velas no meio e balões atrás, os pirulitos ficam dos dois lados das velas
-  const spots = stickRow(ctx, want, { depth: layout.rho * depth, gap: 0.31, gapMid: candles && layout.has('baloes') ? 0.34 : 0 });
   const y0 = layout.topY;
-  const HEIGHTS = [0.4, 0.27, 0.43, 0.3, 0.38];
-  spots.forEach((sp, i) => {
-    const h = HEIGHTS[(i + (spots.length === 2 ? 1 : 0)) % HEIGHTS.length] + (r() - 0.5) * 0.03;
+  // fileira (ou dois grupos) atrás do que estiver no meio do bolo: lugar, altura e inclinação vêm do plano
+  pl.pieces.forEach((p, i) => {
     // o disco olha para a frente, abrindo um pouco em leque; o palito inclina junto
-    const yaw = sp.j * 0.3 + (r() - 0.5) * 0.12;
-    const roll = -sp.j * 0.16 + (r() - 0.5) * 0.06;
-    facingQuat(Math.sin(yaw), Math.cos(yaw), 0.07, roll, _q);
-    _y.set(0, 1, 0).applyQuaternion(_q);
-    const cx = sp.x + _y.x * h;
-    const cy = y0 + _y.y * h;
-    const cz = sp.z + _y.z * h;
-    const s = 0.94 + r() * 0.12;
+    facingQuat(Math.sin(p.yaw), Math.cos(p.yaw), 0.07, p.roll, _q);
+    const cx = p.x + p.ux * p.h;
+    const cy = y0 + p.uy * p.h;
+    const cz = p.z + p.uz * p.h;
     const spin = r() * TAU;
     // dois braços iguais, um girado meia volta: a cor e o branco
-    swirl.add(cx, cy, cz, _q2.copy(_q).multiply(_q3.setFromAxisAngle(Z, spin)), s, tints[i % tints.length], 0.06);
-    swirl.add(cx, cy, cz, _q2.copy(_q).multiply(_q3.setFromAxisAngle(Z, spin + Math.PI)), s, '#f6f1ea', 0.06);
-    sticks.add(sp.x - _y.x * 0.07, y0 - _y.y * 0.07, sp.z - _y.z * 0.07, _q, [1.5, h + 0.07, 1.5], null, 0.03);
+    swirl.add(cx, cy, cz, _q2.copy(_q).multiply(_q3.setFromAxisAngle(Z, spin)), p.s, tints[i % tints.length], 0.06);
+    swirl.add(cx, cy, cz, _q2.copy(_q).multiply(_q3.setFromAxisAngle(Z, spin + Math.PI)), p.s, '#f6f1ea', 0.06);
+    sticks.add(p.x - p.ux * 0.07, y0 - p.uy * 0.07, p.z - p.uz * 0.07, _q, [1.5, p.h + 0.07, 1.5], null, 0.03);
+    addVol(part, p.vol);
   });
   part.add(sticks, m);
   part.add(swirl, m);
@@ -1454,29 +1182,33 @@ function flakeGeometry(seed, n) {
 }
 
 function buildGoldLeaf(ctx, part) {
-  const { m, lib, layout } = ctx;
-  const zone = zoneOf(ctx, 'ouro');
-  const k = quantityOf(ctx, 'ouro');
-  const r = rng(hashString(`ouro${m.shape}${m.R}${zone}`));
+  const { m, lib } = ctx;
+  const pl = planOf(ctx, part, 'ouro');
+  if (!pl) return;
+  const r = rng(hashString(`ouro${m.shape}${m.R}${pl.zone}`));
   const lowp = lib.detail < 1;
   const kinds = [11, 23].map((seed) => new Batch(lib.shape(`x2-flake${seed}`, () => flakeGeometry(seed, lowp ? 2 : 3)), goldLeaf(lib), { cast: false, receive: false }));
   const TINTS = ['#ffffff', '#fff0cf', '#ffe2a6', '#f6d9a0'];
   const density = ctx.tier?.density || 1;
-  const pt = {};
-  const flake = (x, y, z, nx, ny, nz, big) => {
+  const flake = (x, y, z, nx, ny, nz, s) => {
     // deitada na superfície (normal n), com um canto levantado
     _y.set(nx + (r() - 0.5) * 0.3, ny + (r() - 0.5) * 0.3, nz + (r() - 0.5) * 0.3).normalize();
     _x.set(r() - 0.5, r() - 0.5, r() - 0.5).cross(_y).normalize();
     frameQuat(_x, _y, _q);
-    const s = big ? 0.09 + r() * 0.06 : 0.03 + r() * 0.04;
     kinds[r() < 0.5 ? 0 : 1].add(x + nx * 0.003, y + ny * 0.003, z + nz * 0.003, _q, [s * (0.8 + r() * 0.5), s * 0.8, s * (0.8 + r() * 0.5)], pick(TINTS, r), 0.04);
+    part.volumes.push({ x: x + nx * 0.003, y: y + ny * 0.003, z: z + nz * 0.003, r: s * 0.6, kind: 'coating' });
   };
-  /** punhado de lâminas: uma ou duas grandes e miúdas em volta, espalhando-se pela superfície (t1, t2 = eixos dela) */
-  const cluster = (cx, cy, cz, n, t1, t2, spread, count) => {
+  /**
+   * Punhado de lâminas dentro do círculo de raio R que o distribuidor reservou: uma ou duas grandes e miúdas
+   * em volta, espalhando-se pela superfície (t1, t2 = eixos dela). Nenhuma lâmina passa do círculo.
+   */
+  const cluster = (cx, cy, cz, n, t1, t2, R, count) => {
     for (let i = 0; i < count; i++) {
       const a = r() * TAU;
-      const d = Math.pow(r(), 0.8) * spread * (i < 2 ? 0.3 : 1);
-      flake(cx + (t1.x * Math.cos(a) + t2.x * Math.sin(a)) * d, cy + (t1.y * Math.cos(a) + t2.y * Math.sin(a)) * d, cz + (t1.z * Math.cos(a) + t2.z * Math.sin(a)) * d, n.x, n.y, n.z, i === 0 || (i === 1 && r() < 0.5));
+      const big = i === 0 || (i === 1 && r() < 0.5);
+      const s = Math.min(big ? 0.09 + r() * 0.06 : 0.03 + r() * 0.04, R * 1.1);
+      const d = Math.min(Math.pow(r(), 0.8) * R * (i < 2 ? 0.3 : 1), Math.max(0, R - s * 0.6));
+      flake(cx + (t1.x * Math.cos(a) + t2.x * Math.sin(a)) * d, cy + (t1.y * Math.cos(a) + t2.y * Math.sin(a)) * d, cz + (t1.z * Math.cos(a) + t2.z * Math.sin(a)) * d, n.x, n.y, n.z, s);
     }
   };
   const X1 = new THREE.Vector3(1, 0, 0);
@@ -1484,46 +1216,17 @@ function buildGoldLeaf(ctx, part) {
   const nrm = new THREE.Vector3();
   const tan = new THREE.Vector3();
   const per = Math.round((lowp ? 7 : 10) * Math.sqrt(density));
-  const sideCluster = (t, s, y, spread, count) => {
-    pathAt(t.frost, s, pt);
-    nrm.set(pt.nx, 0, pt.nz);
-    tan.set(pt.tx, 0, pt.tz);
-    cluster(pt.x + pt.nx * wallOut(ctx), y, pt.z + pt.nz * wallOut(ctx), nrm, tan, Y, spread, count);
-  };
-  if (zone === 'crown') {
-    // faixa irregular junto à borda do topo, com respingos descendo o começo da lateral
-    const ring = cleanOffset(m.topFlat, -(layout.border + 0.07));
-    const n = Math.round(ring.length * 7.5 * k);
-    for (let i = 0; i < n; i++) {
-      pathAt(ring, ((i + r()) / n) * ring.length, pt);
-      const inward = (r() - 0.35) * 0.1;
-      cluster(pt.x - pt.nx * inward, layout.topY, pt.z - pt.nz * inward, Y, X1, Z1, 0.05, 2 + Math.floor(r() * 3));
-    }
-    if (!m.naked && layout.border < 0.06) {
-      const side = Math.round(m.frost.length * 2.2 * k);
-      for (let i = 0; i < side; i++) sideCluster(m, r() * m.frost.length, m.y0 + m.Ht - m.rf - 0.03 - Math.pow(r(), 1.6) * 0.22, 0.05, 2 + Math.floor(r() * 2));
-    }
-  } else if (zone === 'cascade') {
-    spotsFor(ctx, zone, { size: 0.1, r: 0.07, count: 9, k, seed: 'ouro' }).forEach((sp) => {
-      if (!sp.side) return cluster(sp.x, sp.y, sp.z, Y, X1, Z1, 0.1, per);
-      nrm.set(sp.ox, 0, sp.oz);
-      tan.set(-sp.oz, 0, sp.ox);
-      cluster(sp.x - sp.ox * 0.035, sp.y, sp.z - sp.oz * 0.035, nrm, tan, Y, 0.11 * sp.taper, per);
-      return null;
-    });
-  } else {
-    // espalhado: manchas de ouro no topo e, mais largas, na lateral de cada andar
-    spotsFor(ctx, 'scatter', { size: 0.17, r: 0.1, count: 6, k, seed: 'ouro' }).forEach((sp) => cluster(sp.x, sp.y, sp.z, Y, X1, Z1, 0.1, per));
-    (m.stack || [m]).forEach((t) => {
-      if (t.naked) return;
-      const n = Math.max(3, Math.round(t.frost.length * 1.1 * k));
-      const a0 = r() * t.frost.length;
-      for (let i = 0; i < n; i++) {
-        const sideH = t.Ht - t.rf;
-        sideCluster(t, a0 + ((i + r() * 0.6) / n) * t.frost.length, t.y0 + sideH * (0.2 + 0.65 * r()), 0.12, per + 2);
-      }
-    });
-  }
+  // coroa: faixa irregular junto à borda (e respingos no começo da lateral) · cascata · espalhado: manchas de
+  // ouro no topo e, mais largas, na lateral — cada mancha no círculo que o plano reservou para ela
+  pl.pieces.forEach((p) => {
+    const R = p.vol[0][3];
+    const count = p.n ? p.n + Math.floor(r() * 2) : per + (p.side && pl.zone === 'scatter' ? 2 : 0);
+    if (p.side) {
+      nrm.set(p.ox, 0, p.oz);
+      tan.set(-p.oz, 0, p.ox);
+      cluster(p.x, p.y, p.z, nrm, tan, Y, R, count);
+    } else cluster(p.x, p.y, p.z, Y, X1, Z1, R, count);
+  });
   kinds.forEach((b) => part.add(b, m));
 }
 
@@ -1548,25 +1251,21 @@ function balloonGeometry(D) {
 
 function buildBalloons(ctx, part) {
   const { m, lib, layout } = ctx;
-  const k = quantityOf(ctx, 'baloes');
+  const pl = planOf(ctx, part, 'baloes');
+  if (!pl) return;
   const r = rng(hashString(`baloes${m.shape}${m.R}`));
   const tints = harmonyOf(layout.opt('baloes').color);
   const balloons = new Batch(lib.shape('x2-balloon', () => balloonGeometry(lib.detail)), candy(lib));
   const sticks = new Batch(lib.geo.stick(), stickMat(lib));
-  const want = k < 1 ? 3 : k > 1 ? 7 : 5;
-  const spots = stickRow(ctx, want, { depth: layout.rho * 0.36, gap: 0.2 });
   const y0 = layout.topY;
-  const n = spots.length;
-  spots.forEach((sp, i) => {
-    // alturas em zigue-zague (vizinhos nunca na mesma altura) e os do meio mais altos
-    const h = 0.4 + (i % 2 ? 0.27 : 0) + 0.06 * (1 - Math.abs(sp.j)) + (r() - 0.5) * 0.03;
-    // o palito abre em leque para os lados e um tico para trás
-    const lean = sp.j * 0.3 * Math.min(1, n / 4) + (r() - 0.5) * 0.06;
-    _y.set(Math.sin(lean), Math.cos(lean), -0.06 - r() * 0.06).normalize();
+  // fileira no fundo do topo, em leque: alturas em zigue-zague (vizinhos nunca na mesma altura); com plaquinha
+  // ou nome em acrílico, os balões ficam atrás e acima deles — tudo já decidido pelo plano
+  pl.pieces.forEach((p, i) => {
+    _y.set(p.ax, p.ay, p.az);
     axisQuat(_y, r() * TAU, _q); // o balão segue a direção do palito
-    const s = 0.95 + r() * 0.1;
-    balloons.add(sp.x + _y.x * h, y0 + _y.y * h, sp.z + _y.z * h, _q, s, tints[i % tints.length], 0.06);
-    sticks.add(sp.x - _y.x * 0.07, y0 - _y.y * 0.07, sp.z - _y.z * 0.07, _q, [1.25, h + 0.05, 1.25], null, 0.03);
+    balloons.add(p.x + p.ax * p.h, y0 + p.ay * p.h, p.z + p.az * p.h, _q, p.s, tints[i % tints.length], 0.06);
+    sticks.add(p.x - p.ax * 0.07, y0 - p.ay * 0.07, p.z - p.az * 0.07, _q, [1.25, p.h + 0.05, 1.25], null, 0.03);
+    addVol(part, p.vol);
   });
   part.add(sticks, m);
   part.add(balloons, m);
@@ -1678,49 +1377,26 @@ function bowGeometry(D, rest) {
   return mergeGeometries([...parts.map((g) => piece(g)), piece(knot)]);
 }
 
-/** Ponto da lateral de um andar que olha de frente para quem vê o bolo (no coração, o flanco direito). */
-function frontSpot(t) {
-  const path = t.frost;
-  // redondo: um pouco à direita da frente (de frente para a câmera); com faces retas: no meio da face da frente
-  const fx = t.shape === 'heart' ? 0.62 : t.shape === 'round' ? 0.3 : 0;
-  const fz = t.shape === 'heart' ? 0.78 : t.shape === 'round' ? 0.954 : 1;
-  let best = 0;
-  for (let i = 1; i < path.n; i++) if (path.nx[i] * fx + path.nz[i] * fz > path.nx[best] * fx + path.nz[best] * fz) best = i;
-  // se cair num trecho reto, vai para o meio dele
-  const run = [];
-  for (let i = 0; i < path.n; i++) if (path.nx[i] * path.nx[best] + path.nz[i] * path.nz[best] > 0.9995) run.push(i);
-  let x = 0;
-  let z = 0;
-  run.forEach((i) => {
-    x += path.x[i];
-    z += path.z[i];
-  });
-  return { x: x / run.length, z: z / run.length, nx: path.nx[best], nz: path.nz[best], flat: run.length > 3 };
-}
-
 function buildBow(ctx, part) {
   const { m, lib, layout } = ctx;
-  const zone = zoneOf(ctx, 'lacos');
+  const pl = planOf(ctx, part, 'lacos');
+  if (!pl) return;
   const color = shown(layout.opt('lacos').color);
-  const rest = zone !== 'frente';
+  const p = pl.pieces[0];
+  const rest = !p.side;
   const batch = new Batch(lib.shape(rest ? 'x2-bowRest' : 'x2-bow', () => bowGeometry(lib.detail, rest)), fondant(lib));
   if (rest) {
-    // em pé no meio do topo, de frente para quem olha, com as pontas deitadas na cobertura
-    const s = clamp(Math.min(0.6 + layout.rho * 0.5, (layout.rho - layout.border) / 0.36), 0.5, 1.25);
-    facingQuat(0.12, 1, 0.1, 0, _q);
-    batch.add(m.center.x, layout.topY, m.center.z - 0.06 * s, _q, s, color, 0.2 * s);
-    groundBlob(ctx, part, m.center.x, m.center.z, 0.26 * s);
+    // em pé no topo, de frente para quem olha, com as pontas deitadas na cobertura
+    facingQuat(p.fx, p.fz, 0.04, 0, _q);
+    batch.add(p.x, p.y, p.z, _q, p.s, color, 0.2 * p.s);
+    groundBlob(ctx, part, p.x, p.z + 0.06 * p.s, 0.26 * p.s);
   } else {
-    // na frente da lateral do andar de cima, logo abaixo da borda
-    const at = frontSpot(m);
-    const sideH = m.Ht - m.rf;
-    const s = clamp(Math.min(0.72 + layout.rho * 0.5, (sideH - 0.05) / 0.57), 0.45, 1.3);
-    _x.set(at.nz, 0, -at.nx);
+    // na frente da lateral do andar de cima, logo abaixo da borda (ou do que estiver ocupando o alto da lateral)
+    _x.set(p.nz, 0, -p.nx);
     frameQuat(_x, Y, _q);
-    const y = m.y0 + sideH - 0.04 - 0.19 * s;
-    const off = 0.004 + wallOut(ctx);
-    batch.add(at.x + at.nx * off, y, at.z + at.nz * off, _q, s, color, 0.3 * s);
+    batch.add(p.x, p.y, p.z, _q, p.s, color, 0.3 * p.s);
   }
+  addVol(part, p.vol);
   part.add(batch, m);
 }
 
@@ -1744,68 +1420,35 @@ function heartGeometry(D) {
 
 function buildHearts(ctx, part) {
   const { m, lib, layout } = ctx;
-  const zone = zoneOf(ctx, 'coracoes');
-  const k = quantityOf(ctx, 'coracoes');
-  const r = rng(hashString(`coracoes${m.shape}${m.R}${zone}`));
+  const pl = planOf(ctx, part, 'coracoes');
+  if (!pl) return;
+  const r = rng(hashString(`coracoes${m.shape}${m.R}${pl.zone}`));
   const tints = tintsOf(layout.opt('coracoes').color);
   const hearts = new Batch(lib.shape('x2-heart', () => heartGeometry(lib.detail)), sugar(lib), smallCast(ctx));
+  const sticks = new Batch(lib.geo.stick(), stickMat(lib), smallCast(ctx));
   const y0 = layout.topY;
-  const TIP = 0.07; // do centro à ponta de baixo
-  if (zone === 'palito') {
-    const sticks = new Batch(lib.geo.stick(), stickMat(lib), smallCast(ctx));
-    const want = k < 1 ? 3 : k > 1 ? 9 : 6;
-    // em volta do centro, mais altos atrás e mais baixos na frente
-    const ringR = Math.max(0.06, Math.min(layout.rho * 0.5, layout.rho - layout.border - 0.1));
-    for (let i = 0; i < want; i++) {
-      const a = Math.PI * 0.5 + ((i + 0.5) / want) * TAU + (r() - 0.5) * 0.25;
-      const d = ringR * (0.72 + r() * 0.28);
-      const x = m.center.x + Math.cos(a) * d;
-      const z = m.center.z + Math.sin(a) * d;
-      const h = 0.3 + 0.1 * (1 - Math.sin(a)) + r() * 0.1;
-      const yaw = Math.cos(a) * 0.45 + (r() - 0.5) * 0.3;
-      facingQuat(Math.sin(yaw), Math.cos(yaw), 0.05, (r() - 0.5) * 0.3, _q);
-      _y.set(0, 1, 0).applyQuaternion(_q);
-      const s = 1.35 + r() * 0.35;
-      hearts.add(x + _y.x * h, y0 + _y.y * h, z + _y.z * h, _q, s, pick(tints, r), 0.05);
-      sticks.add(x - _y.x * 0.06, y0 - _y.y * 0.06, z - _y.z * 0.06, _q, [0.9, h + 0.03, 0.9], null, 0.03);
+  pl.pieces.forEach((p, i) => {
+    if (p.t === 'heartStick') {
+      // no palito, em volta do meio do bolo
+      facingQuat(Math.sin(p.yaw), Math.cos(p.yaw), 0.05, p.roll, _q);
+      hearts.add(p.x + p.ux * p.h, y0 + p.uy * p.h, p.z + p.uz * p.h, _q, p.s, pick(tints, r), 0.05);
+      sticks.add(p.x - p.ux * 0.06, y0 - p.uy * 0.06, p.z - p.uz * 0.06, _q, [0.9, p.h + 0.03, 0.9], null, 0.03);
+    } else if (p.side) {
+      // grudado na lateral do andar de cima
+      facingQuat(p.ox, p.oz, 0, p.roll, _q);
+      hearts.add(p.x, p.y, p.z, _q, p.s, pick(tints, r), 0.07 * p.s);
+    } else if (p.flat) {
+      // deitado no topo
+      _q.setFromAxisAngle(X, -Math.PI / 2 + (r() - 0.5) * 0.2).multiply(_q2.setFromAxisAngle(Z, p.spin));
+      hearts.add(p.x, p.y, p.z, _q, p.s, pick(tints, r), 0.07 * p.s);
+    } else {
+      // em pé, com a ponta fincada na cobertura (na coroa, de frente para fora)
+      facingQuat(p.ox, p.oz, p.lean, p.roll, _q);
+      hearts.add(p.x, p.y, p.z, _q, p.s, pl.zone === 'crown' ? tints[i % tints.length] : pick(tints, r), 0.07 * p.s);
     }
-    part.add(sticks, m);
-  } else if (zone === 'scatter') {
-    spotsFor(ctx, 'scatter', { size: 0.085, r: 0.075, count: 14, k, seed: 'coracoes' }).forEach((sp) => {
-      const s = 0.8 + r() * 0.5;
-      if (r() < 0.45) {
-        // fincado na cobertura, meio deitado para trás
-        const a = Math.PI * 0.5 + (r() - 0.5) * 1.6;
-        const lean = 0.25 + r() * 0.5;
-        facingQuat(Math.cos(a), Math.sin(a), lean, (r() - 0.5) * 0.5, _q);
-        hearts.add(sp.x, sp.y + (TIP * Math.cos(lean) + 0.02 * Math.sin(lean)) * s - 0.012, sp.z, _q, s, pick(tints, r), 0.07 * s);
-      } else {
-        // deitado no topo
-        _q.setFromAxisAngle(X, -Math.PI / 2 + (r() - 0.5) * 0.3).multiply(_q2.setFromAxisAngle(Z, r() * TAU));
-        hearts.add(sp.x, sp.y + 0.024 * s, sp.z, _q, s, pick(tints, r), 0.07 * s);
-      }
-    });
-    // alguns grudados na lateral do andar de cima, perto da borda
-    if (!m.naked) {
-      const pt = {};
-      const n = Math.round(m.frost.length * 1.5 * k);
-      for (let i = 0; i < n; i++) {
-        pathAt(m.frost, ((i + r() * 0.8) / n) * m.frost.length, pt);
-        facingQuat(pt.nx, pt.nz, 0, (r() - 0.5) * 0.9, _q);
-        const s = 0.7 + r() * 0.45;
-        const off = 0.016 * s + wallOut(ctx);
-        hearts.add(pt.x + pt.nx * off, m.y0 + (m.Ht - m.rf) * (0.5 + 0.42 * r()), pt.z + pt.nz * off, _q, s, pick(tints, r), 0.07 * s);
-      }
-    }
-  } else {
-    // coroa: em pé junto à borda, de frente para fora, com a ponta fincada na cobertura
-    decorSpots(ctx, zone, { size: 0.092, k, seed: 'coracoes' }).forEach((sp, i) => {
-      const s = (i % 2 ? 0.92 : 1.18) * (0.8 + 0.2 * sp.taper);
-      const lean = 0.16 + r() * 0.14;
-      facingQuat(sp.ox, sp.oz, lean, (r() - 0.5) * 0.24, _q);
-      hearts.add(sp.x, sp.y + TIP * Math.cos(lean) * s - 0.014, sp.z, _q, s, tints[i % tints.length], 0.07 * s);
-    });
-  }
+    addVol(part, p.vol);
+  });
+  part.add(sticks, m);
   part.add(hearts, m);
 }
 
@@ -1927,9 +1570,9 @@ function butterflyGeometry(D) {
 
 function buildButterflies(ctx, part) {
   const { m, lib, layout } = ctx;
-  const zone = zoneOf(ctx, 'borboletas');
-  const k = quantityOf(ctx, 'borboletas');
-  const r = rng(hashString(`borboletas${m.shape}${m.R}${zone}`));
+  const pl = planOf(ctx, part, 'borboletas');
+  if (!pl) return;
+  const r = rng(hashString(`borboletas${m.shape}${m.R}${pl.zone}`));
   const color = shown(layout.opt('borboletas').color);
   const deep = shift(color, 0, 1.25, lightOf(color) > 0.75 ? -0.08 : 0);
   const tints = [deep, mix(deep, '#ffffff', 0.25), shift(deep, 0.05, 1.05, -0.03), shift(deep, -0.06, 1, 0.02)];
@@ -1940,23 +1583,15 @@ function buildButterflies(ctx, part) {
   const batch = new Batch(lib.shape('x2-butterfly', () => butterflyGeometry(lib.detail)), mat, smallCast(ctx));
   const head = new THREE.Vector3();
   const up = new THREE.Vector3();
-  /** up = para onde ficam as costas da borboleta; a cabeça aponta para um lado qualquer da superfície */
-  const put = (x, y, z, s) => {
+  pl.pieces.forEach((p) => {
+    // up = para onde ficam as costas da borboleta; a cabeça aponta para um lado qualquer da superfície
+    if (p.side) up.set(p.ox, p.up, p.oz).normalize();
+    else up.set((r() - 0.5) * 0.2, 1, (r() - 0.5) * 0.2).normalize();
     head.set(r() - 0.5, r() - 0.5, r() - 0.5).cross(up).normalize();
     frameQuat(head, up, _q);
     // asas mais fechadas ou mais abertas, de borboleta para borboleta
-    const open = 0.75 + r() * 0.6;
-    batch.add(x, y, z, _q, [s, s * (1.25 - 0.3 * open), s * open], pick(tints, r), 0.09 * s);
-  };
-  spotsFor(ctx, zone, { size: zone === 'scatter' ? 0.13 : 0.115, r: 0.1, count: zone === 'cascade' ? 7 : 6, k, seed: 'borboletas' }).forEach((sp) => {
-    const s = (0.85 + r() * 0.4) * (0.8 + 0.2 * sp.taper);
-    if (sp.side) {
-      up.set(sp.ox, 0.2 + r() * 0.3, sp.oz).normalize();
-      put(sp.x - sp.ox * (0.115 * 0.35 - 0.004), sp.y, sp.z - sp.oz * (0.115 * 0.35 - 0.004), s);
-    } else {
-      up.set((r() - 0.5) * 0.4, 1, (r() - 0.5) * 0.4).normalize();
-      put(sp.x, sp.y + 0.002, sp.z, s);
-    }
+    batch.add(p.x, p.y, p.z, _q, [p.s, p.s * (1.25 - 0.3 * p.open), p.s * p.open], pick(tints, r), 0.09 * p.s);
+    addVol(part, p.vol);
   });
   part.add(batch, m);
 }
@@ -2007,6 +1642,9 @@ const HEIGHTS = {
 
 /** Altura extra (acima do topo do bolo) que as decorações daqui ocupam — para enquadrar a câmera. */
 export function extraDecorHeight(config) {
+  // o que o distribuidor colocou de verdade (balões que subiram, pirulitos, montinhos…)
+  const planned = plannedHeights(config);
+  if (planned) return planned.extra;
   let h = 0;
   (config?.decor?.items || []).forEach((id) => {
     const row = HEIGHTS[id];

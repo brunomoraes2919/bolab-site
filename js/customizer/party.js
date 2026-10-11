@@ -2,9 +2,10 @@
 // Cada construtor recebe (ctx, part), como em decor.js. Nada de arquivos de fonte: o texto é desenhado num
 // <canvas> com as fontes do aparelho e vira textura (escrita) ou contorno recortado de verdade (topo e velas).
 import * as THREE from 'three';
-import { Batch, groundBlob } from './decor.js';
+import { Batch, groundBlob, plaqueLiftOf, addVol, plannedHeights } from './decor.js';
 import { rng, hashString, makeCanvas } from './textures.js';
-import { cleanOffset, pointInPath } from './geometry.js';
+import { topperLines, topperSize, VOL } from './occupancy.js';
+import { getSize, tierRadii } from '../data/customizer.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -126,78 +127,16 @@ function dataTexture(data, w, h, { srgb = false, aniso = 4 } = {}) {
 }
 
 /* ───────── Quem fica onde no topo ─────────
-   As três peças daqui consultam o mesmo plano, para não disputarem lugar entre si nem com o resto:
-   fundo = placa, topos e palitos · meio = arranjo ou velas · frente = a escrita, quando o meio está ocupado. */
+   Quem decide é o distribuidor (occupancy.js), o mesmo plano que todas as decorações leem — ctx.layout.party:
+     text     onde cabe a escrita: retângulo livre { mode: 'flat', x, z, hw, hh } ou arco na frente { mode: 'arc', rmid, half, hh }
+     topper   o nome em acrílico: { x, z, maxW, maxEm, lift, stakeX, tilt }
+     numbers  velas de número: { x, z, s, w } · sparkler: { x, z } · (plaquinha, estrelas e velas clássicas: decor.js)
+   Aqui cada peça mede o texto de verdade (as fontes são do aparelho) e se ajusta para caber no lugar reservado. */
 
-function plaqueTop(text) {
+function plaqueTop(text, lift = 0.34) {
   const t = String(text || '').trim();
   if (!t) return 0;
-  return 0.34 + (t.length > 14 && t.includes(' ') ? 0.52 : 0.36); // mesmas medidas da plaquinha (decor.js)
-}
-
-function planTop(ctx) {
-  const { config, m, layout } = ctx;
-  const d = config.decor;
-  const cx = m.center.x;
-  const cz = m.center.z;
-  const rho = layout.rho;
-  const inset = layout.border + 0.035;
-  const free = Math.max(0.1, rho - inset); // raio livre do topo, já sem a borda de bico
-  const zones = Object.values(layout.zones || {});
-  const has = (id) => Boolean(layout.has?.(id));
-  const arr = zones.includes('center'); // arranjo no meio (frutas, flores, raspas…)
-  const ring = zones.some((z) => z === 'crown' || z === 'left' || z === 'right');
-  const velas = has('velas');
-  const special = velas && d.candleStyle !== 'classica';
-  const script = Boolean(layout.script ?? (d.messageMode === 'bico' && d.message));
-  const plaque = Boolean(layout.message);
-  const stars = has('topo');
-  const name = Boolean(d.topper?.text?.trim());
-  const sticks = stars || name || plaque || has('baloes') || has('pirulitos');
-  const backZ = cz - Math.min(0.34, rho * 0.36);
-  // por dentro de uma coroa (ou meias-luas) sobra uma cópia menor do formato do topo
-  const kin = ring ? clamp(((layout.ringK ?? 0.7) * rho - 0.15) / free, 0.3, 1) : 1;
-
-  let path = null;
-  const inTop = (x, z) => {
-    if (m.shape === 'round') return Math.hypot(x - cx, z - cz) <= free;
-    if (!path) path = cleanOffset(m.topFlat, -inset);
-    return pointInPath(path, x, z);
-  };
-
-  // velas de número / faísca: no meio; com arranjo no meio vão para a frente (ou para trás, se a frente é da escrita)
-  let candles = null;
-  if (special) {
-    let z = cz;
-    if (arr) z = cz + (script ? -1 : 1) * Math.max(0.08, free * kin - 0.13);
-    else if (script) z = cz - (sticks ? 0 : 0.16 * rho);
-    else if (sticks) z = cz + Math.min(0.12, 0.14 * rho);
-    const aside = d.candleStyle === 'faisca' && (name || plaque) && !arr ? -Math.min(0.34, free * kin * 0.5) : 0;
-    candles = { x: cx + aside, z: aside ? z + 0.06 : z };
-  }
-
-  // escrita: limites do retângulo de texto
-  const T = { zmin: -Infinity, zmax: Infinity, rmax: Infinity, r0: 0 };
-  if (arr) {
-    T.r0 = Math.max(0.1, Math.min(0.58 * rho, free - 0.2));
-    T.zmin = cz + T.r0;
-  } else if (velas && !special) {
-    if (stars) {
-      // com o topo de estrelas, as velas clássicas formam um arco na frente: a escrita fica no miolo
-      T.rmax = Math.max(0.2, 0.62 * rho - 0.1);
-      T.zmin = cz - 0.14 * rho + 0.1;
-    } else {
-      const n = d.candles || 1;
-      const ringR = n === 1 ? 0 : Math.min(rho - layout.border - 0.1, Math.max(0.13, (n * 0.105) / TAU + 0.08));
-      T.zmin = cz + ringR + 0.07;
-    }
-  } else if (special && candles.z >= cz - 0.2 * rho) T.zmin = candles.z + 0.1;
-  if (stars) T.zmin = Math.max(T.zmin, cz - 0.14 * rho + 0.1);
-  if (name || has('baloes') || has('pirulitos')) T.zmin = Math.max(T.zmin, backZ + 0.1);
-  if (zones.includes('cascade')) T.zmax = cz + 0.24 * rho; // a cascata nasce na frente, à direita
-  const inText = (x, z) => z >= T.zmin && z <= T.zmax && Math.hypot(x - cx, z - cz) <= T.rmax && inTop(cx + (x - cx) / kin, cz + (z - cz) / kin);
-
-  return { cx, cz, rho, free, kin, backZ, arr, ring, velas, special, script, plaque, stars, name, sticks, candles, text: T, inTop, inText };
+  return lift + (t.length > 14 && t.includes(' ') ? 0.52 : 0.36); // mesmas medidas da plaquinha (decor.js)
 }
 
 /* ───────── Escrita com bico ─────────
@@ -236,10 +175,8 @@ function strokeOf(font) {
   return em;
 }
 
-/** Escolhe quebra de linha, tamanho e lugar do texto para caber na área livre do topo. */
-function fitScript(g, text, bastao, plan, round) {
-  const { cx, cz, free, kin } = plan;
-  const T = plan.text;
+/** Escolhe quebra de linha e tamanho do texto para caber no lugar que o distribuidor reservou (plan = layout.party.text). */
+function fitScript(g, text, bastao, plan) {
   const fat = bastao ? Math.max(0, 0.115 - strokeOf(faceOf(true))) : 0; // quanto o cordão engorda a letra de fôrma (em)
   g.font = faceOf(bastao).replace('{px}', '100');
   const sp = bastao ? 0.035 + fat * 0.9 : 0; // espaço extra entre letras de fôrma
@@ -259,68 +196,26 @@ function fitScript(g, text, bastao, plan, round) {
     const bottom = bases[bases.length - 1] + lines[lines.length - 1].d + ex;
     return { lines, bases, top, hb: bottom - top, wb: Math.max(...lines.map((l) => l.w)) + 2 * ex };
   };
-  const fitsAt = (b, s, zc) => {
-    const z0 = zc - (b.hb * s) / 2;
-    for (let i = 0; i < b.lines.length; i++) {
-      const l = b.lines[i];
-      const hw = (l.w / 2 + ex) * s;
-      const za = z0 + (b.bases[i] - l.a - ex - b.top) * s;
-      const zb = z0 + (b.bases[i] + l.d + ex - b.top) * s;
-      if (!(plan.inText(cx - hw, za) && plan.inText(cx + hw, za) && plan.inText(cx - hw, zb) && plan.inText(cx + hw, zb))) return false;
-    }
-    return true;
-  };
-  const zA = Math.max(T.zmin, cz - free * kin);
-  const zB = Math.min(T.zmax, cz + free * kin);
-  const zPref = T.zmin > -1e3 || T.zmax < 1e3 ? (zA + zB) / 2 : cz;
-  const best = (b) => {
-    let out = { s: 0, z: zPref, score: 0 };
-    for (let i = 0; i <= 12; i++) {
-      const zc = zA + ((zB - zA) * i) / 12;
-      let lo = 0.05;
-      let hi = smax;
-      if (!fitsAt(b, lo, zc)) continue;
-      if (!fitsAt(b, hi, zc)) {
-        for (let k = 0; k < 9; k++) {
-          const mid = (lo + hi) / 2;
-          if (fitsAt(b, mid, zc)) lo = mid;
-          else hi = mid;
-        }
-      } else lo = hi;
-      const score = lo * (1 - (0.25 * Math.abs(zc - zPref)) / plan.rho);
-      if (score > out.score) out = { s: lo, z: zc, score };
-    }
-    return out;
-  };
-
   const one = block([text]);
-  let pick = { ...best(one), b: one };
+  if (plan.mode === 'arc') {
+    // meio ocupado num bolo redondo: o texto acompanha a borda da frente, em arco, dentro da faixa reservada
+    const s = Math.min(smax * 0.8, (2 * plan.hh) / one.hb, (2 * plan.half * plan.rmid) / one.wb);
+    return { mode: 'arc', b: one, s, x: plan.x, z: plan.z, rmid: plan.rmid, sp, ex };
+  }
+  // reto: o maior tamanho que cabe no retângulo reservado, em uma ou duas linhas
+  const sizeOf = (b) => Math.min(smax, (2 * plan.hw) / b.wb, (2 * plan.hh) / b.hb);
+  let pick = { b: one, s: sizeOf(one) };
   for (let i = 1; i < text.length - 1; i++) {
     if (text[i] !== ' ') continue;
     const a = text.slice(0, i).trim();
     const c = text.slice(i + 1).trim();
     if (!a || !c) continue;
     const two = block([a, c]);
-    const fit = best(two);
+    const s2 = sizeOf(two);
     // duas linhas só quando a letra fica bem maior
-    if (fit.s > (pick.b === one ? pick.s * 1.2 : pick.s)) pick = { ...fit, b: two };
+    if (s2 > (pick.b === one ? pick.s * 1.2 : pick.s)) pick = { b: two, s: s2 };
   }
-  let out = { mode: 'flat', b: pick.b, s: pick.s, x: cx, z: pick.z, sp, ex };
-
-  // meio ocupado num bolo redondo: o texto acompanha a borda da frente, em arco
-  if (round && T.r0 > 0) {
-    const r1 = Math.min(free * kin, T.rmax) - 0.005;
-    let s = Math.min(smax * 0.8, (r1 - T.r0) / one.hb);
-    let rmid = r1 - (one.hb * s) / 2;
-    s = Math.min(s, (2.3 * rmid) / one.wb);
-    rmid = r1 - (one.hb * s) / 2;
-    if (s > out.s * 1.1) out = { mode: 'arc', b: one, s, x: cx, z: cz, rmid, sp, ex };
-  }
-  if (!(out.s >= 0.085)) {
-    // não coube: letra mínima, no lugar preferido (pode encostar no que estiver por perto)
-    out = { mode: 'flat', b: one, s: Math.max(0.07, Math.min(0.085, (1.9 * free * kin) / one.wb)), x: cx, z: clamp(zPref, cz - free * 0.5, cz + free * 0.6), sp, ex };
-  }
-  return out;
+  return { mode: 'flat', b: pick.b, s: pick.s, x: plan.x, z: plan.z, sp, ex };
 }
 
 /** Desenha as linhas no rascunho (tinta branca). k = pixels por unidade do mundo. Devolve as medidas da textura. */
@@ -648,9 +543,11 @@ function buildScript(ctx, part) {
   if (!text) return;
   const bastao = d.script === 'bastao';
   const mobile = lib.detail < 1;
-  const plan = planTop(ctx);
+  part.volumes = [];
+  const plan = layout.party?.text; // o lugar que o distribuidor reservou para a escrita (nada mais fica ali)
+  if (!plan) return;
   const seed = hashString(`escrita${text}${bastao}`);
-  const fit = fitScript(scratch(8, 8), text, bastao, plan, m.shape === 'round');
+  const fit = fitScript(scratch(8, 8), text, bastao, plan);
   const ink = drawScript(fit, bastao, mobile ? 380 : 480, mobile ? 512 : 768, mobile ? 256 : 384, seed);
   const maps = pipedMaps(ink.g, ink.W, ink.H, ink.k, ink.fs, seed);
 
@@ -665,14 +562,15 @@ function buildScript(ctx, part) {
   const color = shown(HEX.test(d.messageColor) ? d.messageColor : '#d96b82');
   // glacê de escrever: liso, com um brilho macio que acompanha o cordão
   const look = { color, map: colTex, normalMap: nrmTex, normalScale: new THREE.Vector2(1, 1), roughness: 0.45, clearcoat: 0.24, clearcoatRoughness: 0.32, envMapIntensity: 0.75 };
-  // sobre granulado ou confete, o cordão assenta por cima deles (senão a mensagem sumiria por baixo)
-  const over = layout.has?.('granulado') ? 0.017 : layout.has?.('confete') ? 0.009 : 0;
+  // granulado e confete deixam livre o lugar da escrita: o cordão assenta direto na cobertura
+  const over = 0;
   const group = new THREE.Group();
 
-  const shadow = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: shTex, color: 0x3a1420, transparent: true, opacity: 0.32, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
+  const clip = ctx.clip || {}; // planos de corte do "ver por dentro": a escrita é fatiada junto com o bolo
+  const shadow = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: shTex, color: 0x3a1420, transparent: true, opacity: 0.32, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, ...clip }));
   shadow.position.y = 0.0006;
   shadow.renderOrder = -0.6; // antes das chamas e dos clarões, que ficam acima do bolo
-  const base = new THREE.Mesh(geo, crispEdge(lib.physical({ ...look, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })));
+  const base = new THREE.Mesh(geo, crispEdge(lib.physical({ ...look, ...clip, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })));
   base.position.y = 0.0012 + over;
   base.renderOrder = -0.5;
   base.receiveShadow = true;
@@ -687,7 +585,7 @@ function buildScript(ctx, part) {
     levels.push(0.0012 + over + maps.hBead * (0.2 + 0.8 * t));
     cuts.push(0.25 + 0.75 * t);
   }
-  const stack = new THREE.Mesh(stripGeometry(w, h, rmid, levels, cuts), cutByHeight(lib.physical(look)));
+  const stack = new THREE.Mesh(stripGeometry(w, h, rmid, levels, cuts), cutByHeight(lib.physical({ ...look, ...clip })));
   stack.receiveShadow = true;
   group.add(stack);
   part.owned.push(stack.geometry, stack.material);
@@ -695,7 +593,31 @@ function buildScript(ctx, part) {
   if (fit.mode === 'arc') group.position.set(fit.x, layout.topY, fit.z + fit.rmid);
   else group.position.set(fit.x, layout.topY, fit.z);
   part.addObject(group, m, Math.max(0.2, w * 0.5));
+  if (ctx.clip) part.objects[part.objects.length - 1].clipped = true; // não some com a fatia: é cortada com o bolo
   part.script = { x: group.position.x, y: layout.topY, z: group.position.z, w, h }; // onde a escrita ficou (para a câmera, se quiser)
+  // volumes: discos rentes ao topo cobrindo a tinta (bloco do texto, sem as margens transparentes da textura)
+  const tw = fit.b.wb * fit.s;
+  const th = fit.b.hb * fit.s;
+  const rd = Math.min(0.03, th / 2, tw / 2);
+  const ny = Math.max(1, Math.ceil(th / (rd * 1.7)));
+  if (fit.mode === 'arc') {
+    const half = tw / 2 / fit.rmid;
+    const na = Math.max(2, Math.ceil(tw / (rd * 1.7)));
+    for (let i = 0; i <= na; i++) {
+      const a = Math.PI / 2 - half + (2 * half * i) / na;
+      for (let j = 0; j <= ny; j++) {
+        const rad = fit.rmid - th / 2 + rd + ((th - 2 * rd) * j) / ny;
+        part.volumes.push({ x: fit.x + Math.cos(a) * rad, y: layout.topY + 0.012, z: fit.z + Math.sin(a) * rad, r: rd, kind: 'flat' });
+      }
+    }
+  } else {
+    const nx = Math.max(1, Math.ceil(tw / (rd * 1.7)));
+    for (let i = 0; i <= nx; i++) {
+      for (let j = 0; j <= ny; j++) {
+        part.volumes.push({ x: fit.x - tw / 2 + rd + ((tw - 2 * rd) * i) / nx, y: layout.topY + 0.012, z: fit.z - th / 2 + rd + ((th - 2 * rd) * j) / ny, r: rd, kind: 'flat' });
+      }
+    }
+  }
 }
 
 /* ───────── Do desenho ao sólido recortado (topo de acrílico e velas de número) ───────── */
@@ -863,7 +785,7 @@ function pointInLoop(loop, x, y) {
  * Pixel (px, py) → mundo ((px − ox) · sc, (oy − py) · sc). depth = espessura · steps = segmentos da quina ·
  * uv > 0 cria coordenadas de textura (para o brilho das velas) · bulge = quanto a frente "espelha em curva".
  */
-function extrudeLoops(loops, { sc, ox, oy, depth, round = 0, steps = 2, uv = 0, bulge = 0, extra = null }) {
+function extrudeLoops(loops, { sc, ox, oy, depth, round = 0, steps = 2, uv = 0, bulge = 0, bulgeY = 0, extra = null }) {
   const h = depth / 2;
   // perfil de frente para trás: { recuo, z, normal radial, normal em z, cut = não liga com o anel anterior }
   const prof = [];
@@ -895,9 +817,18 @@ function extrudeLoops(loops, { sc, ox, oy, depth, round = 0, steps = 2, uv = 0, 
     host?.holes.push(hl);
   });
   let half = 0;
+  let yLo = Infinity;
+  let yHi = -Infinity;
   loops.forEach((l) => {
-    for (let i = 0; i < l.n; i++) half = Math.max(half, Math.abs((l.p[i * 2] - ox) * sc));
+    for (let i = 0; i < l.n; i++) {
+      half = Math.max(half, Math.abs((l.p[i * 2] - ox) * sc));
+      const wy = (oy - l.p[i * 2 + 1]) * sc;
+      if (wy < yLo) yLo = wy;
+      if (wy > yHi) yHi = wy;
+    }
   });
+  const yMid = (yLo + yHi) / 2;
+  const halfY = Math.max(1e-4, (yHi - yLo) / 2);
 
   const addLoop = (l) => {
     const n = l.n;
@@ -931,9 +862,12 @@ function extrudeLoops(loops, { sc, ox, oy, depth, round = 0, steps = 2, uv = 0, 
         const wy = (oy - y) * sc + oy2 * pr.inset * miter;
         pos.push(wx, wy, pr.z);
         if (pr.nr === 0 && bulge) {
-          const k = bulge / (half || 1);
-          const len = Math.hypot(wx * k, 1);
-          nor.push((wx * k) / len, 0, pr.nz / len);
+          // a face "espelha em curva": para os lados (bulge) e de cima a baixo (bulgeY) — o alto das letras
+          // reflete o teto claro e o pé reflete a mesa, com as caixas de luz passando pelo meio
+          const nx = (wx * bulge) / (half || 1);
+          const ny = bulgeY ? ((wy - yMid) * bulgeY) / halfY : 0;
+          const len = Math.hypot(nx, ny, 1);
+          nor.push(nx / len, ny / len, pr.nz / len);
         } else nor.push(ox2 * pr.nr, -oy2 * pr.nr, pr.nz);
       }
       if (j > 0 && !pr.cut) {
@@ -1030,37 +964,22 @@ function pushBox(pos, nor, idx, x0, x1, y0, y1, z0, z1) {
    Nome (ou idade) em letra cursiva recortado num acrílico de 2 mm: as letras assentam num traço de base,
    pingos e acentos ganham uma pontezinha (como no corte a laser) e a peça sai inteira, com as duas hastes. */
 
-/** Texto comprido com espaço vira duas linhas (a de baixo é a mais longa, quando dá): as letras ficam bem maiores. */
-function topperLines(text) {
-  const t = String(text || '')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .slice(0, 16);
-  if (t.length <= 8 || !t.includes(' ')) return t ? [t] : [];
-  let best = null;
-  for (let i = 1; i < t.length - 1; i++) {
-    if (t[i] !== ' ') continue;
-    const a = t.slice(0, i);
-    const b = t.slice(i + 1);
-    const score = Math.max(a.length, b.length) * 10 + (a.length > b.length ? 1 : 0);
-    if (!best || score < best.score) best = { score, lines: [a, b] };
-  }
-  return best ? best.lines : [t];
-}
-
-/** A que altura (acima do bolo) fica a linha de base do topo, conforme o que mais está espetado no bolo. */
+/**
+ * A que altura (acima do bolo) fica a linha de base do topo, conforme o que mais está espetado no bolo.
+ * Regra do topo: o nome é o mais alto e fica atrás, no centro; a plaquinha fica à frente e abaixo dele; as
+ * velas, mais à frente ainda, com as chamas abaixo das letras; as estrelas vão para as pontas.
+ */
 function topperLift(d) {
   const items = d.items || [];
-  const plaque = d.messageMode !== 'bico' ? plaqueTop(d.message) : 0;
-  if (plaque) return plaque + 0.11; // por cima (e por trás) da plaquinha
-  if (items.includes('topo')) return 0.16; // à frente das estrelas, baixinho
-  if (items.includes('velas')) return d.candleStyle === 'faisca' ? 0.36 : 0.58; // as chamas ficam abaixo do nome
-  return 0.2;
-}
-
-/** Largura da peça: de 5 a 9 cm conforme o texto, nunca maior que o topo. */
-function topperSize(chars, free) {
-  return Math.min(clamp(0.4 + 0.1 * Math.max(1, chars), 0.5, 0.9), free * 1.9);
+  const plaque = d.messageMode !== 'bico' ? plaqueTop(d.message, plaqueLiftOf({ decor: d })) : 0;
+  if (plaque) return plaque + 0.1; // por cima (e por trás) da plaquinha
+  if (items.includes('velas')) {
+    if (d.candleStyle === 'faisca') return 0.36; // a vela faísca fica de lado
+    if (d.candleStyle === 'numero' && /\d/.test(String(d.number ?? ''))) return 0.86; // por cima dos algarismos e das chamas
+    return 0.6; // as chamas das velas clássicas ficam abaixo do nome
+  }
+  if (items.includes('topo')) return 0.3; // as estrelas ficam nas pontas, mais baixas
+  return 0.22;
 }
 
 /** Liga à peça principal os pedaços soltos (pingo do i, acentos, a haste do "!"): uma pontezinha para baixo. */
@@ -1138,12 +1057,13 @@ function studioEnv(lib) {
     const g = c.getContext('2d');
     const sky = g.createLinearGradient(0, 0, 0, 128);
     sky.addColorStop(0, '#ffffff');
-    sky.addColorStop(0.26, '#e4e4e4');
-    sky.addColorStop(0.42, '#7c7c7c');
-    sky.addColorStop(0.52, '#4e4e4e');
-    sky.addColorStop(0.62, '#8a8a8a');
-    sky.addColorStop(0.8, '#d2d2d2');
-    sky.addColorStop(1, '#f4f4f4');
+    sky.addColorStop(0.2, '#f2f2f2');
+    sky.addColorStop(0.38, '#9a9a9a');
+    sky.addColorStop(0.5, '#2e2e2e');
+    sky.addColorStop(0.58, '#555555');
+    sky.addColorStop(0.72, '#b4b4b4');
+    sky.addColorStop(0.86, '#e2e2e2');
+    sky.addColorStop(1, '#f6f6f6');
     g.fillStyle = sky;
     g.fillRect(0, 0, 256, 128);
     const r = rng(5150);
@@ -1178,8 +1098,11 @@ function acrylic(lib, hex) {
     // preto (ou bem escuro): acrílico brilhante — reflete as luzes por cima do preto
     return lib.physical({ color: c, metalness: 0, roughness: 0.06, clearcoat: 1, clearcoatRoughness: 0.03, envMap, envMapIntensity: 1.25 });
   }
-  // dourado, prata, rosé…: acrílico espelhado
-  return lib.physical({ color: c, metalness: 1, roughness: 0.07, envMap, envMapIntensity: 1.35, emissive: c.clone().multiplyScalar(0.06) });
+  // dourado, prata, rosé…: acrílico espelhado. A cor do metal é clareada (um espelho devolve quase toda a luz):
+  // quem escurece e clareia a peça é o reflexo do estúdio, não a tinta
+  const sat = _hsl.s;
+  c.setHSL(_hsl.h, Math.min(1, sat * 1.05), Math.min(0.9, _hsl.l + (sat < 0.2 ? 0.14 : 0.06)));
+  return lib.physical({ color: c, metalness: 1, roughness: 0.1, envMap, envMapIntensity: 1.55, emissive: c.clone().multiplyScalar(0.05) });
 }
 
 function buildTopper(ctx, part) {
@@ -1188,7 +1111,9 @@ function buildTopper(ctx, part) {
   const texts = topperLines(d.topper?.text);
   if (!texts.length) return;
   const mobile = lib.detail < 1;
-  const plan = planTop(ctx);
+  part.volumes = [];
+  const plan = layout.party?.topper; // lugar, largura máxima e altura que o distribuidor reservou
+  if (!plan) return;
   const font = (px) => `700 ${px}px ${CURSIVA}`;
   let g = scratch(8, 8);
   g.font = font(100);
@@ -1210,12 +1135,15 @@ function buildTopper(ctx, part) {
   const top = two ? yUp - lines[0].a : -last.a;
   const desc = Math.max(0.12, last.d);
   const high = desc - top;
-  const em = Math.min(topperSize(Math.max(...texts.map((s) => s.length)), plan.free) / totalW, two ? 0.6 / high : 0.36); // tamanho da letra no mundo
+  const tight = Boolean(layout.message) || layout.has('topo'); // dividindo o topo com a plaquinha ou com as estrelas
+  const free = Math.max(0.1, layout.rho - (layout.border + 0.035));
+  // tamanho da letra no mundo: o de sempre, sem passar da largura e da altura reservadas
+  const em = Math.min(topperSize(Math.max(...texts.map((s) => s.length)), free, tight) / totalW, two ? 0.92 / high : 0.6, plan.maxW / totalW, plan.maxEm);
   const width = em * totalW;
 
   // desenho: letras encorpadas (o acrílico não pode ter traço fino) + traço de base
   const fs = Math.min((mobile ? 360 : 640) / totalW, (mobile ? 180 : 320) / high, mobile ? 120 : 220);
-  const lw = clamp(0.02 / em - 0.085, 0.03, 0.06) * fs;
+  const lw = clamp(0.024 / em - 0.03, 0.022, 0.06) * fs;
   const mg = Math.ceil(lw / 2) + 6;
   const W = Math.ceil(totalW * fs) + 2 * mg;
   const H = Math.ceil(high * fs) + 2 * mg;
@@ -1265,7 +1193,9 @@ function buildTopper(ctx, part) {
   const loops = traceLoops(S, W, H, 0.5, mobile ? 0.45 : 0.32, fs * fs * 0.0006);
   if (!loops.some((lp) => lp.area > 0)) return;
 
-  const lift = topperLift(d);
+  const lift = plan.lift;
+  // hastes: onde o distribuidor reservou (sempre por dentro do traço de base)
+  const stakeX = plan.stakeX ? Math.min(plan.stakeX, width / 2 - 0.03) : 0;
   const sc = em / fs; // unidades do mundo por pixel
   const depth = 0.022;
   const geo = extrudeLoops(loops, {
@@ -1273,24 +1203,26 @@ function buildTopper(ctx, part) {
     ox: W / 2,
     oy: yb + lift / sc,
     depth,
-    bulge: 0.42,
+    bulge: 0.5,
+    bulgeY: 0.62,
     extra: (pos, nor, idx) => {
       // hastes: saem do traço de base e entram no bolo (um pouco mais finas, para não brigar com a face)
-      (width > 0.56 ? [-0.3, 0.3] : [0]).forEach((k) => pushBox(pos, nor, idx, k * width - 0.011, k * width + 0.011, -0.07, lift, -depth * 0.4, depth * 0.4));
+      (stakeX > 0.02 ? [-stakeX, stakeX] : [0]).forEach((x0) => pushBox(pos, nor, idx, x0 - 0.013, x0 + 0.013, -0.09, lift, -depth * 0.4, depth * 0.4));
     },
   });
   const mat = acrylic(lib, d.topper?.color);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  let z = plan.backZ;
-  if (plan.plaque) z -= 0.09;
-  else if (plan.stars) z = plan.cz - 0.14 * plan.rho + 0.15;
-  mesh.position.set(plan.cx, layout.topY, z);
-  mesh.rotation.x = plan.plaque ? -0.05 : -0.09;
+  const z = plan.z; // atrás (e acima) da plaquinha, quando há uma
+  mesh.position.set(plan.x, layout.topY, z);
+  mesh.rotation.x = -plan.tilt;
   part.addObject(mesh, m, 0.14);
   part.owned.push(geo, mat);
-  part.topper = { x: plan.cx, y: layout.topY + lift - top * em * 0.5, z, w: width, h: high * em }; // onde o topo ficou (para a câmera, se quiser)
+  part.topper = { x: plan.x, y: layout.topY + lift - top * em * 0.5, z, w: width, h: high * em }; // onde o topo ficou (para a câmera, se quiser)
+  // volumes: a placa de letras (caixa do texto) e as hastes
+  addVol(part, VOL.board(plan.x, z, layout.topY + lift - desc * em, layout.topY + lift - top * em, width, 0.03, plan.tilt, layout.topY, 'air'));
+  (stakeX > 0.02 ? [-stakeX, stakeX] : [0]).forEach((x0) => addVol(part, VOL.stick(plan.x + x0, layout.topY, z, plan.x + x0, layout.topY + lift - desc * em + 0.02, z - Math.sin(plan.tilt) * (lift - desc * em), 0.016, 'stick')));
 }
 
 /* ───────── Velas de número e vela faísca ───────── */
@@ -1365,29 +1297,27 @@ function addFlame(ctx, part, x, y, z, phase, rad = 0.04) {
   part.flames.push({ flame, glow, phase, sx: 0.06, sy: 0.125 });
 }
 
-function buildNumberCandles(ctx, part, plan) {
-  const { config, m, lib, layout } = ctx;
-  const digits = String(config.decor.number ?? '')
-    .replace(/\D/g, '')
-    .slice(0, 3);
-  if (!digits) return;
+function buildNumberCandles(ctx, part) {
+  const { m, lib, layout } = ctx;
+  const plan = layout.party?.numbers; // { x, z, s, w, digits }: lugar e largura reservados pelo distribuidor
+  if (!plan) return;
+  const digits = plan.digits;
   const D = lib.detail;
   const geos = [...digits].map((ch) => lib.shape(`velaNumero${ch}`, () => digitGeometry(ch, D)));
-  const { x: cx, z } = plan.candles;
-  // altura: ~5 cm; menores se a fileira não couber no topo (ou com plaquinha, para não cobrir a mensagem)
-  let s = plan.plaque ? 0.44 : 0.5;
+  const cx = plan.x;
+  const z = plan.z;
+  // altura: a do plano; menores se a fileira de verdade (cada aparelho tem a sua fonte) passar da largura reservada
   const gap = 0.07;
   const span = (k) => geos.reduce((a, g) => a + g.userData.w * k, 0) + gap * k * (geos.length - 1);
-  const lim = plan.free * plan.kin;
-  const room = 2 * Math.sqrt(Math.max(0.02, lim * lim - (z - plan.cz) ** 2)) - 0.06;
-  if (span(s) > room) s = Math.max(0.3, (s * room) / span(s));
+  let s = plan.s;
+  if (span(s) > plan.w) s = (s * plan.w) / span(s);
   const y0 = layout.topY - 0.022 * (s / 0.5);
   const r = rng(hashString(`numero${digits}`));
   const wick = new Batch(lib.geo.wick(), lib.mat.wick(), { cast: false });
   const byDigit = new Map();
   // com a fatia retirada, o número some inteiro (um "3" sozinho no lugar de "30" enganaria): quando a fileira
   // passa pelo meio do bolo, o raio ocupado por cada algarismo alcança o centro
-  const central = Math.abs(z - plan.cz) < 0.3 && Math.abs(cx - plan.cx) < span(s) / 2 + 0.1;
+  const central = Math.abs(z - m.center.z) < 0.3 && Math.abs(cx - m.center.x) < span(s) / 2 + 0.1;
   let x = cx - span(s) / 2;
   geos.forEach((geo, i) => {
     const ch = digits[i];
@@ -1395,12 +1325,15 @@ function buildNumberCandles(ctx, part, plan) {
     const px = x + w / 2;
     x += w + gap * s;
     if (!byDigit.has(ch)) byDigit.set(ch, new Batch(geo, lib.mat.glitter()));
-    _q.setFromEuler(_e.set((r() - 0.5) * 0.05, (r() - 0.5) * 0.14, (r() - 0.5) * 0.045));
-    const rad = central ? Math.hypot(px - plan.cx, z - plan.cz) / 0.8 + 0.1 : 0.12;
+    _q.setFromEuler(_e.set((r() - 0.5) * 0.04, (r() - 0.5) * 0.1, (r() - 0.5) * 0.04));
+    const rad = central ? Math.hypot(px - m.center.x, z - m.center.z) / 0.8 + 0.1 : 0.12;
     byDigit.get(ch).add(px, y0, z, _q, s, null, rad);
     _v.set(geo.userData.wick[0] * s, geo.userData.wick[1] * s, 0).applyQuaternion(_q);
     wick.add(px + _v.x, y0 + _v.y, z + _v.z, _q, 1, null, rad);
     addFlame(ctx, part, px + _v.x, y0 + _v.y + 0.004, z + _v.z, r() * TAU, rad); // chama e pavio somem junto com a vela
+    // volumes: o algarismo (uma placa gordinha) e a chama
+    addVol(part, VOL.board(px, z, layout.topY, y0 + s, w, Math.min(0.1 * s, w / 2), 0, y0, 'solid'));
+    addVol(part, [[px + _v.x, y0 + _v.y + 0.07, z + _v.z, 0.04, 'fx']]);
   });
   byDigit.forEach((b) => part.add(b, m));
   part.add(wick, m);
@@ -1522,10 +1455,13 @@ function sparklerGeometry(D) {
   return new THREE.LatheGeometry(pts, seg);
 }
 
-function buildSparkler(ctx, part, plan) {
+function buildSparkler(ctx, part) {
   const { m, lib, layout } = ctx;
+  const plan = layout.party?.sparkler; // { x, z }: lugar reservado pelo distribuidor (o jato de faíscas fica livre)
+  if (!plan) return;
   const D = lib.detail;
-  const { x, z } = plan.candles;
+  const { x, z } = plan;
+  addVol(part, plan.vol);
   const y0 = layout.topY;
   const tube = new Batch(lib.shape('faiscaTubo', () => sparklerGeometry(D)), foilMaterial(lib));
   tube.add(x, y0, z, null, 1, null, 0.06);
@@ -1581,10 +1517,9 @@ function buildSparkler(ctx, part, plan) {
 }
 
 function buildSpecialCandles(ctx, part) {
-  const plan = planTop(ctx);
-  if (!plan.candles) plan.candles = { x: plan.cx, z: plan.cz };
-  if (ctx.config.decor.candleStyle === 'faisca') buildSparkler(ctx, part, plan);
-  else buildNumberCandles(ctx, part, plan);
+  part.volumes = [];
+  if (ctx.config.decor.candleStyle === 'faisca') buildSparkler(ctx, part);
+  else buildNumberCandles(ctx, part);
 }
 
 /** id → construtor(ctx, part). 'velasEspeciais' atende as velas de número e a vela faísca. */
@@ -1598,6 +1533,9 @@ export const PARTY_DECOR = {
 export function partyHeight(config) {
   const d = config?.decor;
   if (!d) return 0;
+  // o que o distribuidor colocou de verdade (o nome sobe quando há peças por baixo dele)
+  const planned = plannedHeights(config);
+  if (planned) return planned.party;
   let h = 0;
   const items = d.items || [];
   if (items.includes('velas')) {
@@ -1608,8 +1546,12 @@ export function partyHeight(config) {
   if (name.length) {
     // letra do topo: a largura depende do texto; a altura acompanha (uma linha ~0,85 em · duas ~1,8 em)
     const chars = Math.max(...name.map((s) => s.length));
-    const em = Math.min(topperSize(chars, 2) / (0.3 + 0.52 * chars), name.length > 1 ? 0.32 : 0.36);
-    h = Math.max(h, topperLift(d) + em * (name.length > 1 ? 1.8 : 0.85) + 0.04);
+    const radii = tierRadii(getSize(config.size)?.radius || 1, config.tiers || 1);
+    const free = Math.max(0.2, radii[radii.length - 1] - 0.12); // raio livre aproximado do último andar
+    const tight = Boolean(d.messageMode !== 'bico' && String(d.message || '').trim()) || items.includes('topo');
+    const two = name.length > 1;
+    const em = Math.min(topperSize(chars, free, tight) / (0.3 + 0.52 * chars), two ? 0.92 / 1.9 : 0.6);
+    h = Math.max(h, topperLift(d) + em * (two ? 1.85 : 0.9) + 0.05);
   }
   return h;
 }

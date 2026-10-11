@@ -74,9 +74,11 @@ import {
   heightCmOf,
   coversOf,
   decorOptions,
+  scriptRoom,
 } from '../customizer/pricing.js';
 import { PRESETS, OCCASIONS, COLOR_PALETTES, applyPalette, getPreset, presetForProduct, randomConfig } from '../customizer/presets.js';
 import { createCakeScene } from '../customizer/engine.js';
+import { decorNotes } from '../customizer/decor.js';
 import { BACKDROPS, BACKDROP_AUTO, getBackdrop, resolveBackdrop, backdropCss } from '../customizer/backdrop.js';
 import { drawCake2D, thumb2D } from '../customizer/fallback.js';
 
@@ -253,8 +255,9 @@ function tipFor(stepId, c) {
     return 'Na dúvida do tamanho, conte uma fatia por convidado e mais algumas para quem repetir.';
   }
   if (stepId === 'massa') {
-    if (n === 1) return 'Com uma camada só, o bolo fica baixinho e sem recheio. Para o corte ficar bonito, a gente indica 2 ou 3 camadas.';
-    if (n === 4) return 'Quatro camadas dão aquele bolo alto de vitrine. Fica lindo com calda escorrendo.';
+    if (n === 1) return 'Com uma camada só, é o bolo simples: uma massa alta, sem recheio. Para o corte ficar bonito, a gente indica 3 camadas.';
+    if (n === 2) return 'Duas camadas finas de massa e um recheio generoso no meio: um bolo baixo, ótimo para o café.';
+    if (n === 4) return 'Quatro camadas finas e três recheios: aquele bolo alto de vitrine, com uns 13 cm. Fica lindo com calda escorrendo.';
     const tips = {
       baunilha: 'A baunilha é coringa: combina com qualquer recheio, dos frutados aos de chocolate.',
       chocolate: 'Nossa massa de chocolate leva cacau 70%. Com brigadeiro ou framboesa, não tem erro.',
@@ -513,8 +516,11 @@ function stepFormato(c, ui) {
             <span class="cz-sub__label">Andares</span>
             ${segmented('tiers', String(tiers), TIER_OPTIONS.map((t) => ({ id: String(t.n), name: t.name })), 'Quantos andares')}
             <p class="cz-note">${tiers > 1 ? `Diâmetros de ${diametersOf(c).join(', ')} cm, ${heightCmOf(c)} cm de altura · rende ${servesText(c)}.` : 'Com mais andares o bolo de baixo cresce e rende muito mais fatias.'}</p>
-            <span class="cz-sub__label">Altura de cada andar</span>
-            ${segmented('height', c.height, HEIGHTS, 'Altura do bolo')}
+            <span class="cz-sub__label">Altura${tiers > 1 ? ' de cada andar' : ''}</span>
+            ${segmented('height', c.layers.length === 1 ? '' : c.height, HEIGHTS, 'Altura do bolo')}
+            <p class="cz-note">${c.layers.length === 1
+              ? 'Bolo simples: uma massa só, sem recheio, com uns 5 cm de altura.'
+              : `${HEIGHTS.find((h) => h.id === c.height).desc.split(' · ')[0]}${tiers > 1 ? ' em cada andar' : ''}: ${heightCmOf(c)} cm de altura. A massa e o recheio têm sempre a mesma espessura; o bolo cresce em camadas.`}</p>
             <span class="cz-sub__label">Base</span>
             <div class="cz-chips" role="radiogroup" aria-label="Base do bolo">
               ${BASES.map((b) => chip('base', b.id, c.base === b.id, b.name, { swatch: b.swatch, note: b.price ? `+ ${brl(b.price)}` : '' }))}
@@ -538,7 +544,7 @@ function stepMassa(c, ui) {
       <div class="cz-row">
         <div class="cz-row__text">
           <strong>Camadas de massa</strong>
-          <span>${n === 1 ? 'Bolo baixinho, sem recheio' : `${n} camadas e ${n - 1} ${n - 1 === 1 ? 'recheio' : 'recheios'}`}</span>
+          <span>${n === 1 ? 'Bolo simples, sem recheio · uns 5 cm de altura' : `${n} massas e ${n - 1} ${n - 1 === 1 ? 'recheio' : 'recheios'} · ${heightCmOf({ ...c, tiers: 1 })} cm de altura`}</span>
         </div>
         ${qtyStepper(n, { min: 1, max: MAX_LAYERS, id: 'layers' })}
       </div>
@@ -783,6 +789,17 @@ function stepAcabamento(c) {
   `;
 }
 
+/** O que o distribuidor de decorações adaptou neste bolo (nunca derruba o painel se algo der errado lá). */
+function notesOf(c) {
+  try {
+    const n = decorNotes(c) || {};
+    return { adapted: Boolean(n.adapted), messages: Array.isArray(n.messages) ? n.messages : [], unfit: Array.isArray(n.unfit) ? n.unfit : [], unfitIds: Array.isArray(n.unfitIds) ? n.unfitIds : [] };
+  } catch (err) {
+    console.error('[personalizador] avisos das decorações', err);
+    return { adapted: false, messages: [], unfit: [], unfitIds: [] };
+  }
+}
+
 /** Ajustes de uma decoração escolhida: arranjo, fartura e cor (ou, nas velas, o tipo e o número). */
 function decorAdjust(c, id) {
   const d = getDecor(id);
@@ -831,6 +848,8 @@ function stepDecoracao(c, ui) {
   // as velas têm o painel delas logo abaixo das opções (aparece ao escolher, como sempre foi)
   const open = items.includes(ui.decorOpen) && ui.decorOpen !== 'velas' && adjustable(getDecor(ui.decorOpen)) ? ui.decorOpen : null;
   const bico = c.decor.messageMode === 'bico';
+  const room = scriptRoom(c); // a escrita com bico cabe (e aparece) no topo deste bolo?
+  const notes = notesOf(c); // o que foi reorganizado para caber (e o que não coube)
   return html`
     <section class="cz-sec">
       <div class="cz-sec__head">
@@ -842,15 +861,20 @@ function stepDecoracao(c, ui) {
           ? items.map((id) => {
               const d = getDecor(id);
               const can = adjustable(d);
-              return html`<span class="cz-pick ${open === id ? 'is-on' : ''}" data-k="pick:${id}">
-                <button type="button" class="cz-pick__main" data-act="adjust" data-value="${id}" ${can ? (id === 'velas' ? '' : raw(`aria-expanded="${open === id ? 'true' : 'false'}"`)) : raw('disabled')} aria-label="${can ? (id === 'velas' ? 'Ajustar as velas: tipo e quantidade' : `Ajustar ${d.name}: arranjo, quantidade e cor`) : d.name}">
-                  ${d.name}${can ? icon('sliders') : ''}
+              // escolhida, mas sem lugar neste bolo: a etiqueta avisa (o motivo e a saída estão no aviso logo abaixo)
+              const out = notes.unfitIds.includes(id);
+              return html`<span class="cz-pick ${open === id ? 'is-on' : ''} ${out ? 'is-out' : ''}" data-k="pick:${id}">
+                <button type="button" class="cz-pick__main" data-act="adjust" data-value="${id}" ${can ? (id === 'velas' ? '' : raw(`aria-expanded="${open === id ? 'true' : 'false'}"`)) : raw('disabled')} aria-label="${can ? (id === 'velas' ? 'Ajustar as velas: tipo e quantidade' : `Ajustar ${d.name}: arranjo, quantidade e cor`) : d.name}${out ? ' (não coube neste bolo)' : ''}">
+                  ${d.name}${out ? html`<span class="cz-pick__out">não coube</span>` : ''}${can ? icon('sliders') : ''}
                 </button>
                 <button type="button" class="cz-pick__x" data-act="decor" data-value="${id}" aria-label="Tirar ${d.name}">${icon('x')}</button>
               </span>`;
             })
           : html`<span class="cz-picked__empty" data-k="pick:none">Nenhuma ainda. Toque numa decoração abaixo para colocar no bolo.</span>`}
       </div>
+      ${notes.messages.length
+        ? html`<div class="cz-note cz-note--warn cz-note--list" role="status" data-k="decor:notes">${notes.messages.map((m) => html`<p>${m}</p>`)}</div>`
+        : ''}
       ${open ? decorAdjust(c, open) : ''}
       <div class="cz-chips cz-chips--scroll cz-tabs" role="radiogroup" aria-label="Tipos de decoração">
         ${DECOR_GROUPS.map((g) => chip('decorGroup', g.id, group === g.id, g.name, { note: String(items.filter((id) => getDecor(id).group === g.id).length || '') }))}
@@ -884,7 +908,17 @@ function stepDecoracao(c, ui) {
           <label for="cz-message">Mensagem <span class="cz-optional">(opcional)</span></label>
           <span class="cz-field__price">+ ${money(bico ? SCRIPT_PRICE : MESSAGE_PRICE)}</span>
         </div>
-        ${segmented('messageMode', bico ? 'bico' : 'placa', [{ id: 'placa', name: 'Na plaquinha' }, { id: 'bico', name: 'Escrita no topo' }], 'Onde vai a mensagem')}
+        <div class="cz-seg" role="radiogroup" aria-label="Onde vai a mensagem">
+          <button type="button" role="radio" aria-checked="${bico ? 'false' : 'true'}" data-set="messageMode" data-value="placa" data-k="messageMode:placa">Na plaquinha</button>
+          <button type="button" role="radio" aria-checked="${bico ? 'true' : 'false'}" data-set="messageMode" data-value="bico" data-k="messageMode:bico" ${room.ok ? '' : raw('disabled')}>Escrita no topo</button>
+        </div>
+        ${room.ok
+          ? ''
+          : html`<p class="cz-note cz-note--warn" data-k="script:note">
+              ${room.why === 'alto'
+                ? `Neste bolo de 3 andares a mensagem vai na plaquinha: o último andar fica alto e tem só ${room.top} cm, e a escrita não apareceria de frente.`
+                : `Escrita no topo: neste bolo cabem até ${room.perLine} letras por linha (o topo tem ${room.top} cm). Encurte a mensagem ou deixe na plaquinha.`}
+            </p>`}
         <input class="input" id="cz-message" type="text" maxlength="${MESSAGE_MAX}" placeholder="Ex.: Parabéns, Ana!" value="${c.decor.message}" data-field="message" autocomplete="off" enterkeyhint="done" aria-describedby="cz-message-count" />
         <div class="cz-field__foot">
           <span>${bico ? 'Escrita com bico de confeitar, direto na cobertura.' : 'A plaquinha aparece no bolo enquanto você escreve.'}</span>
@@ -1115,7 +1149,7 @@ export default {
     let step = 0;
     let editLineId = null; // editando um bolo que já está no carrinho (?linha=<id>)
     const visited = new Set([0]);
-    const ui = { flavorMode: 'all', fillMode: 'all', layer: 0, gap: 0, moreDrip: false, colorChosen: false, tipOpen: false, renaming: false, editing: false, celebrated: false, savedId: null, savedKey: '', occasion: '', structOpen: null, tierMode: 'all', tier: 0, decorGroup: 'frutas', decorOpen: null };
+    const ui = { flavorMode: 'all', fillMode: 'all', layer: 0, gap: 0, moreDrip: false, colorChosen: false, tipOpen: false, renaming: false, editing: false, celebrated: false, savedId: null, savedKey: '', occasion: '', structOpen: null, tierMode: 'all', tier: 0, decorGroup: 'frutas', decorOpen: null, scriptFits: true, decorAdapted: false };
     let cake = null;
     let cutaway = false;
     let autoCut = true; // enquanto a pessoa não mexer no botão, o corte abre sozinho nas etapas de massa e recheio
@@ -1137,6 +1171,8 @@ export default {
       const cov = coverRef();
       ui.colorChosen = cov.color !== getCovering(cov.type).defaultColor;
       if (!config.decor.items.includes(ui.decorOpen)) ui.decorOpen = null;
+      ui.scriptFits = scriptRoom(config).ok;
+      ui.decorAdapted = notesOf(config).adapted; // não avisa de novo ao abrir um bolo que já vinha reorganizado
     }
 
     /** A cobertura que os controles estão editando: a do andar escolhido ou a do bolo inteiro. */
@@ -1674,12 +1710,29 @@ export default {
     }
 
     function commit({ rerender = true, scene = 'now', merge = '' } = {}) {
+      const wantScript = config.decor?.messageMode === 'bico';
       config = normalizeConfig(config);
+      // a escrita no topo deixou de caber (bolo de 3 andares, topo pequeno para o texto): a mensagem vai na plaquinha
+      const bumped = wantScript && config.decor.messageMode !== 'bico';
+      const fits = scriptRoom(config).ok;
+      const fitChanged = fits !== ui.scriptFits;
+      ui.scriptFits = fits;
       record(merge);
       if (measuring) measureMarkup = '';
       if (ui.savedId && ui.savedKey !== configKey()) ui.savedId = null; // mudou depois de salvar: vira um bolo novo
       if (!pending) pending = { body: false, scene: 'none' };
-      if (rerender) pending.body = true;
+      if (rerender || bumped || fitChanged) pending.body = true;
+      // as decorações foram reorganizadas para caber: avisa uma vez (o painel explica o quê)
+      const adapted = notesOf(config).adapted;
+      if (adapted && !ui.decorAdapted) toast('Reorganizamos as decorações para caber no bolo.');
+      ui.decorAdapted = adapted;
+      if (bumped) {
+        pending.scene = 'now';
+        if (config.decor.message) {
+          toast(scriptRoom(config).why === 'alto' ? 'Em bolo de 3 andares a mensagem vai na plaquinha.' : 'Essa mensagem não cabe escrita no topo: ela foi para a plaquinha.');
+          if (root.querySelector('[data-field="message"]:focus')) cake?.focusPlaque(true);
+        }
+      }
       if (scene === 'now' || (scene === 'soon' && pending.scene === 'none')) pending.scene = scene;
       if (!flushRaf) flushRaf = requestAnimationFrame(flush);
       saveDraft();
@@ -1979,7 +2032,11 @@ export default {
         }
         ui.tier = config.tiers - 1;
       },
-      height: (v) => (config.height = v),
+      // a altura é o número de camadas de massa: baixo = 2, padrão = 3, alto = 4
+      height: (v) => {
+        const h = HEIGHTS.find((x) => x.id === v);
+        if (h) setLayers(h.layers);
+      },
       base: (v) => (config.base = v),
       tierMode: (v) => {
         const n = config.tiers || 1;

@@ -1,7 +1,7 @@
 // BOLAB — desenho 2D do bolo, usado quando o aparelho não consegue abrir a visualização 3D.
 // Mostra o essencial (formato, andares, altura, base, camadas, cores e estilo da cobertura, calda, bicos e
 // decoração) e gera a miniatura do carrinho.
-import { getFlavor, getFilling, getSize, getHeight, getDecor, tierRadii } from '../data/customizer.js';
+import { getFlavor, getFilling, getSize, getDecor, tierRadii, LAYER_CM, FILLING_CM, SINGLE_CM } from '../data/customizer.js';
 import { coversOf, decorOptions } from './pricing.js';
 import { rng } from './textures.js';
 
@@ -161,21 +161,24 @@ export function drawCake2D(canvas, config, { background = true } = {}) {
   const radii = tierRadii(size.radius, tiers);
   const covers = coversOf(config);
   const wide = { round: 1, square: 0.95, rect: 1.2, heart: 1.05, hex: 1 }[config.shape] || 1;
-  const layerUnits = (n === 1 ? 0.5 : n === 2 ? 0.38 : n === 3 ? 0.31 : 0.275) * (getHeight(config.height)?.k || 1);
-  const tierUnits = n * layerUnits + (n - 1) * 0.066;
+  // camadas finas de massa e recheio quase da mesma espessura (a mesma anatomia do 3D)
+  const layerUnits = (n === 1 ? SINGLE_CM : LAYER_CM) / 10;
+  const fillUnits = FILLING_CM / 10;
+  const tierUnits = n * layerUnits + (n - 1) * fillUnits;
   const cakeUnits = tierUnits * tiers;
   const items = config.decor?.items || [];
   const message = config.decor?.message || '';
   const plaque = message && config.decor.messageMode !== 'bico';
   const topperText = config.decor?.topper?.text || '';
   const tall = items.includes('topo') || topperText || items.includes('baloes') || items.includes('pirulitos');
-  const extra = tall ? 1 : plaque ? 0.8 : items.includes('velas') ? 0.66 : 0.28;
+  // (nome recortado + plaquinha juntos: o nome sobe para ficar acima da placa)
+  const extra = topperText && plaque ? 1.3 : tall ? 1 : plaque ? 0.8 : items.includes('velas') ? 0.66 : 0.28;
   const stand = config.base === 'boleira' ? 0.85 : 0.5;
   // 1 unidade do 3D em pixels: o desenho ocupa o máximo possível do quadro
   const u = Math.min(W / (radii[0] * 2 * wide + 0.9), H / (cakeUnits + extra + stand));
   const cx = W / 2;
   const layerH = layerUnits * u;
-  const fillH = 0.066 * u;
+  const fillH = fillUnits * u;
   const th = tierUnits * u;
   const baseY = (H + (cakeUnits + extra - (stand - 0.35)) * u) / 2;
   const widthOf = (i) => radii[i] * 2 * wide * u;
@@ -226,8 +229,14 @@ export function drawCake2D(canvas, config, { background = true } = {}) {
         ctx.fillRect(x0, y, cw, layerH + 1);
         if (i < n - 1) {
           y -= fillH;
-          ctx.fillStyle = semi ? cover.color : getFilling(config.fillings[i])?.color || '#fff4dc';
+          const fill = getFilling(config.fillings[i]);
+          // recheio de fruta: o que se vê é o creme, com um fio de geleia sobre a massa de baixo
+          ctx.fillStyle = semi ? cover.color : fill?.cream || fill?.color || '#fff4dc';
           ctx.fillRect(x0, y, cw, fillH + 1);
+          if (!semi && fill?.cream) {
+            ctx.fillStyle = fill.color;
+            ctx.fillRect(x0, y + fillH * 0.82, cw, fillH * 0.18 + 1);
+          }
         }
       });
       if (semi) {
@@ -468,7 +477,7 @@ export function drawCake2D(canvas, config, { background = true } = {}) {
   ctx.textBaseline = 'middle';
   if (topperText) {
     // topo personalizado: o nome recortado, num palito
-    const yy = topY - u * 0.72;
+    const yy = topY - u * (plaque ? 1.04 : 0.72);
     ctx.strokeStyle = '#e7cfa0';
     ctx.lineWidth = u * 0.016;
     ctx.beginPath();
@@ -480,11 +489,18 @@ export function drawCake2D(canvas, config, { background = true } = {}) {
     ctx.fillText(topperText, cx, yy);
   }
   if (message && !plaque) {
-    // escrita com bico, direto no topo
+    // escrita com bico: neste desenho de frente o topo do bolo não aparece, então ela vai na frente do andar de
+    // cima — longe das decorações do topo —, com um contorno da cor da cobertura para ler bem sobre bicos e listras
+    const cover = covers[tiers - 1] || config.covering;
+    const face = config.decor.script === 'bastao' ? '"Plus Jakarta Sans", system-ui, sans-serif' : 'Georgia, serif';
+    const fs = fit(message, config.decor.script === 'bastao' ? '700' : 'italic 700', Math.min(u * 0.17, th * 0.36), cw * 0.8, face);
+    const yy = top + th * (vintage ? 0.56 : 0.5);
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = cover.type === 'naked' ? '#fffaf3' : cover.color;
+    ctx.lineWidth = fs * 0.36;
+    ctx.strokeText(message, cx, yy);
     ctx.fillStyle = config.decor.messageColor || '#d96b82';
-    const face = config.decor.script === 'bastao' ? 'system-ui, sans-serif' : 'Georgia, serif';
-    fit(message, config.decor.script === 'bastao' ? '700' : 'italic 700', u * 0.16, cw * 0.9, face);
-    ctx.fillText(message, cx, topY - u * 0.04);
+    ctx.fillText(message, cx, yy);
   }
   if (plaque) {
     const pw = Math.min(Math.max(cw, u) * 0.95, u * (0.3 + message.length * 0.07));

@@ -1294,6 +1294,10 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
 }
 
+.cz-seg button:disabled {
+  opacity: 0.42;
+}
+
 .cz-seg button[aria-checked="true"] {
   background: var(--surface);
   box-shadow: var(--shadow-1);
@@ -2789,6 +2793,19 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   line-height: 1.4;
 }
 
+.cz-note--list p + p {
+  margin-top: 4px;
+}
+
+/* aviso dentro do painel (ex.: a escrita não cabe no topo deste bolo) */
+.cz-note--warn {
+  margin: 2px 0 4px;
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  background: var(--fill);
+  color: var(--text);
+}
+
 /* Paletas prontas */
 .cz-pals {
   display: flex;
@@ -2988,6 +3005,23 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 .cz-pick.is-on .cz-pick__main svg {
   color: var(--action);
+}
+
+/* decoração escolhida que não coube neste bolo: etiqueta apagada, com o aviso "não coube" */
+.cz-pick.is-out {
+  background: var(--fill);
+  color: var(--text-2);
+}
+
+.cz-pick__out {
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--text);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .cz-adjust {

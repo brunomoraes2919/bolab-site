@@ -53,12 +53,28 @@ export function tierRadii(sizeRadius, tiers) {
   return Array.from({ length: n }, (_, i) => +(bottom - i * 0.27).toFixed(3));
 }
 
-/** Altura de cada andar. k = fator sobre a altura das camadas; mult = fator de preço. */
+/**
+ * Anatomia de um andar, como nos bolos de confeitaria: camadas FINAS de massa (uns 2 cm) alternadas com
+ * recheio quase da mesma espessura. A altura do bolo vem de quantas camadas ele tem — a massa nunca é "esticada".
+ * (Bolo de 1 camada é o bolo simples, sem recheio: uma massa só, mais alta.)
+ */
+export const LAYER_CM = 1.9; // espessura de cada camada de massa
+export const FILLING_CM = 1.55; // espessura de cada recheio
+export const SINGLE_CM = 5; // a massa do bolo simples (1 camada, sem recheio)
+
+/** Altura de um andar (cm), sem a cobertura do topo, conforme o número de camadas de massa. */
+export function layersHeightCm(n) {
+  return n <= 1 ? SINGLE_CM : +(n * LAYER_CM + (n - 1) * FILLING_CM).toFixed(2);
+}
+
+/** Altura = atalho para o número de camadas de massa (em cada andar). serves = quanto o rendimento acompanha. */
 export const HEIGHTS = [
-  { id: 'baixo', name: 'Baixo', desc: 'Mais delicado', k: 0.78, mult: 0.9 },
-  { id: 'padrao', name: 'Padrão', desc: 'O de sempre', k: 1, mult: 1 },
-  { id: 'alto', name: 'Alto', desc: 'Imponente, de vitrine', k: 1.28, mult: 1.18 },
+  { id: 'baixo', name: 'Baixo', desc: '2 massas e 1 recheio · uns 6 cm', layers: 2, serves: 0.8 },
+  { id: 'padrao', name: 'Padrão', desc: '3 massas e 2 recheios · uns 9 cm', layers: 3, serves: 1 },
+  { id: 'alto', name: 'Alto', desc: '4 massas e 3 recheios · uns 13 cm', layers: 4, serves: 1.25 },
 ];
+/** A altura que corresponde a um número de camadas (1 camada = bolo simples, conta como baixo). */
+export const heightIdOf = (layers) => (layers <= 2 ? 'baixo' : layers === 3 ? 'padrao' : 'alto');
 
 /** Bases onde o bolo é entregue e fotografado. Preço fixo. */
 export const BASES = [
@@ -73,7 +89,7 @@ export const BASES = [
 /** Massas. color = cor do seletor; crumb = miolo (visto por dentro); crust = casquinha (bolo naked). */
 export const FLAVORS = [
   { id: 'baunilha', name: 'Baunilha', desc: 'Fofinha, com baunilha de verdade', price: 0, color: '#d79a62', crumb: '#f7d894', crust: '#d39a5c' },
-  { id: 'chocolate', name: 'Chocolate', desc: 'Cacau 70%, bem molhadinha', price: 8, color: '#4a2c18', crumb: '#63371f', crust: '#3c2111' },
+  { id: 'chocolate', name: 'Chocolate', desc: 'Cacau 70%, bem molhadinha', price: 8, color: '#4a2c18', crumb: '#4a2a19', crust: '#5a3320' },
   { id: 'redvelvet', name: 'Red velvet', desc: 'Aveludada, com toque de cacau', price: 12, color: '#8b1a1a', crumb: '#a8222c', crust: '#7c1820' },
   { id: 'cenoura', name: 'Cenoura', desc: 'A receita da vó, bem úmida', price: 5, color: '#e07820', crumb: '#f2a03c', crust: '#c9711e' },
   { id: 'limao', name: 'Limão', desc: 'Cítrica, leve e perfumada', price: 5, color: '#d0dc80', crumb: '#f1ee9c', crust: '#cfc766' },
@@ -82,15 +98,15 @@ export const FLAVORS = [
 
 /** Recheios (entre as camadas). gloss: 0 = cremoso fosco … 1 = brilhante. */
 export const FILLINGS = [
-  { id: 'brigadeiro', name: 'Brigadeiro', desc: 'Cremoso, de chocolate ao leite', price: 8, color: '#3a1a08', gloss: 0.75 },
+  { id: 'brigadeiro', name: 'Brigadeiro', desc: 'Cremoso, de chocolate ao leite', price: 8, color: '#6d3d20', gloss: 0.55 },
   { id: 'ninho', name: 'Ninho', desc: 'Creme de leite em pó, sucesso absoluto', price: 10, color: '#fff4dc', gloss: 0.3 },
-  { id: 'morango', name: 'Morango', desc: 'Geleia artesanal com pedaços', price: 9, color: '#d93060', gloss: 0.9 },
+  { id: 'morango', name: 'Morango', desc: 'Creme, geleia artesanal e pedaços da fruta', price: 9, color: '#d93060', gloss: 0.9, cream: '#fff0e4', pieces: 'morango' },
   { id: 'docedeleite', name: 'Doce de leite', desc: 'Argentino, no ponto de colher', price: 8, color: '#c8783a', gloss: 0.7 },
   { id: 'limao', name: 'Limão', desc: 'Mousse azedinha e refrescante', price: 7, color: '#c8dc50', gloss: 0.35 },
   { id: 'maracuja', name: 'Maracujá', desc: 'Mousse com calda da fruta', price: 9, color: '#e8b030', gloss: 0.55 },
-  { id: 'nutella', name: 'Nutella', desc: 'Creme de avelã puro', price: 12, color: '#5a2c10', gloss: 0.8 },
+  { id: 'nutella', name: 'Nutella', desc: 'Creme de avelã puro', price: 12, color: '#4c2712', gloss: 0.8 },
   { id: 'coco', name: 'Coco', desc: 'Beijinho cremoso com coco fresco', price: 7, color: '#f4f0e8', gloss: 0.25 },
-  { id: 'framboesa', name: 'Framboesa', desc: 'Geleia intensa, levemente ácida', price: 10, color: '#c0204a', gloss: 0.9 },
+  { id: 'framboesa', name: 'Framboesa', desc: 'Creme com geleia intensa, levemente ácida', price: 10, color: '#c0204a', gloss: 0.9, cream: '#fdeee6', pieces: 'framboesa' },
 ];
 
 /** Coberturas. defaultColor = cor sugerida ao escolher o tipo. poured = despejada (só aceita acabamento liso). */
