@@ -1,276 +1,341 @@
-// BOLAB — página inicial.
-import { html, icon, money, observeReveal, pauseOffscreen } from '../ui.js';
-import { photo, productCard, stars } from '../components.js';
-import { PRODUCTS, REVIEWS, isCake, ratingSummary } from '../data/products.js';
+// BOLAB — início: a vitrine da loja. A primeira tela mostra onde e quando entregamos, a busca,
+// as promoções e os mais pedidos com preço; o texto institucional fica no fim, bem curto.
+import { html, icon, money, on, toast, dateShort } from '../ui.js';
+import { photo, productCard, productRow, sectionHead, chipRow, promoBanner, listRow, stars, dayLabel, slotLabel, lineThumb } from '../components.js';
+import { PRODUCTS, REVIEWS, isCake, ratingSummary, getProduct } from '../data/products.js';
+import { CATEGORIES, SITE } from '../data/site.js';
+import { auth, orders } from '../store.js';
+import { receiveContext } from '../shell.js';
 
 const SCORE = ratingSummary();
-import { CATEGORIES, SITE } from '../data/site.js';
-import { schedule } from '../store.js';
-import { dateLong } from '../ui.js';
+const CATS = CATEGORIES.filter((c) => c.id !== 'todos');
+const CAKES = PRODUCTS.filter(isCake).sort((a, b) => Number(b.featured) - Number(a.featured) || b.reviews - a.reviews);
+const ADDONS = PRODUCTS.filter((p) => !isCake(p));
+const CUSTOM_FROM = 69; // preço inicial do bolo montado no 3D
+
+/* Frases curtas para os atalhos de categoria do computador. As descrições de js/data/site.js são
+   frases inteiras: no atalho eram cortadas com "…" ("Ingredientes nobres e…"). */
+const CAT_HINT = { premium: 'Receitas de ateliê', trad: 'Os que todo mundo ama', inf: 'Festas cheias de cor', acess: 'Velas, toppers e kits' };
+
+/** "R$ 250" (sem os centavos quando são zero). */
+const brl = (v) => money(v).replace(',00', '');
 
 const STEPS = [
-  { icon: 'cake', title: 'Escolha ou crie', text: 'Peça um dos nossos clássicos ou monte o seu bolo em 3D, camada por camada.' },
-  { icon: 'calendar', title: 'Agende a entrega', text: 'Você escolhe o dia e a janela de horário. A gente chega na hora combinada.' },
-  { icon: 'pix', title: 'Pague como preferir', text: `Pix com ${SITE.pix.discountPct}% de desconto ou cartão em até ${SITE.card.maxInstallments}x.` },
-  { icon: 'gift', title: 'Receba fresquinho', text: 'Seu bolo é feito à mão no dia da entrega e vai embalado para presente.' },
-];
-
-const PERKS = [
-  { icon: 'award', title: 'Feito só para você', text: 'Nada de bolo de vitrine. Cada encomenda começa do zero, no dia da sua entrega.' },
-  { icon: 'leaf', title: 'Ingredientes de verdade', text: 'Chocolate belga, frutas frescas, manteiga e ovos caipiras. Sem pré-mistura.' },
-  { icon: 'truck', title: 'Entrega com hora marcada', text: `Atendemos ${SITE.region}, com transporte refrigerado e cuidado em cada curva.` },
-  { icon: 'shield-check', title: 'Garantia BOLAB', text: 'Se o seu bolo não chegar perfeito, a gente refaz ou devolve o seu dinheiro.' },
+  { title: 'Escolha', text: 'Um bolo do cardápio ou monte o seu em 3D.' },
+  { title: 'Agende', text: 'Você define o dia e o horário.' },
+  { title: 'Pague', text: `Pix com ${SITE.pix.discountPct}% OFF ou cartão em até ${SITE.card.maxInstallments}x.` },
+  { title: 'Receba', text: 'Em casa, na hora marcada, ou retire no ateliê.' },
 ];
 
 const FAQ = [
   {
     q: 'Com quanta antecedência preciso pedir?',
-    a: 'A maioria dos bolos fica pronta em 24 horas. Bolos decorados e personalizados pedem 48 horas. No checkout você só vê as datas realmente disponíveis.',
+    a: 'A maioria dos bolos fica pronta em 24 h; os decorados e os montados no 3D, em 48 h. Ao fechar o pedido você só vê as datas disponíveis.',
   },
   {
-    q: 'Como funciona o bolo personalizado em 3D?',
-    a: 'Você escolhe formato, número de andares, massa, recheio, cobertura e decoração, vendo o bolo girar na tela a cada escolha. O preço atualiza na hora e o que você vê é o que a gente produz.',
+    q: 'Onde vocês entregam e quanto custa?',
+    a: `Em ${SITE.region}, por ${money(SITE.shipping.fee)}. Acima de ${brl(SITE.shipping.freeAbove)} a entrega é grátis. Também dá para retirar no ateliê, sem custo.`,
   },
   {
-    q: 'Vocês entregam em qual região?',
-    a: `Entregamos em ${SITE.region}. Se preferir, você também pode retirar no nosso ateliê sem pagar frete.`,
+    q: 'Como funciona o bolo em 3D?',
+    a: 'Você escolhe formato, andares, massa, recheio, cobertura e decoração e vê o bolo girar na tela. O preço atualiza a cada escolha.',
   },
   {
     q: 'Quais são as formas de pagamento?',
-    a: `Pix (com ${SITE.pix.discountPct}% de desconto) e cartão de crédito em até ${SITE.card.maxInstallments}x sem juros.`,
+    a: `Pix com ${SITE.pix.discountPct}% de desconto ou cartão de crédito em até ${SITE.card.maxInstallments}x sem juros.`,
   },
   {
-    q: 'Posso cancelar ou alterar meu pedido?',
-    a: 'Sim, sem custo, enquanto o bolo não entrou em produção. Depois disso, fale com a gente pelo atendimento que encontramos a melhor solução.',
+    q: 'Posso cancelar ou alterar o pedido?',
+    a: 'Sim, sem custo, enquanto o bolo não entrou em produção. Depois disso, fale com o atendimento.',
   },
 ];
 
-function hero() {
-  const first = schedule.earliest(24);
-  return html`
-    <section class="hero">
-      <div class="container hero__grid">
-        <div class="hero__copy">
-          <span class="eyebrow">${icon('sparkles')} Confeitaria artesanal sob encomenda</span>
-          <h1 class="hero__title display">O bolo que você imaginou, <em>do jeitinho que imaginou.</em></h1>
-          <p class="hero__lead only-desktop">
-            Escolha um dos nossos clássicos ou monte o seu em 3D — massa, recheio, cobertura e decoração — e receba em casa com hora marcada.
-          </p>
-          <p class="hero__lead only-mobile">Escolha um clássico ou monte o seu em 3D. A gente entrega com hora marcada.</p>
-          <div class="hero__cta">
-            <a class="btn btn--lg" href="#/monte-seu-bolo">${icon('sparkles')} Montar meu bolo em 3D</a>
-            <a class="btn btn--lg btn--secondary only-desktop" href="#/cardapio">Ver cardápio</a>
-            <a class="link-arrow hero__alt only-mobile" href="#/cardapio">ou ver o cardápio ${icon('arrow-right')}</a>
-          </div>
-          <ul class="hero__trust">
-            <li>
-              <span class="hero__stars">★★★★★</span>
-              <span><strong>${SCORE.avg}</strong> em ${SCORE.countLabel} avaliações</span>
-            </li>
-            <li>${icon('calendar')}<span>Peça hoje, receba a partir de <strong>${dateLong(first).toLowerCase()}</strong></span></li>
-          </ul>
-        </div>
+/* ───────── Topo: busca, informações de entrega, promoções, categorias ───────── */
 
-        <div class="hero__visual">
-          <div class="hero__photo">${photo('hero', { w: 720, eager: true, priority: true, sizes: '(min-width: 900px) 46vw, 92vw' })}</div>
-          <div class="hero__card hero__card--a">
-            <span class="hero__card-icon">${icon('cube')}</span>
-            <div>
-              <strong>Personalizador 3D</strong>
-              <span>Veja seu bolo antes de pedir</span>
-            </div>
-          </div>
-          <div class="hero__card hero__card--b">
-            <span class="hero__card-icon hero__card-icon--green">${icon('truck')}</span>
-            <div>
-              <strong>Entrega agendada</strong>
-              <span>Grátis acima de R$ ${SITE.shipping.freeAbove}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
+/** Chips de informação: data real da primeira entrega, taxa, frete grátis e retirada. */
+function infoChips() {
+  const ctx = receiveContext();
+  const day = dayLabel(ctx.earliest);
+  const { fee, freeAbove } = SITE.shipping;
+  const items =
+    ctx.mode === 'pickup'
+      ? [
+          { icon: 'calendar', label: `Retire a partir de ${day}` },
+          { icon: 'store', label: 'Retirada grátis', tone: 'positive' },
+          { icon: 'map-pin', label: SITE.pickup.address },
+          { icon: 'clock', label: SITE.hours },
+        ]
+      : [
+          { icon: 'calendar', label: `Receba a partir de ${day}` },
+          { icon: 'truck', label: `Entrega ${money(fee)}` },
+          { icon: 'check-circle', label: `Grátis acima de ${brl(freeAbove)}`, tone: 'positive' },
+          { icon: 'store', label: 'Retirada grátis' },
+        ];
+  return html`<div data-home-info>${chipRow(items.map((it) => ({ ...it, info: true })), { label: 'Entrega e retirada', cls: 'home-info' })}</div>`;
+}
+
+/* Se trocar a imagem do primeiro banner, troque também o arquivo pedido no começo do index.html. */
+function promos() {
+  // Quem já fez um pedido não pode mais usar o cupom de primeiro pedido: no lugar entra o Pix.
+  const returning = auth.isLogged() && orders.list().some((o) => !o.canceled);
+  const list = [
+    promoBanner({
+      tone: 'stage',
+      tag: 'Só na BOLAB',
+      title: 'Monte o seu bolo em 3D',
+      text: `Do seu jeito, a partir de ${brl(CUSTOM_FROM)}.`,
+      cta: 'Montar agora',
+      href: '#/monte-seu-bolo',
+      img: 'assets/img/cz-morango.webp',
+      cutout: true,
+      eager: true,
+    }),
+    returning
+      ? promoBanner({
+          tone: 'action',
+          tag: 'Pagamento',
+          title: `${SITE.pix.discountPct}% OFF pagando no Pix`,
+          text: 'Aprovação na hora.',
+          cta: 'Ver cardápio',
+          href: '#/cardapio',
+          iconName: 'pix',
+        })
+      : promoBanner({
+          tone: 'action',
+          tag: 'Primeiro pedido',
+          title: '10% OFF no 1º pedido',
+          text: 'Toque para copiar o cupom.',
+          code: 'BOLAB10',
+          iconName: 'ticket',
+        }),
+    promoBanner({
+      tone: 'green',
+      tag: 'Entrega',
+      title: `Entrega grátis acima de ${brl(SITE.shipping.freeAbove)}`,
+      text: `Em ${SITE.region}.`,
+      cta: 'Ver cardápio',
+      href: '#/cardapio',
+      iconName: 'truck',
+    }),
+    promoBanner({
+      tag: 'Para a festa',
+      title: 'Velas, toppers e kits',
+      text: `A partir de ${money(Math.min(...ADDONS.map((p) => p.price)))}.`,
+      cta: 'Completar a festa',
+      href: '#/cardapio?cat=acess',
+      photoKey: 'p15',
+    }),
+  ];
+  return html`
+    <div class="promos" data-promos role="group" aria-label="Promoções">${list}</div>
+    <div class="promos__dots" data-promo-dots aria-hidden="true">${list.map((_, i) => html`<i class="${i === 0 ? 'is-on' : ''}"></i>`)}</div>
   `;
 }
 
 function categories() {
-  const cats = CATEGORIES.filter((c) => c.id !== 'todos');
+  const tile = ({ href, label, desc, media, cls = '' }) => html`
+    <li>
+      <a class="cat ${cls}" href="${href}">
+        <span class="cat__img">${media}</span>
+        <span class="cat__text"><strong class="cat__label">${label}</strong><span class="cat__desc">${desc}</span></span>
+      </a>
+    </li>
+  `;
   return html`
-    <section class="section section--tight">
+    <nav class="cats" aria-label="Categorias">
+      <ul class="cats__row">
+        ${tile({
+          href: '#/monte-seu-bolo',
+          label: 'Monte o seu',
+          desc: 'Em 3D, do seu jeito',
+          cls: 'cat--3d',
+          media: html`<img src="assets/img/cz-festa.webp" alt="" width="760" height="760" decoding="async" />`,
+        })}
+        ${CATS.map((c) =>
+          tile({ href: `#/cardapio?cat=${c.id}`, label: c.label, desc: CAT_HINT[c.id] || c.desc, media: photo(c.photo, { w: 144, alt: '', sizes: '64px', eager: true }) }),
+        )}
+        ${tile({ href: '#/cardapio', label: 'Ver tudo', desc: `${PRODUCTS.length} itens`, cls: 'cat--all', media: icon('grid') })}
+      </ul>
+    </nav>
+  `;
+}
+
+function top() {
+  return html`
+    <section class="hero home-top" aria-label="Loja BOLAB">
       <div class="container">
-        <div class="cat-row">
-          ${cats.map(
-            (c) => html`
-              <a class="cat-tile reveal" href="#/cardapio?cat=${c.id}">
-                <span class="cat-tile__img">${photo(c.photo, { w: 220, alt: '', sizes: '(min-width: 900px) 116px, 84px' })}</span>
-                <span class="cat-tile__label">${c.label}</span>
-              </a>
-            `,
-          )}
-        </div>
+        <h1 class="sr-only">BOLAB — delivery de bolos artesanais em ${SITE.region}</h1>
+        <form class="search-field home-search only-mobile" role="search" data-search>
+          ${icon('search')}
+          <input type="search" name="q" placeholder="Buscar bolo, sabor ou ocasião" aria-label="Buscar no cardápio" autocomplete="off" enterkeyhint="search" />
+        </form>
+        ${infoChips()} ${promos()} ${categories()}
       </div>
     </section>
   `;
 }
 
-function bestSellers() {
-  const list = PRODUCTS.filter(isCake)
-    .sort((a, b) => Number(b.featured) - Number(a.featured) || b.reviews - a.reviews)
-    .slice(0, 8);
+/* ───────── Pedido em andamento (só para quem tem um pedido a caminho) ───────── */
+function activeOrder() {
+  if (!auth.isLogged()) return '';
+  const found = orders
+    .list()
+    .map((o) => ({ o, st: orders.statusOf(o) }))
+    .find(({ st }) => !st.canceled && st.id !== 'delivered');
+  if (!found) return '';
+  const { o, st } = found;
+  const pickup = o.delivery.mode === 'pickup';
   return html`
-    <section class="section">
+    <section class="section home-sec" aria-label="Pedido em andamento">
       <div class="container">
-        <div class="section-head">
-          <div>
-            <span class="eyebrow">Os mais pedidos</span>
-            <h2 class="section-title">Favoritos de <em>quem prova</em></h2>
-          </div>
-          <a class="link-arrow only-desktop" href="#/cardapio">Ver todo o cardápio ${icon('arrow-right')}</a>
-        </div>
-        <div class="product-grid product-grid--teaser">${list.map((p, i) => html`<div class="reveal" style="--reveal-delay:${(i % 4) * 60}ms">${productCard(p)}</div>`)}</div>
-        <div class="section-foot only-mobile">
-          <a class="btn btn--secondary btn--block" href="#/cardapio">Ver todo o cardápio</a>
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-function customizerSpotlight() {
-  const bullets = [
-    'Formato, andares, massa e recheio de cada camada',
-    'Mais de 15 cores de cobertura e 6 acabamentos',
-    'Preço atualizado a cada escolha, sem surpresa',
-    'O que você vê na tela é o que chega na sua mesa',
-  ];
-  return html`
-    <section class="spot">
-      <div class="container spot__grid">
-        <div class="spot__visual reveal">
-          <a class="spot__stage" href="#/monte-seu-bolo" aria-label="Abrir o personalizador 3D">
-            <img class="spot__cake spot__cake--left" src="assets/img/cz-belga.webp" alt="" width="760" height="760" loading="lazy" decoding="async" />
-            <img class="spot__cake spot__cake--right" src="assets/img/cz-festa.webp" alt="" width="760" height="760" loading="lazy" decoding="async" />
-            <img
-              class="spot__cake spot__cake--main"
-              src="assets/img/cz-morango.webp"
-              alt="Bolo rosa com calda branca, rosetas e frutas vermelhas, criado no personalizador 3D da BOLAB"
-              width="760"
-              height="760"
-              loading="lazy"
-              decoding="async"
-            />
-            <span class="spot__tag">${icon('cube')} Imagens reais do personalizador</span>
-          </a>
-          <div class="spot__chips" aria-hidden="true">
-            <span>Massa de baunilha</span>
-            <span>Recheio de morango e ninho</span>
-            <span>Buttercream rosa</span>
-            <span>Frutas frescas</span>
-          </div>
-        </div>
-        <div class="spot__copy reveal">
-          <span class="eyebrow eyebrow--light">${icon('cube')} Exclusivo BOLAB</span>
-          <h2 class="section-title">Crie um bolo que <em>só existe na sua cabeça.</em></h2>
-          <p class="section-lead">
-            No nosso personalizador 3D você monta o bolo camada por camada e vê o resultado girando na tela, em tempo real. Em poucos toques ele está pronto para ir ao forno.
-          </p>
-          <ul class="spot__list">
-            ${bullets.map((b) => html`<li>${icon('check')}<span>${b}</span></li>`)}
-          </ul>
-          <div class="spot__cta">
-            <a class="btn btn--lg" href="#/monte-seu-bolo">${icon('sparkles')} Montar meu bolo em 3D</a>
-            <span class="spot__price">bolos a partir de <strong>${money(69)}</strong></span>
-          </div>
+        <div class="card track">
+          ${listRow({
+            iconName: pickup ? 'store' : 'truck',
+            title: st.label,
+            // sem o número do pedido: no celular ele era cortado, e "Acompanhar" já leva ao pedido
+            desc: `${pickup ? 'Retirada' : 'Entrega'} ${dayLabel(o.delivery.date)} · ${slotLabel(o.delivery.slot)}`,
+            href: `#/pedido/${o.id}`,
+            trail: 'Acompanhar',
+          })}
         </div>
       </div>
     </section>
   `;
 }
 
-function howItWorks() {
+/* ───────── Peça de novo (só para quem já pediu) ───────── */
+const isDone = (st) => !st.canceled && st.index === st.steps.length - 1;
+function orderAgain() {
+  if (!auth.isLogged()) return '';
+  const list = orders
+    .list()
+    // só pedidos já entregues ou retirados: o que está a caminho aparece no acompanhamento
+    .filter((o) => o.items?.length && isDone(orders.statusOf(o)))
+    .slice(0, 3);
+  if (!list.length) return '';
   return html`
-    <section class="section">
+    <section class="section home-sec" aria-labelledby="again-t">
       <div class="container">
-        <div class="section-head section-head--center">
-          <div>
-            <span class="eyebrow">Simples assim</span>
-            <h2 class="section-title">Do clique à <em>primeira fatia</em></h2>
-          </div>
-        </div>
-        <ol class="how">
-          ${STEPS.map(
-            (s, i) => html`
-              <li class="how__step reveal" style="--reveal-delay:${i * 80}ms">
-                <span class="how__num">${i + 1}</span>
-                <span class="how__icon">${icon(s.icon)}</span>
-                <h3>${s.title}</h3>
-                <p>${s.text}</p>
-              </li>
-            `,
-          )}
-        </ol>
-      </div>
-    </section>
-  `;
-}
-
-function perks() {
-  return html`
-    <section class="section section--cream">
-      <div class="container perks__grid">
-        <div class="perks__photo reveal">${photo('atelier', { w: 640, sizes: '(min-width: 900px) 40vw, 92vw' })}</div>
-        <div>
-          <span class="eyebrow">Por que BOLAB</span>
-          <h2 class="section-title">Feito à mão, <em>com hora para chegar</em></h2>
-          <ul class="perks">
-            ${PERKS.map(
-              (p, i) => html`
-                <li class="reveal" style="--reveal-delay:${i * 60}ms">
-                  <span class="perks__icon">${icon(p.icon)}</span>
-                  <div>
-                    <h3>${p.title}</h3>
-                    <p>${p.text}</p>
-                  </div>
-                </li>
-              `,
-            )}
-          </ul>
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-function reviews() {
-  const list = REVIEWS.filter((r) => r.rating === 5).slice(0, 6);
-  return html`
-    <section class="section">
-      <div class="container">
-        <div class="section-head">
-          <div>
-            <span class="eyebrow">Quem pediu, aprovou</span>
-            <h2 class="section-title">Histórias <em>doces de verdade</em></h2>
-            <p class="reviews__inline only-mobile">${stars(5)} <strong>${SCORE.avg}</strong> · ${SCORE.countLabel} avaliações</p>
-          </div>
-          <div class="reviews__score only-desktop">
-            <strong>${SCORE.avg}</strong>
-            <div>${stars(5)}<span>${SCORE.countLabel} avaliações</span></div>
-          </div>
-        </div>
-        <div class="reviews" data-reviews>
-          ${list.map((r) => {
-            const product = PRODUCTS.find((p) => p.id === r.productId);
+        ${sectionHead('Peça de novo', { href: '#/pedidos', label: 'Meus pedidos', id: 'again-t' })}
+        <div class="rail rail--grid again">
+          ${list.map((o) => {
+            const first = o.items[0];
+            const more = o.items.length - 1;
             return html`
-              <figure class="review reveal">
-                ${stars(r.rating)}
-                <blockquote>“${r.text}”</blockquote>
-                <figcaption>
-                  <span class="avatar avatar--sm">${r.name[0]}</span>
-                  <div>
-                    <strong>${r.name}</strong>
-                    <span>${product ? `pediu ${product.name}` : 'criou um bolo no 3D'}</span>
-                  </div>
+              <article class="again__card">
+                <a class="again__main" href="#/pedido/${o.id}" aria-label="Ver o pedido ${o.id}">
+                  <span class="again__thumb">${lineThumb(first, { w: 112 })}</span>
+                  <span class="again__body">
+                    <strong class="again__name">${first.name}</strong>
+                    <span class="again__meta">${more > 0 ? `+ ${more} ${more === 1 ? 'item' : 'itens'} · ` : ''}${dateShort(o.createdAt)} · ${money(o.totals.total)}</span>
+                  </span>
+                </a>
+                <button class="btn btn--sm btn--soft again__btn" type="button" data-reorder="${o.id}">${icon('repeat')} Pedir de novo</button>
+              </article>
+            `;
+          })}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+/* ───────── Mais pedidos ───────── */
+function bestSellers() {
+  return html`
+    <section class="section home-sec" aria-labelledby="best-t">
+      <div class="container">
+        ${sectionHead('Mais pedidos', { href: '#/cardapio', id: 'best-t' })}
+        <div class="rail rail--grid best">${CAKES.slice(0, 6).map((p, i) => productCard(p, { compact: true, eager: i < 3 }))}</div>
+      </div>
+    </section>
+  `;
+}
+
+/* ───────── Faixa do personalizador 3D ───────── */
+function customizerBanner() {
+  const cake = (name, cls) => html`<img class="cz3d__cake ${cls}" src="assets/img/${name}.webp" alt="" width="760" height="760" loading="lazy" decoding="async" />`;
+  return html`
+    <section class="section home-sec" aria-label="Personalizador 3D">
+      <div class="container">
+        <a class="cz3d" href="#/monte-seu-bolo">
+          <span class="cz3d__copy">
+            <span class="cz3d__tag">${icon('cube')} Só na BOLAB</span>
+            <strong class="cz3d__title">Monte o seu bolo em 3D</strong>
+            <span class="cz3d__text">Formato, massa, recheio e cobertura. O bolo gira na tela e o preço muda a cada escolha.</span>
+            <span class="cz3d__foot">
+              <span class="btn btn--white btn--sm cz3d__btn">Montar agora ${icon('chevron-right')}</span>
+              <span class="cz3d__price">a partir de <strong>${brl(CUSTOM_FROM)}</strong></span>
+            </span>
+          </span>
+          <span class="cz3d__stage" aria-hidden="true">${cake('cz-belga', 'cz3d__cake--c')} ${cake('cz-limao', 'cz3d__cake--b')} ${cake('cz-naked', 'cz3d__cake--a')}</span>
+        </a>
+      </div>
+    </section>
+  `;
+}
+
+/* ───────── Cardápio em lista, por categoria ───────── */
+function menuPreview() {
+  const groups = CATS.map((c) => ({ c, list: CAKES.filter((p) => p.cat === c.id) })).filter((g) => g.list.length);
+  return html`
+    <section class="section home-sec" aria-labelledby="menu-t">
+      <div class="container">
+        ${sectionHead('Cardápio', { href: '#/cardapio', id: 'menu-t', sub: 'Sob encomenda, prontos em 24 a 48 h.' })}
+        <div class="menu-groups">
+          ${groups.map(
+            (g) => html`
+              <div class="menu-group">
+                <div class="menu-group__head">
+                  <h3 class="menu-group__title">${g.c.label} <span>${g.list.length}</span></h3>
+                  <a class="section-link" href="#/cardapio?cat=${g.c.id}" aria-label="Ver todos: ${g.c.label}">Ver todos${icon('chevron-right')}</a>
+                </div>
+                <div class="menu-list">${g.list.slice(0, 4).map((p) => productRow(p))}</div>
+              </div>
+            `,
+          )}
+        </div>
+        <a class="btn btn--secondary btn--block menu-more" href="#/cardapio">Ver cardápio completo</a>
+      </div>
+    </section>
+  `;
+}
+
+/* ───────── Complete a festa ───────── */
+function addOnsRail() {
+  if (!ADDONS.length) return '';
+  return html`
+    <section class="section home-sec" aria-labelledby="festa-t">
+      <div class="container">
+        ${sectionHead('Complete a festa', { href: '#/cardapio?cat=acess', id: 'festa-t', sub: 'Chegam junto com o bolo.' })}
+        <div class="rail rail--grid addons">${ADDONS.map((p) => productCard(p, { compact: true }))}</div>
+      </div>
+    </section>
+  `;
+}
+
+/* ───────── Avaliações (ilustrativas enquanto a loja está em demonstração) ───────── */
+function reviews() {
+  const list = REVIEWS.filter((r) => r.rating === 5 && (r.productId === 'custom' || getProduct(r.productId))).slice(0, 8);
+  if (!list.length) return '';
+  return html`
+    <section class="section home-sec" aria-labelledby="rev-t">
+      <div class="container">
+        <div class="section-head">
+          <h2 class="section-title" id="rev-t">Avaliações</h2>
+          <p class="score">${icon('star')}<strong>${SCORE.avg}</strong><span>${SCORE.countLabel} avaliações</span></p>
+        </div>
+        <div class="rail rail--grid reviews">
+          ${list.map((r) => {
+            const product = getProduct(r.productId);
+            return html`
+              <figure class="review">
+                <figcaption class="review__head">
+                  <span class="avatar avatar--sm" aria-hidden="true">${r.name[0]}</span>
+                  <span class="review__who"><strong>${r.name}</strong>${stars(r.rating)}</span>
                 </figcaption>
+                <blockquote>${r.text}</blockquote>
+                <span class="review__product">${product ? `Pediu ${product.name}` : 'Montou o bolo no 3D'}</span>
               </figure>
             `;
           })}
@@ -280,19 +345,22 @@ function reviews() {
   `;
 }
 
-function partyAddOns() {
-  const list = PRODUCTS.filter((p) => !isCake(p)).slice(0, 4);
+/* ───────── Como funciona e dúvidas (curtos, no fim) ───────── */
+function howItWorks() {
   return html`
-    <section class="section section--tight-top">
+    <section class="section home-sec" aria-labelledby="how-t">
       <div class="container">
-        <div class="section-head">
-          <div>
-            <span class="eyebrow">Para a mesa do bolo</span>
-            <h2 class="section-title">Complete <em>a festa</em></h2>
-          </div>
-          <a class="link-arrow only-desktop" href="#/cardapio?cat=acess">Ver todos ${icon('arrow-right')}</a>
-        </div>
-        <div class="product-grid product-grid--rail">${list.map((p) => html`<div class="reveal">${productCard(p)}</div>`)}</div>
+        ${sectionHead('Como funciona', { id: 'how-t' })}
+        <ol class="card how">
+          ${STEPS.map(
+            (s, i) => html`
+              <li class="how__step">
+                <span class="how__num" aria-hidden="true">${i + 1}</span>
+                <span class="how__body"><strong>${s.title}</strong><span>${s.text}</span></span>
+              </li>
+            `,
+          )}
+        </ol>
       </div>
     </section>
   `;
@@ -300,15 +368,10 @@ function partyAddOns() {
 
 function faq() {
   return html`
-    <section class="section section--cream" id="duvidas">
-      <div class="container container--narrow">
-        <div class="section-head section-head--center">
-          <div>
-            <span class="eyebrow">Dúvidas frequentes</span>
-            <h2 class="section-title">Tudo o que você <em>quer saber</em></h2>
-          </div>
-        </div>
-        <div class="accordion">
+    <section class="section home-sec" id="duvidas" aria-labelledby="faq-t">
+      <div class="container">
+        ${sectionHead('Dúvidas', { href: '#/atendimento', label: 'Falar com a gente', id: 'faq-t' })}
+        <div class="card faq accordion">
           ${FAQ.map(
             (f) => html`
               <details>
@@ -318,27 +381,6 @@ function faq() {
             `,
           )}
         </div>
-        <p class="faq__more">Ainda com dúvida? <a class="link" href="#/atendimento">Fale com a gente</a></p>
-      </div>
-    </section>
-  `;
-}
-
-function finalCta() {
-  return html`
-    <section class="section">
-      <div class="container">
-        <div class="final-cta reveal">
-          <div class="final-cta__photo">${photo('celebration', { w: 900, sizes: '(min-width: 900px) 50vw, 92vw', alt: '' })}</div>
-          <div class="final-cta__body">
-            <h2 class="section-title">Tem uma data especial chegando?</h2>
-            <p>Garanta o seu bolo agora e escolha o dia da entrega. No primeiro pedido, 10% OFF com o cupom <strong>BOLAB10</strong>.</p>
-            <div class="hero__cta">
-              <a class="btn btn--lg" href="#/monte-seu-bolo">${icon('sparkles')} Montar meu bolo</a>
-              <a class="btn btn--lg btn--secondary" href="#/cardapio">Escolher no cardápio</a>
-            </div>
-          </div>
-        </div>
       </div>
     </section>
   `;
@@ -346,41 +388,77 @@ function finalCta() {
 
 /* A página é montada em duas partes. O começo (o que cabe nas primeiras telas) entra na hora;
    o resto entra logo depois da primeira pintura. O resultado final é o mesmo, mas a pessoa vê a
-   loja mais cedo: o navegador não precisa calcular a página inteira (8 telas de altura no
-   celular) antes de mostrar a primeira. */
-const firstPart = () => html`${hero()} ${categories()} ${bestSellers()}`;
-const secondPart = () => html`${customizerSpotlight()} ${reviews()} ${howItWorks()} ${perks()} ${partyAddOns()} ${faq()} ${finalCta()}`;
+   loja mais cedo: o navegador não precisa calcular a página inteira antes de mostrar o topo. */
+/* Quem tem um pedido a caminho vê o acompanhamento e logo depois os mais pedidos (com preço na
+   primeira tela); "Peça de novo" desce uma seção. Sem pedido a caminho, "Peça de novo" vem antes. */
+const firstPart = () => {
+  const tracking = activeOrder();
+  return tracking ? html`${top()} ${tracking} ${bestSellers()} ${orderAgain()}` : html`${top()} ${orderAgain()} ${bestSellers()}`;
+};
+const secondPart = () => html`${customizerBanner()} ${menuPreview()} ${addOnsRail()} ${reviews()} ${howItWorks()} ${faq()}`;
 
 export default {
   layout: 'default',
   render(ctx) {
     // Voltando pelo histórico, a página vem inteira de uma vez: o roteador precisa da altura
     // completa para devolver a rolagem ao ponto onde a pessoa estava.
-    if (ctx?.restoring) return html`${firstPart()} ${secondPart()}`;
-    return html`${firstPart()}<div class="home-rest" data-home-rest></div>`;
+    if (ctx?.restoring) return html`<div class="home">${firstPart()} ${secondPart()}</div>`;
+    return html`<div class="home">${firstPart()}<div class="home-rest" data-home-rest></div></div>`;
   },
   mount(root) {
-    let offPause = () => {};
     let waiting = 0;
     let frame = 0;
+    let dotsFrame = 0;
 
+    // Bolinhas do carrossel de promoções acompanham a rolagem.
+    const rail = root.querySelector('[data-promos]');
+    const dots = [...root.querySelectorAll('[data-promo-dots] i')];
+    const syncDots = () => {
+      dotsFrame = 0;
+      const first = rail.firstElementChild;
+      if (!first) return;
+      const step = first.getBoundingClientRect().width + 10;
+      const max = rail.scrollWidth - rail.clientWidth;
+      const index = rail.scrollLeft >= max - 4 ? dots.length - 1 : Math.round(rail.scrollLeft / step);
+      dots.forEach((d, i) => d.classList.toggle('is-on', i === index));
+    };
+    rail?.addEventListener(
+      'scroll',
+      () => {
+        if (!dotsFrame) dotsFrame = requestAnimationFrame(syncDots);
+      },
+      { passive: true },
+    );
+
+    // "Pedir de novo": devolve os itens do pedido ao carrinho.
+    on(root, 'click', '[data-reorder]', (_ev, btn) => {
+      const n = orders.reorder(btn.dataset.reorder);
+      if (n) toast(n === 1 ? 'Item de volta no carrinho' : `${n} itens de volta no carrinho`, { type: 'success', action: { label: 'Ver carrinho', href: '#/carrinho' } });
+    });
+
+    // Trocou entrega/retirada na folha do cabeçalho: os chips de informação acompanham.
+    const onReceive = () => {
+      const slot = root.querySelector('[data-home-info]');
+      if (!slot) return;
+      const tpl = document.createElement('template');
+      tpl.innerHTML = String(infoChips());
+      slot.replaceWith(tpl.content);
+    };
+    window.addEventListener('bolab:receive', onReceive);
+
+    // No acordeão, abrir uma pergunta fecha as outras.
     const wire = () => {
-      observeReveal(root);
-      // No acordeão, abrir uma pergunta fecha as outras.
       root.querySelectorAll('.accordion details').forEach((d) => {
         d.addEventListener('toggle', () => {
           if (d.open) root.querySelectorAll('.accordion details[open]').forEach((o) => o !== d && (o.open = false));
         });
       });
-      // Os bolos e os cartões que flutuam só se mexem enquanto estão à vista.
-      offPause = pauseOffscreen(root.querySelectorAll('.hero__visual, .spot__stage'));
     };
 
     const slot = root.querySelector('[data-home-rest]');
     if (!slot) {
       wire();
     } else {
-      observeReveal(root);
       // um quadro para a primeira parte aparecer; depois entra o resto
       frame = requestAnimationFrame(() => {
         waiting = setTimeout(() => {
@@ -394,8 +472,9 @@ export default {
 
     return () => {
       cancelAnimationFrame(frame);
+      cancelAnimationFrame(dotsFrame);
       clearTimeout(waiting);
-      offPause();
+      window.removeEventListener('bolab:receive', onReceive);
     };
   },
 };

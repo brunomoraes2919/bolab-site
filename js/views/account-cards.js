@@ -1,56 +1,28 @@
-// BOLAB — formas de pagamento (#/conta/pagamentos).
+// BOLAB — pagamentos (#/conta/pagamentos).
 // A loja nunca guarda o número completo nem o código de segurança: só bandeira, final e validade.
 import { html, icon, on, toast, formData, applyErrors, validators, bindMasks, cardBrand, openDialog, confirmDialog } from '../ui.js';
 import { cards } from '../store.js';
 import { SITE } from '../data/site.js';
-import { accountPage, rerenderOn, withLoading } from './account.js';
+import { accountPage, bindAccount, rerenderOn, withLoading } from './account.js';
 import { clearErrorsOnInput } from './auth.js';
 
-const BRAND_CLASSES = ['visa', 'mastercard', 'amex', 'elo', 'hipercard'];
-const brandClass = (brand) => {
-  const key = String(brand || '').toLowerCase();
-  return BRAND_CLASSES.includes(key) ? `acc-cc--${key}` : '';
-};
-
-function cardVisual({ brand, number, holder, expiry, tag = '' }) {
-  return html`
-    <div class="acc-cc ${brandClass(brand)}" data-cc>
-      <div class="acc-cc__top">
-        <span class="acc-cc__chip" aria-hidden="true"></span>
-        ${tag}
-        <span class="acc-cc__brand" data-cc-brand>${brand}</span>
-      </div>
-      <div class="acc-cc__number" data-cc-number>${number}</div>
-      <div class="acc-cc__bottom">
-        <div><small>Titular</small><span data-cc-holder>${holder}</span></div>
-        <div><small>Validade</small><span data-cc-expiry>${expiry}</span></div>
-      </div>
-    </div>
-  `;
-}
-
-function savedCard(c) {
+/** Linha de um cartão salvo: bandeira, final, validade e titular. Nada além disso existe guardado. */
+function cardRow(c) {
   const expired = !validators.expiry(String(c.expiry || ''));
-  const tag = expired
-    ? html`<span class="badge badge--red">Vencido</span>`
-    : c.isDefault
-      ? html`<span class="badge">${icon('check')} Padrão</span>`
-      : '';
   return html`
-    <article class="acc-pay" aria-label="${c.brand} final ${c.last4}">
-      ${cardVisual({ brand: c.brand, number: `•••• •••• •••• ${c.last4}`, holder: c.holder, expiry: c.expiry, tag })}
-      <div class="acc-item-actions">
-        ${c.isDefault ? '' : html`<button class="btn btn--sm btn--ghost" type="button" data-default="${c.id}">Tornar padrão</button>`}
-        <button class="btn btn--sm btn--ghost btn--danger" type="button" data-remove="${c.id}">${icon('trash')} Remover</button>
+    <li class="acc-pay" aria-label="${c.brand} final ${c.last4}">
+      <span class="row__icon">${icon('credit-card')}</span>
+      <div class="acc-pay__body">
+        <strong>
+          ${c.brand} •••• ${c.last4}
+          ${expired ? html`<span class="badge badge--red">Vencido</span>` : c.isDefault ? html`<span class="badge badge--rose">Padrão</span>` : ''}
+        </strong>
+        <span>Vence ${c.expiry} · ${c.holder}</span>
+        ${c.isDefault ? '' : html`<button class="acc-pay__default" type="button" data-default="${c.id}">Tornar padrão</button>`}
       </div>
-    </article>
+      <button class="icon-btn acc-pay__remove" type="button" data-remove="${c.id}" aria-label="Excluir ${c.brand} final ${c.last4}">${icon('trash')}</button>
+    </li>
   `;
-}
-
-/** "4111 11•• •••• ••••" — o que já foi digitado + o que falta. */
-function previewNumber(value) {
-  const digits = value.replace(/\D/g, '').slice(0, 16);
-  return (digits + '•'.repeat(16 - digits.length)).replace(/(.{4})(?=.)/g, '$1 ');
 }
 
 function openCardForm() {
@@ -58,19 +30,19 @@ function openCardForm() {
   const dlg = openDialog({
     title: 'Novo cartão',
     body: html`
-      <form class="auth-form" id="acc-card-form" novalidate>
-        <div class="acc-cc-preview" aria-hidden="true">
-          ${cardVisual({ brand: 'Cartão', number: previewNumber(''), holder: 'NOME DO TITULAR', expiry: 'MM/AA' })}
-        </div>
+      <form class="acc-form" id="acc-card-form" novalidate>
         <div class="field">
           <label for="cc-number">Número do cartão</label>
-          <input class="input" id="cc-number" name="number" type="text" inputmode="numeric" autocomplete="cc-number" data-mask="card" placeholder="0000 0000 0000 0000" autofocus />
+          <div class="input-group">
+            <input class="input" id="cc-number" name="number" type="text" inputmode="numeric" autocomplete="cc-number" data-mask="card" placeholder="0000 0000 0000 0000" autofocus />
+            <span class="badge acc-brand" data-brand hidden></span>
+          </div>
         </div>
         <div class="field">
-          <label for="cc-holder">Nome do titular</label>
-          <input class="input" id="cc-holder" name="holder" type="text" autocomplete="cc-name" autocapitalize="characters" spellcheck="false" placeholder="Como está escrito no cartão" />
+          <label for="cc-holder">Nome impresso no cartão</label>
+          <input class="input" id="cc-holder" name="holder" type="text" autocomplete="cc-name" autocapitalize="characters" spellcheck="false" maxlength="40" />
         </div>
-        <div class="field acc-cc-expiry">
+        <div class="field acc-form__short">
           <label for="cc-expiry">Validade</label>
           <input class="input" id="cc-expiry" name="expiry" type="text" inputmode="numeric" autocomplete="cc-exp" data-mask="expiry" placeholder="MM/AA" />
         </div>
@@ -80,31 +52,26 @@ function openCardForm() {
               <span>Usar como cartão padrão</span>
             </label>`
           : ''}
-        <div class="acc-secure">
-          ${icon('shield-check')}
-          <span>Por segurança, nunca guardamos o número completo nem o código de segurança. Ficam salvos só a bandeira, os 4 últimos dígitos e a validade.</span>
-        </div>
+        <p class="acc-note">${icon('lock')}<span>Nunca guardamos o número completo nem o código de segurança. Ficam salvos só a bandeira, os 4 últimos dígitos e a validade.</span></p>
       </form>
     `,
     footer: html`
-      <button class="btn btn--secondary" type="button" data-dialog-close>Cancelar</button>
+      <button class="btn btn--neutral" type="button" data-dialog-close>Cancelar</button>
       <button class="btn" type="submit" form="acc-card-form">Salvar cartão</button>
     `,
   });
 
   const form = dlg.el.querySelector('form');
   const f = form.elements;
-  const view = dlg.el.querySelector('[data-cc]');
+  const brandTag = form.querySelector('[data-brand]');
   bindMasks(form);
   clearErrorsOnInput(form);
 
-  form.addEventListener('input', () => {
+  // A bandeira aparece no campo assim que os primeiros dígitos permitem reconhecer.
+  f.number.addEventListener('input', () => {
     const brand = cardBrand(f.number.value);
-    view.className = `acc-cc ${brandClass(brand)}`;
-    view.querySelector('[data-cc-brand]').textContent = brand;
-    view.querySelector('[data-cc-number]').textContent = previewNumber(f.number.value);
-    view.querySelector('[data-cc-holder]').textContent = f.holder.value.trim().toUpperCase() || 'NOME DO TITULAR';
-    view.querySelector('[data-cc-expiry]').textContent = f.expiry.value || 'MM/AA';
+    brandTag.hidden = brand === 'Cartão' || !f.number.value;
+    brandTag.textContent = brand;
   });
 
   form.addEventListener('submit', async (ev) => {
@@ -131,66 +98,60 @@ function openCardForm() {
     });
     if (!saved) return;
     dlg.close(saved);
-    toast(`${saved.brand} final ${saved.last4} salvo na sua conta.`, { type: 'success' });
+    toast(`${saved.brand} final ${saved.last4} salvo.`, { type: 'success' });
   });
 
   return dlg;
 }
 
 export default {
-  title: 'Formas de pagamento',
+  title: 'Pagamentos',
   layout: 'plain',
   auth: true,
 
   render() {
     const list = [...cards.list()].sort((x, y) => Number(Boolean(y.isDefault)) - Number(Boolean(x.isDefault)));
     return accountPage({
-      title: 'Formas de pagamento',
+      title: 'Pagamentos',
       active: 'pagamentos',
       body: html`
-        <section class="card acc-pix" aria-label="Pix">
-          <div class="row">
-            <span class="row__icon">${icon('pix')}</span>
-            <div class="row__body">
-              <div class="row__title">Pix</div>
-              <div class="row__desc">Sempre disponível, com aprovação na hora.</div>
+        <section class="acc-group">
+          <h2 class="acc-group__title">Sempre disponível</h2>
+          <div class="card acc-list">
+            <div class="row">
+              <span class="row__icon acc-pix">${icon('pix')}</span>
+              <span class="row__body">
+                <span class="row__title">Pix</span>
+                <span class="row__desc">Aprovação na hora</span>
+              </span>
+              <span class="badge badge--green">${SITE.pix.discountPct}% OFF</span>
             </div>
-            <span class="badge badge--green">${SITE.pix.discountPct}% OFF</span>
           </div>
         </section>
 
-        <div class="acc-toolbar">
-          <div>
-            <h2 class="acc-subtitle">Cartões de crédito</h2>
-            <p>Parcele em até ${SITE.card.maxInstallments}x sem juros.</p>
-          </div>
-          ${list.length ? html`<button class="btn only-desktop" type="button" data-add>${icon('plus')} Adicionar cartão</button>` : ''}
-        </div>
-
-        ${list.length
-          ? html`
-              <div class="acc-list">
-                ${list.map(savedCard)}
-                <button class="acc-add-tile acc-add-tile--card" type="button" data-add>${icon('plus')} Adicionar outro cartão</button>
-              </div>
-            `
-          : html`
-              <div class="card">
-                <div class="empty acc-empty">
-                  <div class="empty__art">${icon('credit-card')}</div>
-                  <h2>Nenhum cartão salvo</h2>
-                  <p>Salve um cartão e pague os próximos pedidos sem digitar tudo de novo.</p>
-                  <button class="btn" type="button" data-add>${icon('plus')} Adicionar cartão</button>
+        <section class="acc-group">
+          <h2 class="acc-group__title">Cartões de crédito</h2>
+          ${list.length
+            ? html`<ul class="card acc-list">${list.map(cardRow)}</ul>`
+            : html`
+                <div class="card">
+                  <div class="empty acc-empty">
+                    <div class="empty__art">${icon('credit-card')}</div>
+                    <h2>Nenhum cartão salvo</h2>
+                    <p>Salve um cartão e pague os próximos pedidos sem digitar tudo de novo. Parcele em até ${SITE.card.maxInstallments}x sem juros.</p>
+                  </div>
                 </div>
-              </div>
-            `}
+              `}
+          <button class="btn btn--secondary acc-add" type="button" data-add>${icon('plus')} Adicionar cartão</button>
+        </section>
 
-        <p class="acc-note">${icon('lock')}<span>Por segurança, nunca guardamos o número completo nem o código de segurança dos seus cartões.</span></p>
+        <p class="acc-note">${icon('lock')}<span>Nunca guardamos o número completo nem o código de segurança dos seus cartões.</span></p>
       `,
     });
   },
 
   mount(root, ctx) {
+    bindAccount(root);
     on(root, 'click', '[data-add]', () => openCardForm());
     on(root, 'click', '[data-default]', (_ev, btn) => {
       cards.setDefault(btn.dataset.default);
@@ -200,15 +161,15 @@ export default {
       const c = cards.get(btn.dataset.remove);
       if (!c) return;
       const ok = await confirmDialog({
-        title: 'Remover este cartão?',
+        title: 'Excluir este cartão?',
         message: `${c.brand} final ${c.last4}. Você pode cadastrar de novo quando quiser.`,
-        confirmLabel: 'Remover',
+        confirmLabel: 'Excluir',
         cancelLabel: 'Manter',
         danger: true,
       });
       if (!ok) return;
       cards.remove(c.id);
-      toast('Cartão removido.');
+      toast('Cartão excluído.');
     });
     return rerenderOn(ctx, ['cards']);
   },

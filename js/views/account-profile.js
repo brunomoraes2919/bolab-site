@@ -1,9 +1,9 @@
-// BOLAB — dados pessoais e senha (#/conta/dados).
+// BOLAB — meus dados e senha (#/conta/dados).
 import { html, raw, icon, initials, on, toast, formData, applyErrors, validators, bindMasks, openDialog, toDate, isoDate } from '../ui.js';
 import { auth } from '../store.js';
 import { GOOGLE_LOGO } from '../icons.js';
 import { SITE } from '../data/site.js';
-import { accountPage, withLoading } from './account.js';
+import { accountPage, bindAccount, withLoading } from './account.js';
 import { passwordField, bindPasswordFields, clearErrorsOnInput } from './auth.js';
 
 /**
@@ -15,13 +15,13 @@ function askCurrentPassword(newEmail) {
   const dlg = openDialog({
     title: 'Confirme que é você',
     body: html`
-      <form class="auth-form" id="acc-confirm-pass" novalidate>
+      <form class="acc-form" id="acc-confirm-pass" novalidate>
         <p class="muted">Para trocar o e-mail da conta para <strong>${newEmail}</strong>, digite sua senha atual.</p>
         ${passwordField({ id: 'acc-confirm-current', name: 'current', label: 'Senha atual', autofocus: true })}
       </form>
     `,
     footer: html`
-      <button class="btn btn--secondary" type="button" data-dialog-close>Cancelar</button>
+      <button class="btn btn--neutral" type="button" data-dialog-close>Cancelar</button>
       <button class="btn" type="submit" form="acc-confirm-pass">Confirmar</button>
     `,
   });
@@ -42,7 +42,7 @@ function askCurrentPassword(newEmail) {
 }
 
 export default {
-  title: 'Dados pessoais',
+  title: 'Meus dados',
   layout: 'plain',
   auth: true,
 
@@ -51,14 +51,11 @@ export default {
     if (!user) return '';
     const social = user.provider !== 'email';
     return accountPage({
-      title: 'Dados pessoais',
+      title: 'Meus dados',
       active: 'dados',
       body: html`
         <form class="card card--pad" novalidate data-profile>
-          <div class="acc-card__head">
-            <h2>Seus dados</h2>
-            <p>Usamos para identificar você e falar sobre os seus pedidos.</p>
-          </div>
+          <h2 class="acc-card__title">Dados pessoais</h2>
           <div class="form-grid form-grid--2">
             <div class="field span-2">
               <label for="pf-name">Nome completo</label>
@@ -93,24 +90,21 @@ export default {
                 placeholder="(65) 99999-0000"
                 value="${user.phone || ''}"
               />
-              <div class="field__hint">Para avisar quando seu bolo sair para entrega.</div>
+              <div class="field__hint">Para avisar sobre o seu pedido.</div>
             </div>
             <div class="field">
-              <label for="pf-birthday">Data de aniversário</label>
+              <label for="pf-birthday">Aniversário <span class="acc-optional">(opcional)</span></label>
               <input class="input" id="pf-birthday" name="birthday" type="date" autocomplete="bday" min="1900-01-01" max="${isoDate(new Date())}" value="${user.birthday || ''}" />
-              <div class="field__hint">Para ganhar um mimo no seu aniversário.</div>
+              <div class="field__hint">Para um mimo no seu dia.</div>
             </div>
           </div>
           <div class="acc-actions">
-            <button class="btn" type="submit">Salvar alterações</button>
+            <button class="btn" type="submit">Salvar</button>
           </div>
         </form>
 
         <form class="card card--pad" novalidate data-password>
-          <div class="acc-card__head">
-            <h2>${social ? 'Criar uma senha' : 'Senha'}</h2>
-            <p>${social ? 'Opcional: com uma senha você também entra usando e-mail.' : 'Troque sua senha sempre que achar necessário.'}</p>
-          </div>
+          <h2 class="acc-card__title">${social ? 'Criar uma senha' : 'Senha'}</h2>
           ${social
             ? html`<div class="acc-provider">
                 ${raw(GOOGLE_LOGO)}<span>Você entrou com o Google${SITE.demo ? ' (conta de exemplo desta demonstração)' : ''}, então ainda não tem senha na BOLAB.</span>
@@ -123,7 +117,7 @@ export default {
             ${passwordField({ id: 'pf-confirm', name: 'confirm', label: social ? 'Repita a senha' : 'Repita a nova senha', autocomplete: 'new-password' })}
           </div>
           <div class="acc-actions">
-            <button class="btn btn--secondary" type="submit">${icon('lock')} ${social ? 'Criar senha' : 'Alterar senha'}</button>
+            <button class="btn btn--secondary" type="submit">${social ? 'Criar senha' : 'Alterar senha'}</button>
           </div>
         </form>
       `,
@@ -131,6 +125,7 @@ export default {
   },
 
   mount(root, ctx) {
+    bindAccount(root);
     bindMasks(root);
     bindPasswordFields(root);
     clearErrorsOnInput(root);

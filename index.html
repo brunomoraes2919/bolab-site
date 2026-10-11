@@ -4,10 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>BOLAB — Bolos artesanais sob encomenda</title>
-    <meta name="description" content="Bolos artesanais feitos sob encomenda. Escolha um clássico ou monte o seu em 3D, camada por camada, e receba com hora marcada." />
-    <meta name="theme-color" content="#FDF5F7" />
-    <meta property="og:title" content="BOLAB — Onde seu bolo ganha forma" />
-    <meta property="og:description" content="Monte o seu bolo em 3D ou escolha um dos nossos clássicos. Entrega com hora marcada." />
+    <meta name="description" content="Delivery de bolos artesanais em Cuiabá e Várzea Grande. Peça um clássico ou monte o seu em 3D e receba com dia e horário marcados." />
+    <meta name="theme-color" content="#FFFFFF" />
+    <meta property="og:title" content="BOLAB — Delivery de bolos artesanais" />
+    <meta property="og:description" content="Peça um clássico ou monte o seu bolo em 3D. Entrega com dia e horário marcados." />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="assets/icon-512.png" />
 
@@ -22,30 +22,22 @@
     <script>
       // DESEMPENHO DA ABERTURA (três atalhos; nenhum muda a aparência):
       //
-      // 1. A foto principal do início começa a baixar junto com o resto. Antes ela só era pedida
-      //    depois de todo o JavaScript rodar. Se trocar a foto "hero" em js/data/photos.js,
-      //    troque o código dela aqui também (senão o navegador baixa duas fotos).
+      // 1. A imagem do primeiro banner do início começa a baixar junto com o resto. Antes ela só
+      //    era pedida depois de todo o JavaScript rodar. Se trocar a imagem do primeiro banner
+      //    em js/views/home.js (PROMOS), troque o arquivo aqui também.
       (function () {
         if (location.hash && location.hash !== '#' && location.hash !== '#/') return;
-        var photo = 'photo-1569289522127-c0452f372d46';
         var link = document.createElement('link');
         link.rel = 'preload';
         link.as = 'image';
-        link.setAttribute(
-          'imagesrcset',
-          [720, 1080, 1440]
-            .map(function (w) {
-              return 'https://images.unsplash.com/' + photo + '?w=' + w + '&q=72&auto=format&fit=crop ' + w + 'w';
-            })
-            .join(', '),
-        );
-        link.setAttribute('imagesizes', '(min-width: 900px) 46vw, 92vw');
+        link.href = 'assets/img/cz-morango.webp';
         document.head.appendChild(link);
       })();
 
-      // 2. As fontes da marca não seguram mais a primeira pintura (a folha de estilo delas vem de
-      //    outro servidor; no app, sem internet, a tela ficava esperando). Assim que a folha chega,
-      //    os arquivos das fontes já são pedidos, para o texto não "pular" depois de aparecer.
+      // 2. A fonte da marca não segura a primeira pintura (a folha de estilo dela vem de outro
+      //    servidor; no app, sem internet, a tela ficava esperando). Assim que a folha chega, o
+      //    arquivo da fonte já é pedido, para o texto não "pular" depois de aparecer. Enquanto
+      //    isso (ou sem internet), a loja usa a fonte do aparelho, ajustada em css/tokens.css.
       function bolabFonts(link) {
         if (link.rel === 'preload') {
           link.rel = 'stylesheet'; // a folha chegou: aplica (este mesmo aviso dispara de novo depois de aplicada)
@@ -53,28 +45,20 @@
         }
         link.onload = null;
         if (!document.fonts || !document.fonts.load) return;
-        ['400', '500', '600', '700', '800', '900']
-          .map(function (w) {
-            return w + ' 1em Nunito';
-          })
-          .concat(
-            ['600', '700', '800', 'italic 600', 'italic 700'].map(function (w) {
-              return w + ' 1em "Playfair Display"';
-            }),
-          )
-          .forEach(function (font) {
-            document.fonts.load(font).catch(function () {});
-          });
+        // Fonte variável: um arquivo só cobre todos os pesos (400 a 800).
+        ['500', '700', '800'].forEach(function (w) {
+          document.fonts.load(w + ' 1em "Plus Jakarta Sans"').catch(function () {});
+        });
       }
     </script>
     <link
       rel="preload"
       as="style"
-      href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,600;0,700;0,800;1,600;1,700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400..800&display=swap"
       onload="bolabFonts(this)"
     />
     <noscript>
-      <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,600;0,700;0,800;1,600;1,700&display=swap" rel="stylesheet" />
+      <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400..800&display=swap" rel="stylesheet" />
     </noscript>
 
     <!-- 3. Os arquivos de JavaScript da primeira tela são pedidos todos de uma vez, em vez de um
@@ -113,14 +97,15 @@
   </head>
   <body data-layout="default">
     <a class="skip-link" href="#/" data-skip>Pular para o conteúdo</a>
-    <div id="announce" class="announce"></div>
     <header id="header" class="header"></header>
+    <nav id="subnav" class="subnav" aria-label="Seções da loja"></nav>
     <main id="app" tabindex="-1">
       <div class="boot" id="boot">
         <img src="assets/logo-mark.webp" alt="" width="60" height="92" />
       </div>
     </main>
     <footer id="footer" class="footer"></footer>
+    <div id="cartbar" class="cartbar"></div>
     <nav id="tabbar" class="tabbar" aria-label="Navegação principal"></nav>
 
     <noscript>

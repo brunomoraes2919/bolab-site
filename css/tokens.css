@@ -1,58 +1,78 @@
-/* BOLAB — tokens de design. Toda cor, espaço e sombra do site sai daqui. */
-:root {
-  /* Marca */
-  --rose-50: #FDF5F7;
-  --rose-100: #FCE8EE;
-  --rose-200: #F7D3DC;
-  --rose-300: #EDB4C2;
-  --rose-400: #E38CA0;
-  --rose-500: #D96B82; /* rosa oficial */
-  --rose-600: #C4506A; /* botões e links (contraste AA com branco) */
-  --rose-700: #A53D56;
-  --rose-800: #7A2C40;
-  --rose-900: #4A1826;
+/* BOLAB — tokens de design. Toda cor, espaço e sombra do site sai daqui.
 
-  --cocoa-900: #2A1210; /* texto principal */
-  --cocoa-700: #4A2B2B;
-  --cocoa-500: #7A5060; /* texto secundário */
-  --cocoa-300: #B08898; /* texto apagado */
-  --cream: #FFFBF7;
-  --line: #EDD0D8;
-  --line-soft: #F5E4E9;
+   LINGUAGEM "DELIVERY PREMIUM": superfícies brancas sobre fundo cinza-claro neutro, texto quase
+   preto, uma única família sem serifa, cantos mais contidos e sombras neutras. O rosa da marca
+   continua, mas aparece em pouca coisa: a cor de ação (botões, links, seleção) e pequenos
+   destaques. Os nomes dos tokens são os de sempre; o que mudou foram os valores. */
+:root {
+  /* Marca — escala de rosa (matiz ~345°) */
+  --rose-50: #FFF4F6; /* fundo de item selecionado e de pequenos destaques */
+  --rose-100: #FFE7EC; /* ícones em caixinha, selos suaves */
+  --rose-200: #FCCFD9;
+  --rose-300: #F5A9B9;
+  --rose-400: #E8809A;
+  --rose-500: #D96B82; /* rosa oficial da logo (decoração; não usar em texto pequeno) */
+  --rose-600: #D12D58; /* COR DE AÇÃO: botões, links, seleção. Branco por cima = 4,97:1 (AA) */
+  --rose-700: #B01F47; /* ação pressionada / link sobre fundo claro (6,7:1) */
+  --rose-800: #84173A;
+  --rose-900: #4D0D22;
+
+  /* Neutros (os nomes "cocoa" ficaram; os valores agora são cinzas quase pretos) */
+  --cocoa-900: #1C1A1B; /* texto principal (17,3:1) */
+  --cocoa-700: #3D3A3C;
+  --cocoa-500: #5F5B5E; /* texto secundário (6,7:1) */
+  --cocoa-300: #6C686B; /* texto de apoio (5,5:1 no branco; 5,0:1 no fundo da página; 4,8:1 sobre --fill) */
+  --cream: #FAFAFA; /* superfície alternativa (neutra) */
+  --line: #E5E4E6; /* bordas */
+  --line-soft: #EFEEF0; /* divisórias */
   --white: #FFFFFF;
 
-  --gold: #C99A2E;
-  --gold-soft: #FBF1D8;
-  --green: #2F8F5B;
-  --green-soft: #E4F4EB;
-  --amber: #B7791F;
-  --amber-soft: #FDF2DC;
-  --red: #C0392B;
-  --red-soft: #FDECEA;
+  --gold: #F2A60C; /* só a estrela da nota */
+  --gold-soft: #FFF4D6;
+  --green: #15803D; /* "grátis", confirmado, positivo (5,0:1) */
+  --green-soft: #E7F6EC;
+  --amber: #B45309;
+  --amber-soft: #FEF3E2;
+  --red: #C62828;
+  --red-soft: #FDECEC;
 
-  /* Papéis */
-  --bg: var(--rose-50);
-  --surface: var(--white);
+  /* Papéis — prefira estes aos tons crus acima */
+  --bg: #F5F5F6; /* fundo da página: cinza-claro neutro */
+  --surface: var(--white); /* cartões, folhas, barras */
   --surface-2: var(--cream);
+  --fill: #EFEFF1; /* preenchimento neutro: campo de busca, fundo de foto, abas */
+  --border: var(--line);
+  --border-strong: #D3D1D4;
   --text: var(--cocoa-900);
   --text-2: var(--cocoa-500);
   --text-3: var(--cocoa-300);
   --brand: var(--rose-500);
   --brand-strong: var(--rose-600);
   --brand-soft: var(--rose-100);
-  --focus: #7A2C40;
+  --action: var(--rose-600);
+  --action-hover: var(--rose-700);
+  --action-soft: var(--rose-50);
+  --price: var(--cocoa-900); /* preço: sempre forte e quase preto */
+  --positive: var(--green);
+  --star: var(--gold);
+  --stage: #2A1215; /* cacau escuro: só em áreas de impacto (faixa do 3D, rodapé do computador) */
+  --stage-2: #4A1A2A;
+  --focus: #1C1A1B;
 
-  /* Tipografia */
-  --font-display: "Playfair Display", "Times New Roman", serif;
-  --font-body: "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --fs-xs: 0.75rem;
-  --fs-sm: 0.875rem;
-  --fs-md: 1rem;
-  --fs-lg: 1.125rem;
-  --fs-xl: 1.375rem;
-  --fs-2xl: clamp(1.5rem, 1.2rem + 1.4vw, 2rem);
-  --fs-3xl: clamp(1.875rem, 1.3rem + 2.6vw, 2.75rem);
-  --fs-hero: clamp(2.25rem, 1.3rem + 4.6vw, 4.25rem);
+  /* Tipografia — uma família só. --font-display e --font-body são a mesma fonte. */
+  --font-body: "Plus Jakarta Sans", "Plus Jakarta Sans Fallback", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: var(--font-body);
+  --fs-2xs: 0.6875rem; /* 11 — selos, rótulos da barra inferior */
+  --fs-xs: 0.75rem; /* 12 — metadados */
+  --fs-meta: 0.8125rem; /* 13 — linha de nota/prazo, legendas */
+  --fs-sm: 0.875rem; /* 14 — texto secundário, botões pequenos */
+  --fs-md: 1rem; /* 16 — texto e campos */
+  --fs-lg: 1.125rem; /* 18 — títulos de cartão e de folha */
+  --fs-xl: 1.25rem; /* 20 — título de seção no celular, preço em destaque */
+  --fs-2xl: clamp(1.375rem, 1.25rem + 0.6vw, 1.625rem); /* 22–26 — título de página */
+  --fs-3xl: clamp(1.5rem, 1.3rem + 1vw, 2rem); /* 24–32 — raros títulos grandes */
+  --fs-hero: clamp(1.75rem, 1.4rem + 1.8vw, 2.5rem); /* 28–40 — uso excepcional */
+  --fs-title: clamp(1.1875rem, 1.1rem + 0.45vw, 1.5rem); /* 19–24 — título de seção */
 
   /* Espaço */
   --s-1: 4px;
@@ -69,29 +89,34 @@
   --s-24: 96px;
 
   /* Forma */
-  --r-sm: 10px;
-  --r-md: 14px;
-  --r-lg: 20px;
-  --r-xl: 28px;
-  --r-pill: 999px;
+  --r-sm: 8px; /* selos, miniaturas */
+  --r-md: 12px; /* botões, campos, fotos de linha */
+  --r-lg: 16px; /* cartões */
+  --r-xl: 20px; /* folhas, banners grandes */
+  --r-pill: 999px; /* só chips, etiquetas e contadores */
 
-  --shadow-1: 0 1px 2px rgba(122, 44, 64, 0.06), 0 2px 8px rgba(122, 44, 64, 0.05);
-  --shadow-2: 0 4px 12px rgba(122, 44, 64, 0.08), 0 12px 32px rgba(122, 44, 64, 0.08);
-  --shadow-3: 0 12px 28px rgba(122, 44, 64, 0.14), 0 28px 64px rgba(122, 44, 64, 0.14);
-  --shadow-brand: 0 8px 22px rgba(196, 80, 106, 0.35);
+  /* Sombra: cartão não tem sombra, tem fio de 1 px. Sombra de verdade só no que flutua
+     (barras fixas, folhas, avisos). Os nomes antigos continuam valendo:
+     --shadow-1 virou o fio; --shadow-2 e --shadow-3 são as sombras de elemento flutuante. */
+  --shadow-1: 0 0 0 1px rgba(17, 17, 20, 0.08);
+  --shadow-2: 0 2px 6px rgba(17, 17, 20, 0.06), 0 8px 24px rgba(17, 17, 20, 0.1);
+  --shadow-3: 0 8px 20px rgba(17, 17, 20, 0.1), 0 24px 56px rgba(17, 17, 20, 0.18);
+  --shadow-brand: 0 0 0 0 rgba(17, 17, 20, 0); /* botões são chapados: sem sombra */
+  --shadow-up: 0 -1px 0 var(--line-soft), 0 -6px 20px rgba(17, 17, 20, 0.07); /* barras presas ao rodapé */
 
   /* Layout */
   --container: 1200px;
   --gutter: 16px;
-  --header-h: 60px;
-  --tabbar-h: 64px;
+  --header-h: 56px;
+  --tabbar-h: 60px;
+  --cartbar-h: 0px; /* espaço da barra "Ver carrinho" (css/shell.css troca o valor quando ela aparece) */
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 
-  /* Movimento */
-  --ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --t-fast: 140ms;
-  --t-med: 260ms;
-  --t-slow: 480ms;
+  /* Movimento: rápido e funcional */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --t-fast: 120ms;
+  --t-med: 220ms;
+  --t-slow: 360ms;
 
   --z-header: 50;
   --z-tabbar: 50;
@@ -103,6 +128,14 @@
 @media (min-width: 900px) {
   :root {
     --gutter: 32px;
-    --header-h: 76px;
+    --header-h: 72px;
   }
+}
+
+/* Enquanto a fonte da marca não chega (ou no app, sem internet), a fonte do aparelho entra um
+   pouco maior, com a mesma largura média: as quebras de linha ficam iguais e nada "pula". */
+@font-face {
+  font-family: "Plus Jakarta Sans Fallback";
+  src: local("Roboto"), local("Segoe UI"), local("Helvetica Neue"), local("Arial");
+  size-adjust: 104%;
 }

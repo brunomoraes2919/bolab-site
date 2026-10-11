@@ -1,82 +1,123 @@
-/* BOLAB — componentes reutilizáveis. Use estas classes antes de criar estilo novo. */
+/* BOLAB — componentes reutilizáveis. Use estas classes antes de criar estilo novo.
+   Linguagem: delivery premium. Cartão branco com fio de 1 px (sem sombra), botões e campos
+   com cantos de 12 px, pílula só em chips, etiquetas e contadores. Sombra só no que flutua. */
 
 /* ───────── Botões ───────── */
 .btn {
-  --btn-bg: var(--brand-strong);
+  --btn-bg: var(--action);
   --btn-fg: var(--white);
+  --btn-line: transparent;
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   min-height: 48px;
-  padding: 0 22px;
-  border-radius: var(--r-pill);
+  padding: 0 20px;
+  border-radius: var(--r-md);
   background: var(--btn-bg);
   color: var(--btn-fg);
-  font-weight: 800;
-  font-size: var(--fs-md);
-  letter-spacing: 0.01em;
+  font-weight: 700;
+  font-size: 0.9375rem;
+  line-height: 1.2;
   white-space: nowrap;
-  box-shadow: var(--shadow-brand);
-  transition: transform var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), background var(--t-fast);
+  box-shadow: inset 0 0 0 1px var(--btn-line);
+  transition: background var(--t-fast), color var(--t-fast), transform var(--t-fast) var(--ease);
   user-select: none;
 }
 
-.btn:hover {
-  --btn-bg: var(--rose-700);
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .btn:hover {
+    --btn-bg: var(--action-hover);
+  }
 }
 
 .btn:active {
-  transform: translateY(0) scale(0.98);
+  transform: scale(0.98);
 }
 
 .btn svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   flex: none;
 }
 
+/* Secundário: branco com fio, texto na cor de ação. */
 .btn--secondary {
-  --btn-bg: var(--white);
-  --btn-fg: var(--rose-700);
-  box-shadow: inset 0 0 0 1.5px var(--rose-300);
+  --btn-bg: var(--surface);
+  --btn-fg: var(--action);
+  --btn-line: var(--border-strong);
 }
 
-.btn--secondary:hover {
-  --btn-bg: var(--rose-100);
-}
-
+/* Fantasma: só o texto. */
 .btn--ghost {
   --btn-bg: transparent;
-  --btn-fg: var(--rose-700);
-  box-shadow: none;
+  --btn-fg: var(--action);
 }
 
-.btn--ghost:hover {
-  --btn-bg: var(--rose-100);
-  transform: none;
+/* Suave: fundo rosa-claro (ação de apoio ao lado de uma principal). */
+.btn--soft {
+  --btn-bg: var(--rose-50);
+  --btn-fg: var(--rose-700);
+}
+
+/* Neutro: cinza (ações sem peso: "Agora não", "Editar"). */
+.btn--neutral {
+  --btn-bg: var(--fill);
+  --btn-fg: var(--text);
 }
 
 .btn--dark {
   --btn-bg: var(--cocoa-900);
-  box-shadow: var(--shadow-2);
 }
 
-.btn--dark:hover {
-  --btn-bg: var(--cocoa-700);
+/* Branco: para usar sobre fundo escuro (faixa do 3D) ou sobre a cor de ação. */
+.btn--white {
+  --btn-bg: var(--white);
+  --btn-fg: var(--cocoa-900);
+}
+
+@media (hover: hover) {
+  .btn--secondary:hover,
+  .btn--ghost:hover {
+    --btn-bg: var(--rose-50);
+  }
+
+  .btn--soft:hover {
+    --btn-bg: var(--rose-100);
+  }
+
+  .btn--neutral:hover {
+    --btn-bg: var(--line);
+  }
+
+  .btn--dark:hover {
+    --btn-bg: var(--cocoa-700);
+  }
+
+  .btn--white:hover {
+    --btn-bg: var(--rose-50);
+  }
 }
 
 .btn--lg {
-  min-height: 56px;
-  padding: 0 30px;
-  font-size: var(--fs-lg);
+  min-height: 52px;
+  padding: 0 24px;
+  font-size: var(--fs-md);
 }
 
 .btn--sm {
-  min-height: 38px;
-  padding: 0 16px;
-  font-size: var(--fs-sm);
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: var(--fs-meta);
+}
+
+/* botão pequeno continua com 44 px de área de toque */
+.btn--sm::before {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
 }
 
 .btn--block {
@@ -84,11 +125,48 @@
   width: 100%;
 }
 
+/* Botão com preço: rótulo à esquerda, valor à direita ("Adicionar · R$ 149,90").
+   Use priceButton() de js/components.js. É o padrão de toda ação principal de compra. */
+.btn--price {
+  justify-content: space-between;
+  gap: 12px;
+  padding-inline: 16px;
+}
+
+.btn__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn__price {
+  flex: none;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* bolinha com a quantidade ("Ver carrinho" com 2 itens) */
+.btn__count {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.22);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
 .btn[disabled],
 .btn.is-disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   pointer-events: none;
-  box-shadow: none;
 }
 
 .btn.is-loading {
@@ -100,6 +178,8 @@
 .btn.is-loading::after {
   content: "";
   position: absolute;
+  left: calc(50% - 10px);
+  top: calc(50% - 10px);
   width: 20px;
   height: 20px;
   border-radius: 50%;
@@ -109,7 +189,10 @@
 }
 
 .btn--secondary.is-loading::after,
-.btn--ghost.is-loading::after {
+.btn--ghost.is-loading::after,
+.btn--soft.is-loading::after,
+.btn--neutral.is-loading::after,
+.btn--white.is-loading::after {
   border-color: var(--rose-200);
   border-top-color: var(--rose-600);
 }
@@ -131,9 +214,10 @@
   transition: background var(--t-fast), color var(--t-fast), transform var(--t-fast);
 }
 
-.icon-btn:hover {
-  background: var(--rose-100);
-  color: var(--rose-700);
+@media (hover: hover) {
+  .icon-btn:hover {
+    background: var(--fill);
+  }
 }
 
 .icon-btn:active {
@@ -146,63 +230,121 @@
 }
 
 .icon-btn--surface {
-  background: var(--white);
+  background: var(--surface);
   box-shadow: var(--shadow-1);
 }
 
+/* Botão redondo "+" (adicionar). Usado no card, na linha de cardápio e onde mais precisar. */
+.add-btn,
+.pcard__add {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  flex: none; /* nunca espreme: continua um círculo mesmo em telas de 320 px */
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--action);
+  color: #fff;
+  transition: transform var(--t-fast) var(--ease), background var(--t-fast);
+}
+
+/* 36 px no desenho, 44 px de área de toque */
+.add-btn::before,
+.pcard__add::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+}
+
+.add-btn svg,
+.pcard__add svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.6;
+}
+
+.add-btn:active,
+.pcard__add:active {
+  transform: scale(0.9);
+}
+
+.add-btn.is-added,
+.pcard__add.is-added {
+  background: var(--green);
+  animation: pop 320ms var(--ease);
+}
+
+@media (hover: hover) {
+  .add-btn:hover,
+  .pcard__add:hover {
+    background: var(--action-hover);
+  }
+}
+
 .link {
-  color: var(--rose-700);
-  font-weight: 800;
+  color: var(--action);
+  font-weight: 700;
   text-decoration: underline;
   text-decoration-color: var(--rose-300);
   text-underline-offset: 3px;
 }
 
 .link:hover {
+  color: var(--action-hover);
   text-decoration-color: currentColor;
 }
 
 .link-arrow {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: var(--rose-700);
-  font-weight: 800;
+  gap: 4px;
+  color: var(--action);
+  font-size: var(--fs-sm);
+  font-weight: 700;
   white-space: nowrap;
 }
 
 .link-arrow svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   transition: transform var(--t-fast) var(--ease);
 }
 
-.link-arrow:hover svg {
-  transform: translateX(4px);
+@media (hover: hover) {
+  .link-arrow:hover {
+    color: var(--action-hover);
+  }
+
+  .link-arrow:hover svg {
+    transform: translateX(3px);
+  }
 }
 
 /* ───────── Selos, chips ───────── */
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  border-radius: var(--r-pill);
-  background: var(--rose-100);
-  color: var(--rose-800);
-  font-size: var(--fs-xs);
-  font-weight: 800;
-  letter-spacing: 0.02em;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--fill);
+  color: var(--cocoa-700);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  line-height: 1.35;
   white-space: nowrap;
 }
 
 .badge svg {
-  width: 13px;
-  height: 13px;
+  width: 12px;
+  height: 12px;
 }
 
 .badge--solid {
-  background: var(--rose-600);
+  background: var(--action);
   color: #fff;
 }
 
@@ -211,53 +353,117 @@
   color: #fff;
 }
 
+.badge--rose {
+  background: var(--rose-100);
+  color: var(--rose-800);
+}
+
 .badge--gold {
   background: var(--gold-soft);
-  color: #7A5A10;
+  color: #7A5200;
 }
 
 .badge--green {
   background: var(--green-soft);
-  color: #1E6B42;
+  color: #0F5F2C;
 }
 
 .badge--amber {
   background: var(--amber-soft);
-  color: #8A5A10;
+  color: #8A4B08;
 }
 
 .badge--red {
   background: var(--red-soft);
-  color: #96281B;
+  color: #9B1C1C;
+}
+
+/* selo branco para ficar sobre foto */
+.badge--float {
+  background: var(--white);
+  color: var(--cocoa-900);
+  box-shadow: 0 1px 3px rgba(17, 17, 20, 0.16);
 }
 
 .chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 40px;
-  padding: 0 16px;
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
   border-radius: var(--r-pill);
-  background: var(--white);
-  box-shadow: inset 0 0 0 1.5px var(--line);
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  font-weight: 700;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+  font-size: var(--fs-meta);
+  font-weight: 600;
   white-space: nowrap;
-  transition: all var(--t-fast) var(--ease);
+  transition: background var(--t-fast), box-shadow var(--t-fast), color var(--t-fast);
 }
 
-.chip:hover {
-  box-shadow: inset 0 0 0 1.5px var(--rose-400);
-  color: var(--rose-700);
+/* 36 px no desenho, 44 px de área de toque (só nos chips clicáveis) */
+a.chip::before,
+button.chip::before {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
+}
+
+.chip svg {
+  width: 15px;
+  height: 15px;
+  color: var(--text-2);
+}
+
+@media (hover: hover) {
+  a.chip:hover,
+  button.chip:hover {
+    box-shadow: inset 0 0 0 1px var(--border-strong);
+    background: var(--surface-2);
+  }
 }
 
 .chip.is-active,
 .chip[aria-pressed="true"],
-.chip[aria-selected="true"] {
-  background: var(--cocoa-900);
+.chip[aria-selected="true"],
+.chip[aria-current="true"] {
+  background: var(--rose-50);
+  box-shadow: inset 0 0 0 1.5px var(--action);
+  color: var(--rose-700);
+  font-weight: 700;
+}
+
+.chip.is-active svg,
+.chip[aria-pressed="true"] svg,
+.chip[aria-selected="true"] svg {
+  color: currentColor;
+}
+
+/* Chip de informação (não clicável): "Entrega R$ 12,90", "Retirada grátis". */
+.chip--info {
+  min-height: 30px;
+  padding: 0 10px;
+  background: var(--fill);
   box-shadow: none;
-  color: #fff;
+  color: var(--cocoa-700);
+  font-size: var(--fs-xs);
+}
+
+.chip--info strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.chip--positive,
+.chip--positive svg {
+  color: var(--green);
+}
+
+.chip--positive {
+  background: var(--green-soft);
+  color: #0F5F2C;
 }
 
 .chips {
@@ -265,10 +471,13 @@
   gap: 8px;
   overflow-x: auto;
   scrollbar-width: none;
+  contain: inline-size; /* mesma proteção da .rail: a fileira não alarga a coluna em volta */
   padding-block: 2px;
   margin-inline: calc(var(--gutter) * -1);
   padding-inline: var(--gutter);
+  scroll-padding-inline: var(--gutter);
   scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
 }
 
 .chips::-webkit-scrollbar {
@@ -279,6 +488,7 @@
   .chips {
     flex-wrap: wrap;
     overflow: visible;
+    contain: none;
     margin-inline: 0;
     padding-inline: 0;
   }
@@ -292,12 +502,12 @@
 }
 
 .card--pad {
-  padding: var(--s-5);
+  padding: var(--s-4);
 }
 
 @media (min-width: 900px) {
   .card--pad {
-    padding: var(--s-8);
+    padding: var(--s-6);
   }
 }
 
@@ -308,48 +518,152 @@
   margin: var(--s-4) 0;
 }
 
+/* Fileira que desliza para o lado (carrossel). No celular sangra até a borda da tela.
+   --rail-w define a largura de cada item. Com .rail--grid vira grade no computador
+   (--rail-cols colunas), porque rolar de lado com mouse é ruim. */
+.rail {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* a largura dos itens não conta para o tamanho de quem está em volta: dentro de uma grade ou
+     de um flex, a fileira nunca alarga a coluna (e a página) além da tela */
+  contain: inline-size;
+  margin-inline: calc(var(--gutter) * -1);
+  padding: 1px var(--gutter) 4px;
+  scroll-padding-inline: var(--gutter);
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
+}
+
+.rail::-webkit-scrollbar {
+  display: none;
+}
+
+/* Largura padrão do item: 160 px (172 px a partir de 640 px). É a medida em que o card compacto
+   mostra "★ 4,9 · Pronto em 24 h" em uma linha só; assim o mesmo card tem o mesmo tamanho no
+   início, na tela do item, no carrinho e nos favoritos. Só troque --rail-w para conteúdo que
+   não seja card de produto (avaliações, pedidos, miniaturas). */
+.rail > * {
+  flex: none;
+  width: var(--rail-w, var(--rail-w-base, 160px));
+  min-width: 0;
+  scroll-snap-align: start;
+}
+
+@media (min-width: 640px) {
+  .rail {
+    --rail-w-base: 172px;
+  }
+}
+
+@media (min-width: 900px) {
+  .rail--grid {
+    display: grid;
+    grid-template-columns: repeat(var(--rail-cols, 5), minmax(0, 1fr));
+    gap: 16px;
+    overflow: visible;
+    contain: none;
+    margin-inline: 0;
+    padding: 0;
+  }
+
+  .rail--grid > * {
+    width: auto;
+  }
+}
+
 /* ───────── Nota (estrelas) ───────── */
 .rating {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: var(--fs-sm);
-  font-weight: 800;
-  color: var(--text);
-}
-
-.rating svg {
-  width: 15px;
-  height: 15px;
-  color: var(--gold);
-  fill: var(--gold);
-}
-
-.rating span {
-  font-weight: 600;
-  color: var(--text-3);
-}
-
-/* ───────── Preço ───────── */
-.price {
-  font-family: var(--font-display);
+  gap: 3px;
+  font-size: var(--fs-meta);
   font-weight: 700;
-  font-size: var(--fs-xl);
   color: var(--text);
   white-space: nowrap;
 }
 
-.price small {
-  font-family: var(--font-body);
+.rating svg {
+  width: 13px;
+  height: 13px;
+  color: var(--star);
+  fill: var(--star);
+}
+
+.rating span {
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+/* Linha de metadados do produto: "★ 4,9 (128) · Pronto em 24 h". Use productMeta(). */
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  /* Cada item traz o seu "·" à esquerda; a margem negativa com o recorte esconde o ponto do
+     primeiro item de cada linha. Assim, quando a linha quebra, não sobra ponto solto. */
+  margin-left: -11px;
+  clip-path: inset(0 0 0 11px);
+  color: var(--text-2);
   font-size: var(--fs-xs);
-  font-weight: 700;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.meta > * {
+  position: relative;
+  padding-left: 11px;
+}
+
+.meta > *::before {
+  content: "·";
+  position: absolute;
+  left: 3px;
+  top: 0;
   color: var(--text-3);
+  font-weight: 700;
+}
+
+.meta .rating {
+  font-size: var(--fs-xs);
+}
+
+.meta__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.meta svg.icon {
+  width: 13px;
+  height: 13px;
+}
+
+/* ───────── Preço ───────── */
+.price {
+  font-family: var(--font-body);
+  font-weight: 800;
+  font-size: var(--fs-lg);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--price);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.price small {
+  margin-right: 4px;
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text-2);
 }
 
 .price--old {
-  font-family: var(--font-body);
-  font-size: var(--fs-sm);
-  font-weight: 600;
+  font-size: var(--fs-meta);
+  font-weight: 500;
   color: var(--text-3);
   text-decoration: line-through;
 }
@@ -364,14 +678,19 @@
 @media (min-width: 640px) {
   .product-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 20px;
+    gap: 16px;
   }
 }
 
 @media (min-width: 1100px) {
   .product-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 24px;
+    gap: 20px;
+  }
+
+  .product-grid--5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 16px;
   }
 }
 
@@ -379,26 +698,25 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  box-shadow: var(--shadow-1);
   overflow: hidden;
-  transition: transform var(--t-med) var(--ease), box-shadow var(--t-med) var(--ease);
+  transition: border-color var(--t-fast);
 }
 
-/* Só onde existe mouse: no toque, o "hover" gruda depois do toque e animava o card e a foto
-   bem na hora de trocar de tela. */
+/* Só onde existe mouse: no toque, o "hover" gruda depois do toque. */
 @media (hover: hover) {
   .pcard:hover {
-    transform: translateY(-4px);
-    box-shadow: var(--shadow-2);
+    border-color: var(--border-strong);
   }
 }
 
 .pcard__media {
   position: relative;
   aspect-ratio: 1 / 1;
-  background: var(--rose-100);
+  background: var(--fill);
   overflow: hidden;
 }
 
@@ -406,23 +724,34 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 700ms var(--ease);
-}
-
-@media (hover: hover) {
-  .pcard:hover .pcard__media img {
-    transform: scale(1.06);
-  }
 }
 
 .pcard__badge {
   position: absolute;
-  top: 10px;
-  left: 10px;
+  top: 8px;
+  left: 8px;
   z-index: 1;
+  max-width: calc(100% - 56px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--white);
+  color: var(--cocoa-900);
+  box-shadow: 0 1px 3px rgba(17, 17, 20, 0.16);
 }
 
-.pcard__fav {
+.pcard__badge.badge--solid {
+  background: var(--action);
+  color: #fff;
+}
+
+.pcard__badge.badge--green {
+  background: var(--green);
+  color: #fff;
+}
+
+/* .fav-btn (mais abaixo) declara position: relative para a área de toque; o seletor duplo
+   garante que no card o coração continue preso ao canto da foto. */
+.fav-btn.pcard__fav {
   position: absolute;
   top: 6px;
   right: 6px;
@@ -432,16 +761,22 @@
 .pcard__body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 12px 12px 14px;
+  gap: 2px;
+  padding: 10px;
   flex: 1;
+  min-width: 0;
 }
 
 .pcard__name {
-  font-family: var(--font-display);
-  font-size: var(--fs-md);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
   font-weight: 700;
-  line-height: 1.2;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
 }
 
 /* O link do nome cobre o card inteiro; botões ficam acima com z-index. */
@@ -456,8 +791,9 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  margin-top: 2px;
   color: var(--text-2);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-meta);
   line-height: 1.4;
 }
 
@@ -471,65 +807,185 @@
   padding-top: 8px;
 }
 
-.pcard__add {
-  position: relative;
-  z-index: 2;
-  display: grid;
-  place-items: center;
-  flex: none; /* nunca espreme: continua um círculo mesmo em telas de 320 px */
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: var(--rose-600);
-  color: #fff;
-  box-shadow: var(--shadow-brand);
-  transition: transform var(--t-fast) var(--ease), background var(--t-fast);
+.pcard__price {
+  font-size: var(--fs-md);
 }
 
-.pcard__add:hover {
-  background: var(--rose-700);
-  transform: scale(1.08);
-}
-
-.pcard__add svg {
-  width: 20px;
-  height: 20px;
+/* "a partir de" em linha própria, acima do valor */
+.pcard__price small {
+  display: block;
+  margin: 0 0 1px;
 }
 
 @media (min-width: 900px) {
   .pcard__body {
-    padding: 16px 18px 18px;
-    gap: 6px;
+    padding: 12px 12px 12px 14px;
+    gap: 3px;
   }
 
   .pcard__name {
-    font-size: var(--fs-lg);
+    font-size: var(--fs-md);
+  }
+
+  .pcard__price {
+    font-size: 1.0625rem;
+  }
+}
+
+/* Card compacto (carrosséis): sem descrição e sem o número de avaliações (a linha
+   "★ 4,9 · Pronto em 24 h" cabe inteira). */
+.pcard--compact .pcard__desc,
+.pcard--compact .rating span {
+  display: none;
+}
+
+.pcard--compact .pcard__media {
+  aspect-ratio: 5 / 4;
+}
+
+@media (min-width: 900px) {
+  .pcard--compact .pcard__media {
+    aspect-ratio: 1 / 1;
   }
 }
 
 /* Em grades que embrulham o card (animação de entrada), a célula estica o card:
    preços sempre alinhados, mesmo com nomes em duas linhas. */
-.product-grid > .reveal {
+.product-grid > .reveal,
+.rail > .reveal {
   display: flex;
 }
 
-.product-grid > .reveal > .pcard {
+.product-grid > .reveal > .pcard,
+.rail > .reveal > .pcard {
   flex: 1;
   min-width: 0;
 }
 
-/* No celular a descrição não cabe sem cortar no meio da frase: fica nome, nota e preço. */
+/* No celular a descrição não cabe sem cortar no meio da frase: fica nome, nota, prazo e preço.
+   (O número de avaliações também sai, para "★ 4,9 · Pronto em 24 h" caber em uma linha.) */
 @media (max-width: 639px) {
-  .pcard__desc {
+  .pcard__desc,
+  .pcard .rating span {
     display: none;
+  }
+}
+
+/* ───────── Linha de cardápio (lista) ─────────
+   A linha clássica de delivery: nome, descrição em duas linhas e preço à esquerda;
+   foto à direita com o "+" no canto. Use productRow() dentro de um .menu-list. */
+.menu-list {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.menu-list > * + * {
+  border-top: 1px solid var(--line-soft);
+}
+
+.prow {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 12px 14px 16px;
+  background: var(--surface);
+}
+
+.prow__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.prow__name {
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+/* o link do nome cobre a linha inteira */
+.prow__name a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.prow__desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+}
+
+.prow__price {
+  margin-top: 4px;
+  font-size: 0.9375rem;
+}
+
+.prow__media {
+  position: relative;
+  width: 104px;
+  height: 104px;
+  border-radius: var(--r-md);
+  background: var(--fill);
+}
+
+.prow__media img,
+.prow__media .media-fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.prow__add {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  box-shadow: 0 0 0 3px var(--surface);
+}
+
+@media (hover: hover) {
+  .prow:hover {
+    background: var(--surface-2);
+  }
+
+  .prow:hover .prow__add {
+    box-shadow: 0 0 0 3px var(--surface-2);
+  }
+}
+
+@media (min-width: 900px) {
+  .prow {
+    padding: 16px 16px 16px 20px;
+    gap: 16px;
+  }
+
+  .prow__media {
+    width: 120px;
+    height: 120px;
+  }
+
+  .prow__name {
+    font-size: var(--fs-md);
   }
 }
 
 /* Folha "qual tamanho?" aberta pelo "+" dos bolos */
 .size-sheet {
   display: grid;
-  gap: 10px;
-  margin-top: 14px;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 /* Título e fatias em linhas separadas (são <span> dentro de <label>). */
@@ -539,36 +995,51 @@
 }
 
 .size-sheet__price {
-  font-family: var(--font-display);
-  font-size: var(--fs-lg);
+  font-size: var(--fs-md);
+  font-weight: 800;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Coração de favorito */
 .fav-btn {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.92);
-  color: var(--cocoa-500);
-  box-shadow: var(--shadow-1);
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--cocoa-700);
+  box-shadow: 0 1px 3px rgba(17, 17, 20, 0.16);
   transition: transform var(--t-fast) var(--ease), color var(--t-fast);
 }
 
-.fav-btn svg {
-  width: 20px;
-  height: 20px;
+/* 34 px no desenho, 44 px de área de toque */
+.fav-btn::before {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
 }
 
-.fav-btn:hover {
-  transform: scale(1.08);
-  color: var(--rose-600);
+.fav-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.fav-btn:active {
+  transform: scale(0.9);
+}
+
+@media (hover: hover) {
+  .fav-btn:hover {
+    color: var(--action);
+  }
 }
 
 .fav-btn.is-on {
-  color: var(--rose-600);
+  color: var(--action);
 }
 
 .fav-btn.is-on svg {
@@ -578,24 +1049,23 @@
 
 @keyframes pop {
   40% {
-    transform: scale(1.35);
+    transform: scale(1.3);
   }
 }
 
-/* Imagem com fallback elegante quando a foto não carrega */
+/* Imagem com fallback quando a foto não carrega */
 .media-fallback {
   display: grid;
   place-items: center;
   width: 100%;
   height: 100%;
-  background: radial-gradient(120% 120% at 20% 10%, #fff 0%, var(--rose-100) 45%, var(--rose-200) 100%);
-  color: var(--rose-400);
+  background: var(--fill);
+  color: var(--border-strong);
 }
 
 .media-fallback svg {
-  width: 38%;
-  height: 38%;
-  opacity: 0.9;
+  width: 36%;
+  height: 36%;
 }
 
 /* ───────── Contador de quantidade ───────── */
@@ -604,8 +1074,8 @@
   align-items: center;
   height: 44px;
   border-radius: var(--r-pill);
-  background: var(--white);
-  box-shadow: inset 0 0 0 1.5px var(--line);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 .qty button {
@@ -614,27 +1084,36 @@
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  color: var(--rose-700);
+  color: var(--action);
+  transition: background var(--t-fast), transform var(--t-fast);
 }
 
-.qty button:hover {
-  background: var(--rose-100);
+.qty button:active {
+  transform: scale(0.9);
+}
+
+@media (hover: hover) {
+  .qty button:hover {
+    background: var(--rose-50);
+  }
 }
 
 .qty button[disabled] {
-  color: var(--text-3);
+  color: var(--border-strong);
   pointer-events: none;
 }
 
 .qty button svg {
   width: 18px;
   height: 18px;
+  stroke-width: 2.4;
 }
 
 .qty output {
-  min-width: 28px;
+  min-width: 24px;
   text-align: center;
   font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 
 .qty--sm {
@@ -646,6 +1125,11 @@
   height: 36px;
 }
 
+.qty--sm output {
+  min-width: 20px;
+  font-size: var(--fs-sm);
+}
+
 /* ───────── Formulários ───────── */
 .field {
   display: flex;
@@ -655,8 +1139,8 @@
 
 .field > label,
 .label {
-  font-size: var(--fs-sm);
-  font-weight: 800;
+  font-size: var(--fs-meta);
+  font-weight: 700;
   color: var(--text);
 }
 
@@ -664,20 +1148,20 @@
 .select,
 .textarea {
   width: 100%;
-  min-height: 50px;
-  padding: 0 16px;
+  min-height: 48px;
+  padding: 0 14px;
   border: 0;
   border-radius: var(--r-md);
-  background: var(--white);
-  box-shadow: inset 0 0 0 1.5px var(--line);
-  font-weight: 600;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  font-weight: 500;
   transition: box-shadow var(--t-fast);
   appearance: none;
 }
 
 .textarea {
-  padding: 14px 16px;
-  min-height: 96px;
+  padding: 12px 14px;
+  min-height: 92px;
   resize: vertical;
 }
 
@@ -687,24 +1171,26 @@
   font-weight: 500;
 }
 
-.input:hover,
-.select:hover,
-.textarea:hover {
-  box-shadow: inset 0 0 0 1.5px var(--rose-300);
+@media (hover: hover) {
+  .input:hover,
+  .select:hover,
+  .textarea:hover {
+    box-shadow: inset 0 0 0 1px var(--cocoa-300);
+  }
 }
 
 .input:focus,
 .select:focus,
 .textarea:focus {
   outline: 0;
-  box-shadow: inset 0 0 0 2px var(--rose-600), 0 0 0 4px var(--rose-100);
+  box-shadow: inset 0 0 0 2px var(--action), 0 0 0 3px var(--rose-100);
 }
 
 .select {
-  padding-right: 42px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237A5060' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  padding-right: 40px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235F5B5E' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 14px center;
+  background-position: right 12px center;
   background-size: 18px;
 }
 
@@ -717,8 +1203,8 @@
 .field__error {
   display: none;
   color: var(--red);
-  font-size: var(--fs-sm);
-  font-weight: 700;
+  font-size: var(--fs-meta);
+  font-weight: 600;
 }
 
 .field.is-invalid .field__error {
@@ -727,7 +1213,7 @@
 
 .field__hint {
   color: var(--text-3);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-meta);
 }
 
 .input-group {
@@ -736,17 +1222,17 @@
 
 .input-group > svg {
   position: absolute;
-  left: 16px;
+  left: 14px;
   top: 50%;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   transform: translateY(-50%);
   color: var(--text-3);
   pointer-events: none;
 }
 
 .input-group > svg ~ .input {
-  padding-left: 46px;
+  padding-left: 42px;
 }
 
 .input-group__action {
@@ -754,6 +1240,51 @@
   right: 4px;
   top: 50%;
   transform: translateY(-50%);
+}
+
+/* Campo de busca: preenchido de cinza, sem borda (cabeçalho do computador e início no celular). */
+.search-field {
+  position: relative;
+  display: block;
+}
+
+.search-field > svg {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  transform: translateY(-50%);
+  color: var(--text-2);
+  pointer-events: none;
+}
+
+.search-field input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px 0 42px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--fill);
+  font-size: var(--fs-md); /* 16 px: o iPhone não dá zoom ao focar */
+  font-weight: 500;
+  appearance: none;
+  transition: box-shadow var(--t-fast), background var(--t-fast);
+}
+
+.search-field input::placeholder {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.search-field input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.search-field input:focus {
+  outline: 0;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 2px var(--action);
 }
 
 .form-grid {
@@ -778,6 +1309,8 @@
   font-size: var(--fs-sm);
   color: var(--text-2);
   cursor: pointer;
+  min-height: 44px; /* área de toque */
+  padding-block: 11px;
 }
 
 .check input {
@@ -785,7 +1318,7 @@
   width: 20px;
   height: 20px;
   margin: 1px 0 0;
-  accent-color: var(--rose-600);
+  accent-color: var(--action);
 }
 
 /* Opção selecionável (rádio em forma de cartão) */
@@ -793,23 +1326,31 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
+  gap: 12px;
+  min-height: 56px;
+  padding: 10px 14px;
   border-radius: var(--r-md);
-  background: var(--white);
-  box-shadow: inset 0 0 0 1.5px var(--line);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
   cursor: pointer;
   transition: box-shadow var(--t-fast), background var(--t-fast);
 }
 
-.option:hover {
-  box-shadow: inset 0 0 0 1.5px var(--rose-400);
+@media (hover: hover) {
+  .option:hover {
+    box-shadow: inset 0 0 0 1px var(--border-strong);
+  }
 }
 
 .option.is-selected,
 .option:has(input:checked) {
   background: var(--rose-50);
-  box-shadow: inset 0 0 0 2px var(--rose-600);
+  box-shadow: inset 0 0 0 1.5px var(--action);
+}
+
+.option:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .option input {
@@ -822,16 +1363,22 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--fill);
+  color: var(--cocoa-700);
+}
+
+.option.is-selected .option__icon,
+.option:has(input:checked) .option__icon {
   background: var(--rose-100);
   color: var(--rose-700);
 }
 
 .option__icon svg {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
 }
 
 .option__body {
@@ -840,69 +1387,145 @@
 }
 
 .option__title {
-  font-weight: 800;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  line-height: 1.3;
 }
 
 .option__desc {
   color: var(--text-2);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-meta);
+  line-height: 1.4;
 }
 
 .option__check {
   flex: none;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  box-shadow: inset 0 0 0 1.5px var(--line);
+  box-shadow: inset 0 0 0 1.5px var(--border-strong);
   color: transparent;
 }
 
 .option.is-selected .option__check,
 .option:has(input:checked) .option__check {
-  background: var(--rose-600);
+  background: var(--action);
   box-shadow: none;
   color: #fff;
 }
 
 .option__check svg {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
+  stroke-width: 3;
+}
+
+/* Cabeçalho de um grupo de opções: título, "Escolha 1" e a etiqueta "Obrigatório".
+   Use optionGroupHead() de js/components.js. Quando a escolha estiver feita, .is-done
+   troca a etiqueta por um ✓ verde. */
+.opt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  background: var(--fill);
+}
+
+.opt-head__title {
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+
+.opt-head__hint {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+.opt-head__tag {
+  flex: none;
+}
+
+.opt-head__done {
+  display: none;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--green);
+  color: #fff;
+}
+
+.opt-head__done svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 3;
+}
+
+.opt-head.is-done .opt-head__tag {
+  display: none;
+}
+
+.opt-head.is-done .opt-head__done {
+  display: grid;
 }
 
 /* ───────── Avisos ───────── */
 .notice {
   display: flex;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 10px;
+  padding: 12px 14px;
   border-radius: var(--r-md);
-  background: var(--rose-100);
-  color: var(--rose-900);
-  font-size: var(--fs-sm);
-  font-weight: 600;
+  background: var(--fill);
+  color: var(--cocoa-700);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  line-height: 1.45;
 }
 
 .notice svg {
   flex: none;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   margin-top: 1px;
+}
+
+.notice strong {
+  color: var(--text);
+}
+
+.notice--rose {
+  background: var(--rose-50);
+  color: var(--rose-800);
 }
 
 .notice--green {
   background: var(--green-soft);
-  color: #1E5A3A;
+  color: #0F5F2C;
 }
 
 .notice--amber {
   background: var(--amber-soft);
-  color: #7A4F0E;
+  color: #7A4208;
 }
 
 .notice--red {
   background: var(--red-soft);
-  color: #8A2318;
+  color: #8E1B1B;
+}
+
+.notice--rose strong,
+.notice--green strong,
+.notice--amber strong,
+.notice--red strong {
+  color: inherit;
 }
 
 /* ───────── Estado vazio ───────── */
@@ -910,34 +1533,35 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--s-3);
-  padding: var(--s-16) var(--s-6);
+  gap: var(--s-2);
+  padding: var(--s-12) var(--s-6);
   text-align: center;
 }
 
 .empty__art {
   display: grid;
   place-items: center;
-  width: 96px;
-  height: 96px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
-  background: var(--rose-100);
-  color: var(--rose-500);
+  background: var(--fill);
+  color: var(--cocoa-300);
   margin-bottom: var(--s-2);
 }
 
 .empty__art svg {
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
 }
 
 .empty h2 {
-  font-size: var(--fs-xl);
+  font-size: var(--fs-lg);
 }
 
 .empty p {
-  max-width: 38ch;
+  max-width: 36ch;
   color: var(--text-2);
+  font-size: var(--fs-sm);
 }
 
 .empty .btn {
@@ -948,12 +1572,16 @@
 .page-head {
   display: flex;
   align-items: center;
-  gap: var(--s-3);
-  padding-block: var(--s-5) var(--s-4);
+  gap: var(--s-2);
+  padding-block: var(--s-3) var(--s-3);
 }
 
 .page-head h1 {
   font-size: var(--fs-2xl);
+}
+
+.page-head .muted {
+  font-size: var(--fs-sm);
 }
 
 .page-head__back {
@@ -964,28 +1592,36 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  padding-block: var(--s-5) 0;
-  color: var(--text-3);
-  font-size: var(--fs-sm);
-  font-weight: 600;
+  gap: 4px;
+  padding-block: var(--s-3) 0;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  font-weight: 500;
 }
 
 .breadcrumb a:hover {
-  color: var(--rose-700);
+  color: var(--action);
+}
+
+.breadcrumb [aria-current] {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .breadcrumb svg {
   width: 14px;
   height: 14px;
+  color: var(--text-3);
 }
 
-/* ───────── Linhas de lista (menus, resumos) ───────── */
+/* ───────── Linhas de lista (menus, resumos) ─────────
+   "Linha com seta": use listRow() de js/components.js, dentro de um .card. */
 .row {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
+  gap: 12px;
+  min-height: 56px;
+  padding: 12px 16px;
 }
 
 .row + .row {
@@ -996,16 +1632,16 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  background: var(--rose-100);
-  color: var(--rose-700);
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--fill);
+  color: var(--cocoa-700);
 }
 
 .row__icon svg {
-  width: 21px;
-  height: 21px;
+  width: 20px;
+  height: 20px;
 }
 
 .row__body {
@@ -1014,12 +1650,24 @@
 }
 
 .row__title {
-  font-weight: 800;
+  display: block;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  line-height: 1.3;
 }
 
 .row__desc {
+  display: block;
   color: var(--text-2);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+}
+
+.row__trail {
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  font-weight: 600;
 }
 
 .row__chev {
@@ -1029,9 +1677,16 @@
   color: var(--text-3);
 }
 
-a.row:hover,
-button.row:hover {
-  background: var(--rose-50);
+@media (hover: hover) {
+  a.row:hover,
+  button.row:hover {
+    background: var(--surface-2);
+  }
+}
+
+a.row:active,
+button.row:active {
+  background: var(--fill);
 }
 
 button.row {
@@ -1043,36 +1698,44 @@ button.row {
   display: flex;
   justify-content: space-between;
   gap: var(--s-4);
-  padding-block: 6px;
+  padding-block: 5px;
   color: var(--text-2);
+  font-size: var(--fs-sm);
 }
 
 .summary-line strong {
   color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .summary-line--total {
   margin-top: 8px;
-  padding-top: 14px;
-  border-top: 1px dashed var(--line);
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
   color: var(--text);
   font-weight: 800;
-  font-size: var(--fs-lg);
+  font-size: var(--fs-md);
 }
 
 .summary-line--total strong {
-  font-family: var(--font-display);
-  font-size: var(--fs-xl);
+  font-family: var(--font-body);
+  font-size: var(--fs-lg);
+  font-weight: 800;
 }
 
 .summary-line--discount {
   color: var(--green);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* ───────── Acordeão ───────── */
 .accordion details {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.accordion details:last-child {
+  border-bottom: 0;
 }
 
 .accordion summary {
@@ -1080,9 +1743,11 @@ button.row {
   align-items: center;
   justify-content: space-between;
   gap: var(--s-4);
-  padding: 18px 0;
-  font-weight: 800;
-  font-size: var(--fs-lg);
+  min-height: 52px;
+  padding: 12px 0;
+  font-weight: 700;
+  font-size: 0.9375rem;
+  line-height: 1.35;
   cursor: pointer;
   list-style: none;
 }
@@ -1093,9 +1758,9 @@ button.row {
 
 .accordion summary svg {
   flex: none;
-  width: 20px;
-  height: 20px;
-  color: var(--rose-600);
+  width: 18px;
+  height: 18px;
+  color: var(--text-2);
   transition: transform var(--t-med) var(--ease);
 }
 
@@ -1104,47 +1769,59 @@ button.row {
 }
 
 .accordion .accordion__body {
-  padding: 0 0 20px;
+  padding: 0 0 16px;
   color: var(--text-2);
+  font-size: var(--fs-sm);
   max-width: 68ch;
 }
 
-/* ───────── Abas ───────── */
+/* ───────── Abas (controle segmentado) ───────── */
 .tabs {
   display: flex;
-  gap: 4px;
-  padding: 4px;
-  border-radius: var(--r-pill);
-  background: var(--rose-100);
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r-md);
+  background: var(--fill);
 }
 
 .tabs button {
   flex: 1;
-  min-height: 42px;
-  border-radius: var(--r-pill);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  border-radius: 9px;
   color: var(--text-2);
-  font-weight: 800;
+  font-weight: 700;
   font-size: var(--fs-sm);
-  transition: all var(--t-fast) var(--ease);
+  transition: background var(--t-fast), color var(--t-fast);
 }
 
-.tabs button[aria-selected="true"] {
-  background: var(--white);
-  color: var(--rose-700);
-  box-shadow: var(--shadow-1);
+.tabs button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.tabs button[aria-selected="true"],
+.tabs button[aria-pressed="true"],
+.tabs button[aria-checked="true"] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(17, 17, 20, 0.12);
 }
 
 /* ───────── Toast ───────── */
 .toast-host {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 16px);
+  bottom: calc(var(--tabbar-h) + var(--cartbar-h) + var(--safe-bottom) + 12px);
   z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  width: min(92vw, 420px);
+  width: min(calc(100vw - 24px), 420px);
   transform: translateX(-50%);
   pointer-events: none;
 }
@@ -1161,17 +1838,27 @@ body[data-layout="immersive"] .toast-host {
   }
 }
 
+/* Com uma folha aberta, o aviso sobe para o alto da tela: embaixo ele cobriria as opções e o
+   botão da folha (e receberia o toque no lugar deles). */
+@media (max-width: 639px) {
+  html body:has(.overlay) .toast-host {
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    bottom: auto;
+  }
+}
+
 .toast {
   display: flex;
   align-items: center;
   gap: 10px;
   max-width: 100%;
-  padding: 12px 18px;
-  border-radius: var(--r-pill);
+  padding: 12px 14px;
+  border-radius: var(--r-md);
   background: var(--cocoa-900);
   color: #fff;
-  font-size: var(--fs-sm);
-  font-weight: 700;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  line-height: 1.35;
   box-shadow: var(--shadow-3);
   pointer-events: auto;
   animation: toast-in var(--t-med) var(--ease) both;
@@ -1189,7 +1876,7 @@ body[data-layout="immersive"] .toast-host {
 }
 
 .toast--success svg {
-  color: #7BE0A6;
+  color: #6EE7A0;
 }
 
 .toast--error svg {
@@ -1200,28 +1887,27 @@ body[data-layout="immersive"] .toast-host {
 .toast button {
   margin: -8px -6px -8px 6px;
   padding: 10px 6px; /* área de toque de 40 px sem engordar o aviso */
-  color: var(--rose-300);
+  color: #FFB8C8;
   font-weight: 800;
-  text-decoration: underline;
   white-space: nowrap;
 }
 
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translateY(14px) scale(0.96);
+    transform: translateY(10px);
   }
 }
 
 @keyframes toast-out {
   to {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(6px);
   }
 }
 
 /* ───────── Modal e sheet ─────────
-   No celular abre como sheet de baixo; no desktop vira modal centralizado. */
+   No celular abre como folha que sobe de baixo; no computador vira modal centralizado. */
 .overlay {
   position: fixed;
   inset: 0;
@@ -1229,18 +1915,8 @@ body[data-layout="immersive"] .toast-host {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgba(42, 18, 16, 0.5);
-  backdrop-filter: blur(3px);
+  background: rgba(17, 17, 20, 0.5);
   animation: fade-in var(--t-med) ease both;
-}
-
-/* Telas de toque: desfocar a tela inteira atrás da folha, a cada quadro da abertura, era o
-   trecho mais pesado do site. Fica só o escurecido, um pouco mais forte para compensar. */
-@media (hover: none), (pointer: coarse), (max-width: 899px) {
-  .overlay {
-    background: rgba(42, 18, 16, 0.6);
-    backdrop-filter: none;
-  }
 }
 
 .overlay.is-leaving {
@@ -1274,15 +1950,15 @@ body[data-layout="immersive"] .toast-host {
   align-items: center;
   justify-content: space-between;
   gap: var(--s-3);
-  padding: 18px 20px 6px 24px;
+  padding: 16px 10px 4px 20px;
 }
 
 .dialog__head h2 {
-  font-size: var(--fs-xl);
+  font-size: var(--fs-lg);
 }
 
 .dialog__body {
-  padding: 10px 24px 24px;
+  padding: 8px 20px 20px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -1290,13 +1966,31 @@ body[data-layout="immersive"] .toast-host {
 .dialog__foot {
   display: flex;
   gap: 10px;
-  padding: 14px 24px calc(18px + var(--safe-bottom));
+  padding: 12px 20px calc(12px + var(--safe-bottom));
   border-top: 1px solid var(--line-soft);
   background: var(--surface);
 }
 
 .dialog__foot .btn {
   flex: 1;
+}
+
+/* "Pegador" da folha no celular (só visual). */
+@media (max-width: 639px) {
+  .overlay:not(.overlay--drawer) .dialog::before {
+    content: "";
+    flex: none;
+    align-self: center;
+    width: 36px;
+    height: 4px;
+    margin-top: 8px;
+    border-radius: 2px;
+    background: var(--line);
+  }
+
+  .overlay:not(.overlay--drawer) .dialog__head {
+    padding-top: 8px;
+  }
 }
 
 @media (min-width: 640px) {
@@ -1315,7 +2009,7 @@ body[data-layout="immersive"] .toast-host {
   }
 
   .dialog__foot {
-    padding-bottom: 18px;
+    padding-bottom: 16px;
   }
 }
 
@@ -1365,7 +2059,7 @@ body[data-layout="immersive"] .toast-host {
 @keyframes modal-in {
   from {
     opacity: 0;
-    transform: translateY(16px) scale(0.97);
+    transform: translateY(12px) scale(0.98);
   }
 }
 
@@ -1384,7 +2078,7 @@ body[data-layout="immersive"] .toast-host {
 /* ───────── Esqueleto de carregamento ───────── */
 .skeleton {
   border-radius: var(--r-md);
-  background: linear-gradient(100deg, var(--rose-100) 30%, #fff 50%, var(--rose-100) 70%);
+  background: linear-gradient(100deg, var(--fill) 30%, var(--surface-2) 50%, var(--fill) 70%);
   background-size: 300% 100%;
   animation: shimmer 1.4s linear infinite;
 }
@@ -1395,7 +2089,8 @@ body[data-layout="immersive"] .toast-host {
   }
 }
 
-/* ───────── Barra fixa de ação (mobile) ───────── */
+/* ───────── Barra fixa de ação (celular) ─────────
+   Faixa branca presa ao rodapé: contador − 1 + e o botão com preço ("Adicionar · R$ 149,90"). */
 .sticky-cta {
   position: fixed;
   left: 0;
@@ -1405,17 +2100,9 @@ body[data-layout="immersive"] .toast-host {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px var(--gutter) calc(12px + var(--safe-bottom));
-  background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 -6px 24px rgba(122, 44, 64, 0.12);
-}
-
-@media (hover: none), (pointer: coarse), (max-width: 899px) {
-  .sticky-cta {
-    background: var(--white);
-    backdrop-filter: none;
-  }
+  padding: 10px var(--gutter) calc(10px + var(--safe-bottom));
+  background: var(--surface);
+  box-shadow: var(--shadow-up);
 }
 
 .sticky-cta .btn {
@@ -1424,9 +2111,9 @@ body[data-layout="immersive"] .toast-host {
 
 /* Barra de progresso (frete grátis, etapas) */
 .progress {
-  height: 8px;
+  height: 6px;
   border-radius: var(--r-pill);
-  background: var(--rose-100);
+  background: var(--fill);
   overflow: hidden;
 }
 
@@ -1434,12 +2121,12 @@ body[data-layout="immersive"] .toast-host {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--rose-400), var(--rose-600));
+  background: var(--action);
   transition: width var(--t-slow) var(--ease);
 }
 
 .progress--green > i {
-  background: linear-gradient(90deg, #58C48A, var(--green));
+  background: var(--green);
 }
 
 /* Etapas numeradas (checkout) */
@@ -1454,25 +2141,26 @@ body[data-layout="immersive"] .toast-host {
   align-items: center;
   gap: 8px;
   color: var(--text-3);
-  font-size: var(--fs-sm);
-  font-weight: 800;
+  font-size: var(--fs-meta);
+  font-weight: 700;
   white-space: nowrap;
 }
 
 .steps__num {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  background: var(--white);
-  box-shadow: inset 0 0 0 1.5px var(--line);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
   font-size: var(--fs-xs);
 }
 
 .steps__num svg {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
+  stroke-width: 3;
 }
 
 .steps__item.is-current {
@@ -1480,7 +2168,7 @@ body[data-layout="immersive"] .toast-host {
 }
 
 .steps__item.is-current .steps__num {
-  background: var(--rose-600);
+  background: var(--action);
   box-shadow: none;
   color: #fff;
 }
@@ -1511,4 +2199,235 @@ body[data-layout="immersive"] .toast-host {
   .steps__item:not(.is-current) .steps__label {
     display: none;
   }
+}
+
+/* ───────── Banner de promoção ─────────
+   Cartão largo e baixo: texto à esquerda, imagem (opcional) à direita.
+   Tons: padrão (rosa-claro), --stage (cacau escuro), --action (framboesa), --green, --neutral.
+   Use promoBanner() de js/components.js. */
+.promo {
+  --promo-bg: var(--rose-50);
+  --promo-fg: var(--text);
+  --promo-fg-2: var(--cocoa-700);
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 136px;
+  padding: 14px 16px;
+  border-radius: var(--r-lg);
+  background: var(--promo-bg);
+  color: var(--promo-fg);
+  text-align: left;
+  overflow: hidden;
+}
+
+button.promo {
+  width: 100%;
+}
+
+.promo__body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.promo__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--rose-800);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+}
+
+.promo__tag svg {
+  width: 12px;
+  height: 12px;
+}
+
+.promo__title {
+  font-size: 1.1875rem;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: inherit;
+  text-wrap: balance;
+}
+
+.promo__text {
+  color: var(--promo-fg-2);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.promo__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  margin-top: 6px;
+  padding: 0 12px;
+  border-radius: 9px;
+  background: var(--action);
+  color: #fff;
+  font-size: var(--fs-meta);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.promo__cta svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* código de cupom recortado */
+.promo__code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  margin-top: 6px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1.5px dashed currentColor;
+  font-size: var(--fs-meta);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.promo__code svg {
+  width: 14px;
+  height: 14px;
+}
+
+.promo__media {
+  position: relative;
+  align-self: stretch;
+  width: 116px;
+  margin: -16px -16px -16px 0;
+}
+
+.promo__media img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* imagem recortada (render 3D com fundo transparente): não corta, encosta embaixo */
+.promo__media--cutout {
+  width: 120px;
+  margin: -16px -16px -16px 0;
+}
+
+/* o render tem margem transparente em volta: a imagem entra maior que a caixa e ancora embaixo */
+.promo__media--cutout img {
+  inset: auto -16% -20% auto;
+  width: 158%;
+  max-width: none;
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.3));
+}
+
+.promo__icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--action);
+}
+
+.promo__icon svg {
+  width: 30px;
+  height: 30px;
+}
+
+.promo--stage {
+  --promo-bg: radial-gradient(120% 120% at 100% 0%, var(--stage-2) 0%, var(--stage) 62%);
+  --promo-fg: #fff;
+  --promo-fg-2: #E9CDD5;
+}
+
+.promo--stage .promo__tag {
+  background: rgba(255, 255, 255, 0.14);
+  color: #FFD5DE;
+}
+
+.promo--stage .promo__cta {
+  background: #fff;
+  color: var(--cocoa-900);
+}
+
+.promo--action {
+  --promo-bg: var(--action);
+  --promo-fg: #fff;
+  --promo-fg-2: #fff; /* texto pequeno sobre a cor de ação precisa ser branco puro (4,97:1) */
+}
+
+.promo--action .promo__tag {
+  background: rgba(77, 13, 34, 0.32);
+  color: #fff;
+}
+
+.promo--action .promo__cta {
+  background: #fff;
+  color: var(--rose-700);
+}
+
+.promo--action .promo__icon {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+.promo--green {
+  --promo-bg: var(--green-soft);
+  --promo-fg: #0B3D1E;
+  --promo-fg-2: #1F5A35;
+}
+
+.promo--green .promo__tag {
+  color: #0F5F2C;
+}
+
+.promo--green .promo__cta {
+  background: var(--green);
+}
+
+.promo--green .promo__icon {
+  color: var(--green);
+}
+
+.promo--neutral {
+  --promo-bg: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.promo--neutral .promo__tag {
+  background: var(--fill);
+  color: var(--cocoa-700);
+}
+
+.promo:focus-visible {
+  outline-offset: -3px;
+}
+
+.promo--stage:focus-visible,
+.promo--action:focus-visible {
+  outline-color: #fff;
 }

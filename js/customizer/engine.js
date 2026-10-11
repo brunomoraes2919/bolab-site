@@ -18,10 +18,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { createTextureKit } from './textures.js';
+import { createTextureKit, paintFinish } from './textures.js';
 import { cakeMetrics, buildFrosting, buildSponge, buildFillingBand, buildTopCream, buildScrapeCoat, buildDrip, buildCutFaces, buildStand } from './geometry.js';
-import { createDecorLibrary, decorLayout, buildPiping, buildDecor, decorHeight, inWedge } from './decor.js';
-import { getFlavor, getFilling } from '../data/customizer.js';
+import { createDecorLibrary, decorLayout, buildPiping, buildDecor, decorHeight, inWedge, newPart } from './decor.js';
+import { EXTRA_DECOR, extraDecorHeight } from './decor2.js';
+import { PARTY_DECOR, partyHeight } from './party.js';
+import { getFlavor, getFilling, PIPINGS, DECORS } from '../data/customizer.js';
 import { detectTier, createResolutionGovernor } from './quality.js';
 import { getBackdrop, resolveBackdrop, paintBackdrop } from './backdrop.js';
 
@@ -33,12 +35,16 @@ const VIEW = {
   default: { az: 26 * DEG, polar: 67 * DEG },
   top: { az: 26 * DEG, polar: 52 * DEG },
   inside: { az: 34 * DEG, polar: 63 * DEG },
+  front: { az: 0, polar: 80 * DEG },
+  above: { az: 0, polar: 20 * DEG },
 };
 // O coração só se lê como coração visto mais de cima e com a ponta voltada para a câmera.
 const HEART_VIEW = {
   default: { az: 0, polar: 37 * DEG },
   top: { az: 0, polar: 31 * DEG },
   inside: { az: 30 * DEG, polar: 50 * DEG },
+  front: { az: 0, polar: 76 * DEG },
+  above: { az: 0, polar: 16 * DEG },
 };
 
 const easeOut = (t) => 1 - (1 - t) ** 3;
@@ -60,6 +66,18 @@ function displayColor(hex, target = new THREE.Color()) {
   return target.setHSL(_hsl.h, Math.min(1, _hsl.s * (1 + 0.1 * light)), _hsl.l * (1 - 0.095 * light));
 }
 
+/** Constrói qualquer decoração: as clássicas (decor.js), as novas (decor2.js) e as de festa (party.js). */
+function buildAnyDecor(id, ctx) {
+  const special = id === 'velas' && ctx.config.decor.candleStyle !== 'classica' ? PARTY_DECOR.velasEspeciais : EXTRA_DECOR[id] || PARTY_DECOR[id];
+  if (!special) return buildDecor(id, ctx);
+  const part = newPart();
+  special(ctx, part);
+  return part;
+}
+
+/** Altura acima do topo do bolo ocupada por tudo o que está em cima dele. */
+const decorTop = (cfg) => Math.max(decorHeight(cfg), extraDecorHeight(cfg), partyHeight(cfg));
+
 export function isWebGLAvailable() {
   // só confere se o navegador conhece WebGL; quem tenta de verdade é o renderizador (um contexto a menos por visita)
   return typeof window !== 'undefined' && Boolean(window.WebGLRenderingContext);
@@ -76,7 +94,7 @@ const COVERING_LOOK = {
   naked: { roughness: 0.74, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.6, normal: 'soft', normalScale: 0.45, topNormal: 'swirl', topScale: 0.35, env: 1 },
 };
 
-export function createCakeScene(canvas, { onContextLost, onContextRestored, onInteract, insets, tier: forcedTier } = {}) {
+export function createCakeScene(canvas, { onContextLost, onContextRestored, onInteract, onFrame, insets, tier: forcedTier } = {}) {
   if (!isWebGLAvailable()) throw new Error('WebGL indisponível');
 
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -182,19 +200,53 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   const coat = (v) => (tier.physical ? v : 0);
   const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xfffdfb, roughness: tier.physical ? 0.2 : 0.12, clearcoat: coat(0.9), clearcoatRoughness: 0.12 });
   const gold = new THREE.MeshStandardMaterial({ color: 0xe6bb62, metalness: 0.88, roughness: 0.28, emissive: 0x6b4a10, emissiveIntensity: 0.4 });
-  const frostSide = new THREE.MeshPhysicalMaterial({ color: 0xffffff, sheenColor: 0xffffff, sheenRoughness: 0.55, ...clipped });
-  const frostTop = new THREE.MeshPhysicalMaterial({ color: 0xffffff, sheenColor: 0xffffff, sheenRoughness: 0.55, ...clipped });
-  const cutFrost = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72, emissiveIntensity: 0.12 });
-  cutFrost.emissive = cutFrost.color;
+  // Cobertura por andar (até 3): lateral, topo e a face cortada, cada um com a aparência e a cor do seu andar.
+  const frostTiers = [];
+  const frostOf = (i) => {
+    if (!frostTiers[i]) {
+      const side = new THREE.MeshPhysicalMaterial({ color: 0xffffff, sheenColor: 0xffffff, sheenRoughness: 0.55, ...clipped });
+      const top = new THREE.MeshPhysicalMaterial({ color: 0xffffff, sheenColor: 0xffffff, sheenRoughness: 0.55, ...clipped });
+      const cut = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72, emissiveIntensity: 0.12 });
+      cut.emissive = cut.color;
+      frostTiers[i] = { side, top, cut, scrape: null, canvas: null, map: null, mapKey: '', mapped: false };
+    }
+    return frostTiers[i];
+  };
+  const frostSide = frostOf(0).side;
+  const frostTop = frostOf(0).top;
+  const cutFrost = frostOf(0).cut;
   const dripMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: tier.physical ? 0.2 : 0.13, clearcoat: coat(0.85), clearcoatRoughness: 0.12, ...clipped });
   const cutDrip = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35 });
-  let scrapeMat = null;
-  const scrape = () => {
-    if (!scrapeMat) {
-      scrapeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: tex.scrape(), transparent: true, roughness: 0.8, depthWrite: false, ...clipped });
-      displayColor(config.covering.color, scrapeMat.color);
+  /** Véu de creme raspado do andar i (naked: ralo; semi-naked: bem mais cheio). */
+  const scrapeOf = (i) => {
+    const f = frostOf(i);
+    const t = m.stack[i] || m;
+    const dense = Boolean(t.semi);
+    if (!f.scrape || f.scrape.userData.dense !== dense) {
+      f.scrape?.dispose();
+      f.scrape = new THREE.MeshStandardMaterial({ color: 0xffffff, map: dense ? tex.scrapeDense() : tex.scrape(), transparent: true, roughness: 0.8, depthWrite: false, ...clipped });
+      f.scrape.userData.dense = dense;
     }
-    return scrapeMat;
+    displayColor(t.cover.color, f.scrape.color);
+    return f.scrape;
+  };
+  const scrape = () => scrapeOf(0);
+  // bases que não são porcelana (criadas quando escolhidas)
+  const standMats = {};
+  const standMat = (name) => {
+    if (name === 'porcelain') return porcelain;
+    if (name === 'gold') return gold;
+    if (!standMats[name]) {
+      standMats[name] =
+        name === 'wood'
+          ? new THREE.MeshStandardMaterial({ map: tex.wood(), color: 0xe9ddd2, roughness: 0.7 })
+          : name === 'marble'
+            ? new THREE.MeshPhysicalMaterial({ map: tex.marble(), roughness: tier.physical ? 0.2 : 0.14, clearcoat: coat(0.55), clearcoatRoughness: 0.15 })
+            : name === 'silver'
+              ? new THREE.MeshStandardMaterial({ color: 0xf2f4f8, metalness: 0.72, roughness: 0.24, emissive: 0x565b63, emissiveIntensity: 0.42 })
+              : new THREE.MeshStandardMaterial({ color: 0xf0c66a, metalness: 0.72, roughness: 0.27, emissive: 0x7a5412, emissiveIntensity: 0.5 });
+    }
+    return standMats[name];
   };
   const flavorOf = (i) => getFlavor(config.layers[Math.min(i, config.layers.length - 1)]);
   // por camada / por recheio (criados sob demanda, até 4)
@@ -374,14 +426,11 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
 
   function rebuildStand() {
     disposeGroup(standGroup);
-    stand = buildStand(m);
-    standGroup.add(mesh(stand.plate, porcelain), mesh(stand.rim, gold, { cast: false }), mesh(stand.foot, porcelain), mesh(stand.board, gold, { cast: false }));
+    stand = buildStand(m.base, config.base);
+    stand.parts.forEach((part) => standGroup.add(mesh(part.geo, standMat(part.mat), { cast: part.cast !== false })));
     floor.visible = true;
-    const b = m.bounds;
-    const margin = 0.2 + m.R * 0.07 - 0.035;
-    const roundPlate = m.shape === 'round' || m.shape === 'heart';
-    plateShade.position.set(0, -0.0128, 0);
-    plateShade.scale.set(2 * ((roundPlate ? b.maxR : b.hx) + margin), 2 * ((roundPlate ? b.maxR : b.hz) + margin), 1);
+    plateShade.position.set(0, config.base === 'boleira' || config.base === 'prato' ? -0.0128 : -0.0008, 0);
+    plateShade.scale.set(2 * stand.shade.x, 2 * stand.shade.z, 1);
     contact.position.y = stand.floorY + 0.002;
     const footR = stand.plateRadius * 0.5;
     contact.scale.set(footR * 3.6, footR * 3.6, 1);
@@ -389,7 +438,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
 
   /** O mapa de sombras enquadra só o bolo, o prato e a decoração: cada ponto dele rende mais. */
   function fitShadow() {
-    const top = m.Ht + decorHeight(config) + 0.06;
+    const top = m.Htot + decorTop(config) + 0.06;
     const bottom = stand.floorY;
     shadowCenter.set(0, (top + bottom) / 2, m.center.z * 0.5);
     const rb = Math.hypot(stand.plateRadius + 0.06, (top - bottom) / 2);
@@ -409,7 +458,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const k = 0.78; // 1 / tan(52°), a altura da luz principal
     const hPlate = -stand.floorY;
     const near = -stand.plateRadius + hPlate * k;
-    const far = Math.max(stand.plateRadius + hPlate * k, m.bounds.maxR + (hPlate + m.Ht) * k);
+    const far = Math.max(stand.plateRadius + hPlate * k, m.base.bounds.maxR + (hPlate + m.Htot) * k);
     const mid = (near + far) / 2;
     const dx = -Math.sin(lightAz);
     const dz = -Math.cos(lightAz);
@@ -443,13 +492,66 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     invalidate();
   }
 
-  function applyCoveringLook() {
-    const look = COVERING_LOOK[config.covering.type] || COVERING_LOOK.buttercream;
-    const mapOf = (name) => (name === 'streak' ? tex.streakNormal() : name === 'swirl' ? tex.swirlNormal() : name === 'soft' ? tex.softNormal() : name === 'pore' ? tex.poreNormal() : null);
+  const NORMALS = { streak: () => tex.streakNormal(), swirl: () => tex.swirlNormal(), soft: () => tex.softNormal(), pore: () => tex.poreNormal(), comb: () => tex.combNormal(), rustic: () => tex.rusticNormal() };
+  const shown = (hex) => `#${displayColor(hex, _bd).getHexString()}`;
+
+  /** Textura de cor da lateral do andar i nos estilos de duas cores (degradê, aquarela, listras). */
+  function finishMap(i, t) {
+    const f = frostOf(i);
+    const c1 = shown(t.cover.color);
+    const c2 = shown(t.cover.color2);
+    const stripes = Math.max(5, Math.round(t.frost.length / 0.52));
+    // degradê em bolo de andares com a mesma cobertura: um só degradê do pé ao topo, cada andar com o seu trecho
+    const whole = t.style === 'ombre' && !config.tierCover && t.stack.length > 1;
+    const from = whole ? t.y0 / t.Htot : 0;
+    const to = whole ? (t.y0 + t.Ht) / t.Htot : 1;
+    const key = `${t.style}|${c1}|${c2}|${stripes}|${from.toFixed(3)}|${to.toFixed(3)}`;
+    if (f.mapKey === key && f.map) return f.map;
+    if (!f.canvas) {
+      f.canvas = document.createElement('canvas');
+      f.canvas.width = 512;
+      f.canvas.height = tier.physical ? 256 : 128;
+    }
+    paintFinish(f.canvas, t.style, c1, c2, { stripes, seed: 7 + i * 13, from, to });
+    f.topColor = whole ? `#${_bd.set(t.cover.color).lerp(new THREE.Color(t.cover.color2), to).getHexString()}` : t.cover.color2;
+    if (!f.map) {
+      f.map = new THREE.CanvasTexture(f.canvas);
+      f.map.colorSpace = THREE.SRGBColorSpace;
+      f.map.wrapS = THREE.RepeatWrapping;
+      f.map.channel = 1; // usa o segundo conjunto de coordenadas: uma volta inteira × do pé ao topo
+      f.map.anisotropy = tier.physical ? 4 : 2;
+    }
+    f.map.needsUpdate = true;
+    f.mapKey = key;
+    return f.map;
+  }
+
+  /** Aparência (brilho, relevo da espátula) e cores do andar i. quiet = sem transição de cor. */
+  function applyTierLook(i, quiet) {
+    const t = m.stack[i];
+    const cov = t.cover;
+    const f = frostOf(i);
+    const look = COVERING_LOOK[cov.type] || COVERING_LOOK.buttercream;
     const round = m.shape === 'round';
+    let sideMap = look.normal;
+    let sideScale = look.normalScale;
+    let topMap = look.topNormal === 'swirl' && !round ? look.normal : look.topNormal;
+    let topScale = look.topScale;
+    if (t.style === 'rustico') {
+      sideMap = topMap = 'rustic';
+      sideScale = 1.15;
+      topScale = 0.95;
+    } else if (t.style === 'pente') {
+      sideMap = 'comb';
+      sideScale = 1.05;
+      if (round) {
+        topMap = 'swirl';
+        topScale = 0.95;
+      }
+    }
     [
-      [frostSide, look.normal, look.normalScale],
-      [frostTop, look.topNormal === 'swirl' && !round ? look.normal : look.topNormal, look.topScale],
+      [f.side, sideMap, sideScale],
+      [f.top, topMap, topScale],
     ].forEach(([mat, mapName, scale], isTop) => {
       // computador: verniz e acetinado nunca chegam a zero, para todas as coberturas usarem o mesmo programa
       // (trocar de tipo não recompila nada). Celular: os dois ficam desligados e o brilho vira superfície mais lisa.
@@ -458,7 +560,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       mat.clearcoatRoughness = look.clearcoatRoughness;
       mat.sheen = tier.physical ? Math.max(0.002, look.sheen) : 0;
       mat.envMapIntensity = look.env;
-      const map = mapOf(mapName);
+      const map = NORMALS[mapName] ? NORMALS[mapName]() : null;
       if (mat.normalMap !== map) {
         mat.normalMap = map;
         mat.needsUpdate = true;
@@ -467,27 +569,55 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       // no topo, texturas que se repetem usam uma escala própria (a espiral cobre o topo inteiro)
       if (map && isTop && mapName !== 'swirl') map.repeat.set(1, 1);
     });
-    cutFrost.roughness = Math.max(0.45, look.roughness);
+    f.cut.roughness = Math.max(0.45, look.roughness);
+
+    // cor: nos estilos de duas cores quem pinta a lateral é a textura (o material fica branco)
+    const mapped = !t.naked && (t.style === 'ombre' || t.style === 'aquarela' || t.style === 'listras');
+    const map = mapped ? finishMap(i, t) : null;
+    if (f.side.map !== map) {
+      f.side.map = map;
+      f.side.needsUpdate = true;
+    }
+    const topColor = mapped && t.style === 'ombre' ? f.topColor || cov.color2 : cov.color;
+    if (quiet || mapped || f.mapped !== mapped) {
+      [`frostS${i}`, `frostT${i}`, `frostC${i}`].forEach((k) => tweens.delete(k));
+      if (mapped) f.side.color.set(0xffffff);
+      else displayColor(cov.color, f.side.color);
+      displayColor(topColor, f.top.color);
+      displayColor(cov.color, f.cut.color);
+    } else {
+      tweenColor(`frostS${i}`, [f.side], cov.color);
+      tweenColor(`frostT${i}`, [f.top], topColor);
+      tweenColor(`frostC${i}`, [f.cut], cov.color);
+    }
+    f.mapped = mapped;
+    if (f.scrape) displayColor(cov.color, f.scrape.color);
   }
 
   function rebuildBody() {
     disposeGroup(bodyGroup);
-    applyCoveringLook();
-    if (!m.naked) {
-      bodyGroup.add(mesh(buildFrosting(m), [frostSide, frostTop]));
-    } else {
-      m.layerY.forEach((_, i) => {
+    m.stack.forEach((t, ti) => {
+      const f = frostOf(ti);
+      const g = new THREE.Group();
+      g.position.y = t.y0;
+      bodyGroup.add(g);
+      if (!t.naked) {
+        g.add(mesh(buildFrosting(t), [f.side, f.top]));
+        return;
+      }
+      t.layerY.forEach((_, i) => {
         const mat = crustMat(i);
-        bodyGroup.add(mesh(buildSponge(m, i), [mat, mat]));
+        g.add(mesh(buildSponge(t, i), [mat, mat]));
       });
-      m.fillY.forEach((_, i) => bodyGroup.add(mesh(buildFillingBand(m, i), bandMat(i))));
-      bodyGroup.add(mesh(buildTopCream(m), [frostSide, frostTop]));
-      m.layerY.forEach((_, i) => {
-        const coat = mesh(buildScrapeCoat(m, i), scrape(), { cast: false });
+      // semi-naked: entre as camadas aparece o próprio creme da cobertura, não o recheio
+      t.fillY.forEach((_, i) => g.add(mesh(buildFillingBand(t, i), t.semi ? f.side : bandMat(i))));
+      g.add(mesh(buildTopCream(t), [f.side, f.top]));
+      t.layerY.forEach((_, i) => {
+        const coat = mesh(buildScrapeCoat(t, i), scrapeOf(ti), { cast: false });
         coat.renderOrder = 2;
-        bodyGroup.add(coat);
+        g.add(coat);
       });
-    }
+    });
   }
 
   function applyLayerColors(instant) {
@@ -521,19 +651,30 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   function rebuildDrip() {
     disposeGroup(dripGroup);
     if (!config.drip.on) return;
-    const seed = (m.shape.length * 31 + Math.round(m.R * 100) + m.n * 7) | 0;
-    dripGroup.add(mesh(buildDrip(m, seed), dripMat, { cast: tier.smallCastShadow }));
+    m.stack.forEach((t, ti) => {
+      const seed = (t.shape.length * 31 + Math.round(t.R * 100) + t.n * 7 + ti * 101) | 0;
+      const drip = mesh(buildDrip(t, seed), dripMat, { cast: tier.smallCastShadow });
+      drip.position.y = t.y0;
+      dripGroup.add(drip);
+    });
   }
 
   function rebuildCut() {
     disposeGroup(cutGroup);
     if (wedge.span <= 0.002) return;
-    const faces = buildCutFaces(m, { thetaA: wedge.a, thetaB: wedge.a + wedge.span, drip: config.drip.on, seed: m.n });
     const opts = { cast: false, receive: true };
-    faces.sponge.forEach((g, i) => g && cutGroup.add(mesh(g, crumbMat(i), opts)));
-    faces.filling.forEach((g, i) => g && cutGroup.add(mesh(g, cutFillMat(i), opts)));
-    if (faces.frost) cutGroup.add(mesh(faces.frost, cutFrost, opts));
-    if (faces.drip) cutGroup.add(mesh(faces.drip, cutDrip, opts));
+    // o corte passa pelo mesmo eixo em todos os andares (o do andar de baixo)
+    m.stack.forEach((t, ti) => {
+      const local = Object.assign(Object.create(t), { center: m.base.center });
+      const faces = buildCutFaces(local, { thetaA: wedge.a, thetaB: wedge.a + wedge.span, drip: config.drip.on, seed: t.n + ti * 5 });
+      const g = new THREE.Group();
+      g.position.y = t.y0;
+      cutGroup.add(g);
+      faces.sponge.forEach((geo, i) => geo && g.add(mesh(geo, crumbMat(i), opts)));
+      faces.filling.forEach((geo, i) => geo && g.add(mesh(geo, cutFillMat(i), opts)));
+      if (faces.frost) g.add(mesh(faces.frost, frostOf(ti).cut, opts));
+      if (faces.drip) g.add(mesh(faces.drip, cutDrip, opts));
+    });
   }
 
   function applyWedge() {
@@ -545,7 +686,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       const b = wedge.a + wedge.span;
       const nA = new THREE.Vector3(Math.sin(a), 0, -Math.cos(a));
       const nB = new THREE.Vector3(-Math.sin(b), 0, Math.cos(b));
-      const c = new THREE.Vector3(m.center.x, 0, m.center.z);
+      const c = new THREE.Vector3(m.base.center.x, 0, m.base.center.z);
       clipPlanes[0].set(nA, -nA.dot(c));
       clipPlanes[1].set(nB, -nB.dot(c));
     }
@@ -598,9 +739,14 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const plan = new Map();
     cfg.decor.items.forEach((id) => {
       if (id === 'topo') return;
-      plan.set(id, `${sig}|${id}${id === 'velas' ? cfg.decor.candles : ''}`);
+      // as velas mudam de lugar quando entra ou sai o topo personalizado
+      plan.set(id, `${sig}|${id}${id === 'velas' ? `${cfg.decor.candles}|${cfg.decor.number}|${Boolean(cfg.decor.topper?.text)}` : ''}`);
     });
-    if (cfg.decor.items.includes('topo') || cfg.decor.message) plan.set('toppers', `${sig}|toppers|${cfg.decor.items.includes('topo')}|${cfg.decor.message}`);
+    const plaque = cfg.decor.messageMode !== 'bico' ? cfg.decor.message : '';
+    if (cfg.decor.items.includes('topo') || plaque) plan.set('toppers', `${sig}|toppers|${cfg.decor.items.includes('topo')}|${plaque}`);
+    if (cfg.decor.messageMode === 'bico' && cfg.decor.message) plan.set('escrita', `${sig}|escrita|${cfg.decor.message}|${cfg.decor.script}|${cfg.decor.messageColor}|${cfg.decor.candles}|${cfg.decor.number}|${Boolean(cfg.decor.topper?.text)}`);
+    if (cfg.decor.topper?.text) plan.set('toponome', `${sig}|toponome|${cfg.decor.topper.text}|${cfg.decor.topper.color}|${plaque}`);
+    if (m.stack.some((t) => t.style === 'respingo')) plan.set('respingo', `${sig}|respingo`);
     return plan;
   }
 
@@ -649,8 +795,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     };
     ring(stand.plateRadius, -0.02);
     ring(stand.plateRadius * 0.5, stand.floorY);
-    ring(m.bounds.maxR, m.Ht + (layout.pipeTop ? 0.1 : 0.01));
-    ring(Math.min(0.6, m.rMin * 0.7), m.Ht + decorHeight(config), m.center.z, 8);
+    if (m.base !== m) ring(m.base.bounds.maxR, m.base.Ht);
+    ring(m.bounds.maxR, m.Htot + (layout.pipeTop ? 0.1 : 0.01));
+    ring(Math.min(0.6, m.rMin * 0.7), m.Htot + decorTop(config), m.center.z, 8);
     return pts;
   }
 
@@ -671,7 +818,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const midY = (lo + hi) / 2;
     const halfY = ((hi - lo) / 2) * fill;
     const tz = m.center.z * 0.5;
-    let ty = (m.Ht + decorHeight(config) + stand.floorY) / 2;
+    let ty = (m.Htot + decorTop(config) + stand.floorY) / 2;
     const measure = (dist) => {
       fitSph.set(dist, angles.polar, angles.az || 0);
       fitCam.position.setFromSpherical(fitSph);
@@ -706,7 +853,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       ty += (((e.minY + e.maxY) / 2 - midY) * dist * tanV) / Math.cos(elev);
     }
     // bolos menores ficam um pouco mais longe: dá para sentir a diferença entre P, M e G
-    const sizeCue = 1 + 0.08 * Math.max(0, 1.25 - m.R);
+    const sizeCue = 1 + 0.08 * Math.max(0, 1.25 - m.base.R);
     return { dist: dist * sizeCue, ty, tz };
   }
 
@@ -821,12 +968,14 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     layout = decorLayout(config, m);
     const quiet = instant || staged || reduceMotion;
 
-    const kStand = `${config.shape}|${config.size}`;
-    const kBody = `${kStand}|${m.n}|${config.covering.type}`;
+    // o que muda a GEOMETRIA: formato, tamanho, andares, base; e, no corpo, camadas, altura e tipo/estilo de cada andar
+    const styles = m.stack.map((t) => `${t.type}:${t.style}`).join();
+    const kStand = `${config.shape}|${config.size}|${config.tiers}|${config.base}`;
+    const kBody = `${kStand}|${m.n}|${config.height}|${styles}`;
     const kDrip = `${kBody}|${config.drip.on}`;
-    const kPipe = `${kDrip}|${config.piping.style}|${config.piping.where}`;
+    const kPipe = `${kDrip}|${config.piping.style}|${config.piping.where}|${config.decor.items.includes('wafer')}`;
     const kLayers = `${config.layers.join()}|${config.fillings.join()}`;
-    const sig = `${kPipe}|${[...config.decor.items].sort().join()}|${config.decor.message ? 1 : 0}`;
+    const sig = `${kPipe}|${[...config.decor.items].sort().join()}|${config.decor.message ? config.decor.messageMode : 0}|${JSON.stringify(config.decor.opts)}|${config.decor.candleStyle}`;
 
     const standChanged = kStand !== keys.stand;
     const bodyChanged = kBody !== keys.body;
@@ -834,19 +983,16 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     if (bodyChanged) rebuildBody();
 
     // cores
+    m.stack.forEach((_, i) => applyTierLook(i, first || quiet || bodyChanged));
     if (first || quiet) {
-      [frostSide, frostTop, cutFrost].forEach((mt) => displayColor(config.covering.color, mt.color));
       [dripMat, cutDrip].forEach((mt) => displayColor(config.drip.color, mt.color));
       displayColor(config.piping.color, lib.mat.piping().color);
-      tweens.delete('frost');
       tweens.delete('drip');
       tweens.delete('pipe');
     } else {
-      tweenColor('frost', [frostSide, frostTop, cutFrost], config.covering.color);
       tweenColor('drip', [dripMat, cutDrip], config.drip.color);
       tweenColor('pipe', [lib.mat.piping()], config.piping.color);
     }
-    if (scrapeMat) displayColor(config.covering.color, scrapeMat.color);
     const pipeMat = lib.mat.piping();
     if (pipeMat.sheenColor) displayColor(config.piping.color, pipeMat.sheenColor).lerp(_bd.set(0xffffff), 0.55);
     applyLayerColors(first || quiet || bodyChanged);
@@ -883,7 +1029,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       const own = ownKey(id);
       jobs.push(() => {
         const prev = decorParts.get(id);
-        const part = buildDecor(id, buildContext());
+        const part = buildAnyDecor(id, buildContext());
         part.key = k;
         part.own = own;
         part.born = !pop || (!staged && prev && prev.own === own) ? -100 : now;
@@ -900,7 +1046,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     } else refreshParts(true);
 
     // luz das velas
-    const lightTo = plan.has('velas') ? 0.5 + Math.sqrt(config.decor.candles) * 0.42 : 0;
+    // chamas acesas: as clássicas (quantas a pessoa escolheu), uma por algarismo ou a vela faísca
+    const flamesLit = config.decor.candleStyle === 'numero' ? config.decor.number.length : config.decor.candleStyle === 'faisca' ? 4 : config.decor.candles;
+    const lightTo = plan.has('velas') && flamesLit ? 0.5 + Math.sqrt(flamesLit) * 0.42 : 0;
     if (quiet) candleLight.userData.base = lightTo;
     else {
       const from = candleLight.userData.base || 0;
@@ -913,7 +1061,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
         cakeGroup.scale.setScalar(0.82);
         tween('settle', 0.75, (k) => cakeGroup.scale.setScalar(0.82 + 0.18 * k), { ease: bounce });
       } else if (bodyChanged && prevM) {
-        const ratio = prevM.n !== m.n ? THREE.MathUtils.clamp(prevM.Ht / m.Ht, 0.6, 1.4) : 1;
+        const ratio = prevM.n !== m.n ? THREE.MathUtils.clamp(prevM.Htot / m.Htot, 0.6, 1.4) : 1;
         const side = standChanged && wedge.span <= 0.002 ? 0.93 : 1;
         cakeGroup.scale.set(side, ratio === 1 ? 0.95 : ratio, side);
         const fromY = cakeGroup.scale.y;
@@ -927,7 +1075,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       cakeGroup.scale.setScalar(1);
     }
 
-    const topChanged = !prevM || Math.abs(prevM.Ht + decorHeight(prev) - (m.Ht + decorHeight(config))) > 0.02;
+    const topChanged = !prevM || Math.abs(prevM.Htot + decorTop(prev) - (m.Htot + decorTop(config))) > 0.02;
     const heartSwitch = prevM && prevM.shape !== m.shape && (m.shape === 'heart' || prevM.shape === 'heart');
     if (first) frame({ view: viewName, animate: false });
     else if (focus) focusPlaque(true);
@@ -963,15 +1111,21 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
 
   /** Refaz a plaquinha (chamado quando a fonte da marca termina de carregar). */
   function refreshText() {
-    const old = decorParts.get('toppers');
-    if (!old || !config?.decor.message) return;
-    const part = buildDecor('toppers', buildContext());
-    part.key = old.key;
-    part.own = old.own;
-    part.born = -100;
-    disposePart(old);
-    decorParts.set('toppers', part);
-    cakeGroup.add(part.group);
+    // tudo o que é desenhado com letras: plaquinha, escrita com bico e topo personalizado
+    let any = false;
+    ['toppers', 'escrita', 'toponome'].forEach((id) => {
+      const old = decorParts.get(id);
+      if (!old || (id === 'toppers' && !config?.decor.message)) return;
+      const part = buildAnyDecor(id, buildContext());
+      part.key = old.key;
+      part.own = old.own;
+      part.born = -100;
+      disposePart(old);
+      decorParts.set(id, part);
+      cakeGroup.add(part.group);
+      any = true;
+    });
+    if (!any) return;
     refreshParts(true);
     invalidate();
   }
@@ -1106,6 +1260,43 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     return ms;
   }
 
+  /**
+   * Medidas do bolo na tela, para o modo "ver medidas": as duas pontas da largura de cada andar (de baixo
+   * para cima) e as da altura total, em pixels de CSS a partir do canto da tela 3D.
+   */
+  const _mp = new THREE.Vector3();
+  function measure() {
+    if (!m) return null;
+    camera.updateMatrixWorld();
+    // "direita" da câmera, deitada no plano da mesa
+    _mp.setFromMatrixColumn(camera.matrixWorld, 0);
+    const len = Math.hypot(_mp.x, _mp.z) || 1;
+    const rx = _mp.x / len;
+    const rz = _mp.z / len;
+    const k = cakeGroup.scale;
+    const at = (d, y) => {
+      _mp.set(rx * d * k.x, y * k.y, rz * d * k.z).project(camera);
+      return { x: (_mp.x * 0.5 + 0.5) * size.w, y: (0.5 - _mp.y * 0.5) * size.h };
+    };
+    const span = (t) => {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = 0; i < t.frost.n; i++) {
+        const d = t.frost.x[i] * rx + t.frost.z[i] * rz;
+        if (d < lo) lo = d;
+        if (d > hi) hi = d;
+      }
+      return { lo, hi };
+    };
+    const tiers = m.stack.map((t) => {
+      const { lo, hi } = span(t);
+      const y = t.y0 + t.Ht * 0.5;
+      return { left: at(lo, y), right: at(hi, y) };
+    });
+    const edge = span(m.base).lo;
+    return { tiers, height: { bottom: at(edge, 0), top: at(edge, m.Htot) } };
+  }
+
   /** Estado da qualidade em uso (só leitura; exposto no gancho ?czdebug). */
   function quality() {
     return { tier: tier.name, devicePixelRatio: deviceRatio(), ratio: curRatio, stillRatio: stillRatio(), sharp, gpuTimer: Boolean(gpuExt), governor: gov.state() };
@@ -1226,6 +1417,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       sharp = curRatio >= stillRatio() - 1e-3;
       const cpuMs = draw(true);
       lastRender = t;
+      onFrame?.();
       // resolução dinâmica: conta o CUSTO de desenhar este quadro (CPU e, se houver, placa de vídeo) contra o
       // orçamento do modo atual — nunca o intervalo entre quadros, que atrasa por outros motivos
       if (clock() >= skipUntil) {
@@ -1237,6 +1429,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       applyRatio(stillRatio());
       sharp = true;
       draw();
+      onFrame?.();
     } else if (!active && !ambient) stats.skipped++;
 
     // dorme quando não há mais nada para animar; qualquer mudança chama invalidate() e acorda o laço
@@ -1390,6 +1583,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
      de vídeo — para que o primeiro toque em cada opção não engasgue. Uma tarefa por vez, só com tudo parado. */
   const warmQueue = [];
   let warmTimer = 0;
+  let warmGap = 60; // pausa entre duas tarefas de aquecimento (maior para o catálogo novo, que é longo)
   const whenIdle = (fn) => ('requestIdleCallback' in window ? window.requestIdleCallback(fn, { timeout: 1500 }) : setTimeout(fn, 120));
   function warmNext() {
     if (disposed || lost || !warmQueue.length) return;
@@ -1401,15 +1595,16 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
         console.warn('[bolo 3D] aquecimento ignorado:', err?.message || err);
       }
     }
-    if (warmQueue.length) warmTimer = setTimeout(() => whenIdle(warmNext), busy ? 400 : 60);
+    if (warmQueue.length) warmTimer = setTimeout(() => whenIdle(warmNext), busy ? 400 : warmGap);
   }
 
   /**
    * Materiais com planos de corte (massa, recheio e creme do naked, calda) só compilam do jeito certo quando são
    * desenhados de verdade: entram num quadro comum, num pedacinho invisível, um por momento ocioso.
    */
-  function warmByDrawing(material) {
+  function warmByDrawing(material, wrap = false) {
     const geo = new THREE.PlaneGeometry(0.01, 0.01);
+    if (wrap) geo.setAttribute('uv1', geo.attributes.uv.clone()); // como a malha da cobertura (segundo conjunto de UV)
     const probe = new THREE.Mesh(geo, material);
     probe.frustumCulled = false;
     probe.receiveShadow = true;
@@ -1424,6 +1619,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
 
   function warmUp() {
     if (warmQueue.length || !m || disposed) return;
+    warmGap = 60;
     // primeiro o "Ver por dentro" (o momento mais visto), sem travar nada; depois texturas, bicos e decorações;
     // por último, e só bem depois de o bolo aparecer, os materiais que precisam de um quadro de verdade
     warmQueue.push(() => {
@@ -1442,14 +1638,51 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       if (!part.group.children.length) done();
       else renderer.compileAsync(part.group, camera, scene).then(done, done);
     };
-    ['rosetas', 'conchas', 'estrelas', 'bolinhas', 'folhas'].forEach((style) => {
-      if (style !== config.piping.style) warmQueue.push(tryPart({ ...base, piping: { ...base.piping, style } }, buildPiping));
-    });
-    ['frutas', 'flores', 'velas', 'perolas', 'confete', 'granulado', 'raspas', 'topo'].forEach((id) => {
+    const pipe = (style) => {
+      if (style !== 'liso' && style !== config.piping.style) warmQueue.push(tryPart({ ...base, piping: { ...base.piping, style } }, buildPiping));
+    };
+    const decor = (id) => {
       if (config.decor.items.includes(id)) return;
-      warmQueue.push(tryPart({ ...base, decor: { ...base.decor, items: [id], message: '' } }, (ctx) => buildDecor(id === 'topo' ? 'toppers' : id, ctx)));
-    });
+      warmQueue.push(tryPart({ ...base, decor: { ...base.decor, items: [id], opts: {}, message: '' } }, (ctx) => buildAnyDecor(id === 'topo' ? 'toppers' : id, ctx)));
+    };
+    // primeiro o que mais se escolhe (os bicos e as decorações de sempre) e os materiais do naked e da calda;
+    // o catálogo novo entra depois, com a tela já quieta há mais tempo
+    const classicPipes = ['rosetas', 'conchas', 'estrelas', 'bolinhas', 'folhas'];
+    const classicDecor = ['frutas', 'flores', 'velas', 'perolas', 'confete', 'granulado', 'raspas', 'topo'];
+    classicPipes.forEach(pipe);
+    classicDecor.forEach(decor);
     [() => dripMat, () => crustMat(0), () => bandMat(0), scrape].forEach((get) => warmQueue.push(() => warmByDrawing(get())));
+    // cobertura em duas cores (degradê, aquarela, listras): a mesma cobertura do bolo, com um mapa de cor
+    warmQueue.push(() => {
+      const f = frostOf(0);
+      if (f.mapped) return;
+      const map = new THREE.CanvasTexture(document.createElement('canvas'));
+      map.channel = 1;
+      map.colorSpace = THREE.SRGBColorSpace;
+      const mats = [f.side, f.top].map((mt) => {
+        const copy = mt.clone();
+        copy.map = map;
+        return copy;
+      });
+      mats.forEach((mt) => warmByDrawing(mt, true));
+      mats.forEach((mt) => mt.dispose());
+      map.dispose();
+    });
+    // daqui em diante é o catálogo novo (dezenas de peças): uma de cada vez, com folga, para o giro não soluçar
+    warmQueue.push(() => (warmGap = 200));
+    PIPINGS.forEach((x) => !classicPipes.includes(x.id) && pipe(x.id));
+    // bases de madeira, mármore, dourada e prateada
+    warmQueue.push(() => {
+      const group = new THREE.Group();
+      const geo = new THREE.PlaneGeometry(0.01, 0.01);
+      ['wood', 'marble', 'silver', 'goldfoil'].forEach((name) => group.add(new THREE.Mesh(geo, standMat(name))));
+      const done = () => geo.dispose();
+      renderer.compileAsync(group, camera, scene).then(done, done);
+    });
+    DECORS.forEach((x) => !classicDecor.includes(x.id) && decor(x.id));
+    // escrita com bico e topo personalizado
+    warmQueue.push(tryPart({ ...base, decor: { ...base.decor, items: [], opts: {}, message: 'Bolo', messageMode: 'bico', topper: { text: '', color: '#dcae52' } } }, (ctx) => buildAnyDecor('escrita', ctx)));
+    warmQueue.push(tryPart({ ...base, decor: { ...base.decor, items: [], opts: {}, message: '', topper: { text: 'Bolo', color: '#dcae52' } } }, (ctx) => buildAnyDecor('toponome', ctx)));
     warmTimer = setTimeout(() => whenIdle(warmNext), 300);
   }
 
@@ -1586,7 +1819,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     plateShade.material.dispose();
     floor.material.dispose();
     contact.material.dispose();
-    [porcelain, gold, frostSide, frostTop, cutFrost, dripMat, cutDrip, scrapeMat, ...crustMats, ...crumbMats, ...bandMats, ...cutFillMats].forEach((mt) => mt?.dispose());
+    [porcelain, gold, dripMat, cutDrip, ...Object.values(standMats), ...frostTiers.flatMap((f) => (f ? [f.side, f.top, f.cut, f.scrape, f.map] : [])), ...crustMats, ...crumbMats, ...bandMats, ...cutFillMats].forEach((mt) => mt?.dispose());
     lib.dispose();
     tex.dispose();
     envTarget?.dispose();
@@ -1610,6 +1843,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     quiet,
     warmUp,
     quality,
+    measure,
     snapshot,
     snapshotCanvas,
     thumbOf,

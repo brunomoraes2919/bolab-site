@@ -1,13 +1,13 @@
 {
   "name": "BOLAB — Bolos artesanais",
   "short_name": "BOLAB",
-  "description": "Monte seu bolo em 3D ou escolha um clássico. Entrega com hora marcada.",
+  "description": "Delivery de bolos artesanais. Peça um clássico ou monte o seu em 3D e receba com dia e horário marcados.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#FDF5F7",
-  "theme_color": "#FDF5F7",
+  "background_color": "#FFFFFF",
+  "theme_color": "#FFFFFF",
   "lang": "pt-BR",
   "icons": [
     { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },

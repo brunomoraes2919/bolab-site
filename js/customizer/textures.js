@@ -223,7 +223,7 @@ function crustCanvas(size, seed) {
  * A espátula deixa o creme mais grosso junto aos recheios e bem fino no meio da camada,
  * em riscos horizontais longos — nada de manchas soltas.
  */
-function scrapeCanvas(size, seed) {
+function scrapeCanvas(size, seed, dense = false) {
   const n1 = tileNoise(2, seed);
   const n2 = tileNoise(5, seed + 1);
   const n3 = tileNoise(11, seed + 2);
@@ -238,14 +238,217 @@ function scrapeCanvas(size, seed) {
       const edge = Math.pow(Math.abs(v * 2 - 1), 2.4); // 0 no meio da camada, 1 nas emendas
       // ruído esticado na horizontal (a espátula corre em volta do bolo)
       const streak = n1(u, v * 3) * 0.5 + n2(u, v * 9) * 0.32 + n3(u, v * 22) * 0.18;
-      let a = 0.34 + edge * 0.6 + (streak - 0.5) * 0.62;
-      a = Math.max(0.1, Math.min(0.97, a));
+      // semi-naked: bem mais creme, a massa só espia no meio de cada camada
+      let a = dense ? 0.8 + edge * 0.2 + (streak - 0.5) * 0.62 : 0.34 + edge * 0.6 + (streak - 0.5) * 0.62;
+      a = Math.max(dense ? 0.46 : 0.1, Math.min(dense ? 1 : 0.97, a));
       const i = (y * size + x) * 4;
       img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
       img.data[i + 3] = Math.round(a * 255);
     }
   }
   ctx.putImageData(img, 0, 0);
+  return c;
+}
+
+/* ───────── Estilos de acabamento da cobertura ───────── */
+
+/** Riscado no pente: sulcos finos e regulares em volta do bolo. */
+function combHeight(size) {
+  return paintHeight(8, (u, v) => 0.5 + 0.5 * Math.pow(Math.abs(Math.sin(v * Math.PI * 22)), 0.7), size);
+}
+
+/** Espatulado rústico: golpes largos e curvos de espátula, uns por cima dos outros. */
+function rusticHeight(size, seed) {
+  const r = rng(seed);
+  const n1 = tileNoise(6, seed + 4);
+  // golpes largos, quase na horizontal (a espátula corre em volta do bolo), levemente em arco
+  const strokes = Array.from({ length: 22 }, () => {
+    const ang = (r() - 0.5) * 0.7;
+    return { x: r(), y: r(), c: Math.cos(ang), s: Math.sin(ang), len: 0.2 + r() * 0.22, w: 0.05 + r() * 0.06, bend: (r() - 0.5) * 1.1, a: 0.5 + r() * 0.5 };
+  });
+  return paintHeight(size, (u, v) => {
+    let h = 0.42 + (n1(u, v) - 0.5) * 0.14;
+    for (const k of strokes) {
+      // distância (com emenda nas bordas) ao golpe, no eixo dele
+      let dx = u - k.x;
+      let dy = v - k.y;
+      dx -= Math.round(dx);
+      dy -= Math.round(dy);
+      const along = dx * k.c + dy * k.s;
+      if (Math.abs(along) > k.len) continue;
+      const across = -dx * k.s + dy * k.c - k.bend * along * along;
+      const t = across / k.w;
+      if (t < -1.6 || t > 1.6) continue;
+      // crista de um lado (o creme empurrado), vale suave do outro
+      h += k.a * (Math.exp(-((t - 0.7) ** 2) * 3.2) * 0.3 - Math.exp(-((t + 0.35) ** 2) * 1.6) * 0.16) * Math.pow(1 - (along / k.len) ** 2, 1.5);
+    }
+    return h;
+  });
+}
+
+const hexRgb = (hex) => {
+  const n = parseInt(String(hex).slice(1), 16) || 0;
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+};
+const rgba = (hex, a) => {
+  const [r, g, b] = hexRgb(hex);
+  return `rgba(${r},${g},${b},${a})`;
+};
+const mixRgb = (a, b, k) => {
+  const x = hexRgb(a);
+  const y = hexRgb(b);
+  return `#${x.map((v, i) => Math.round(v + (y[i] - v) * k).toString(16).padStart(2, '0')).join('')}`;
+};
+
+/**
+ * Pinta a cor da lateral nos estilos de duas cores. A textura dá uma volta inteira no bolo (u) e vai do pé
+ * ao topo (v): o alto do <canvas> é o alto do bolo.
+ *  ombre     degradê de c1 (embaixo) para c2 (em cima)
+ *  listras   faixas verticais alternadas (stripes = quantas de cada cor)
+ *  aquarela  manchas largas e translúcidas de c2 sobre c1, como tinta diluída na espátula
+ */
+export function paintFinish(canvas, style, c1, c2, { stripes = 12, seed = 7, from = 0, to = 1 } = {}) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.globalAlpha = 1;
+  if (style === 'ombre') {
+    const g = ctx.createLinearGradient(0, H, 0, 0);
+    // from/to: o trecho do degradê que cabe a este andar (num bolo de andares o degradê atravessa o bolo todo)
+    const at = (k) => mixRgb(c1, c2, from + (to - from) * k);
+    const whole = from <= 0.001 && to >= 0.999;
+    g.addColorStop(0, at(0));
+    g.addColorStop(whole ? 0.16 : 0, at(0));
+    g.addColorStop(0.5, at(0.5));
+    g.addColorStop(whole ? 0.86 : 1, at(1));
+    g.addColorStop(1, at(1));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    return;
+  }
+  if (style === 'listras') {
+    const n = Math.max(4, stripes) * 2;
+    for (let k = 0; k < n; k++) {
+      ctx.fillStyle = k % 2 ? c2 : c1;
+      ctx.fillRect(Math.round((k * W) / n), 0, Math.ceil(W / n) + 1, H);
+    }
+    return;
+  }
+  // aquarela
+  ctx.fillStyle = c1;
+  ctx.fillRect(0, 0, W, H);
+  const r = rng(seed);
+  const tones = [c2, c2, mixRgb(c1, c2, 0.55), mixRgb(c2, '#ffffff', 0.45), mixRgb(c2, '#000000', 0.12)];
+  for (let i = 0; i < 34; i++) {
+    const big = i < 12; // primeiro as lavadas largas, depois pinceladas menores e mais carregadas
+    const x = r() * W;
+    const y = r() * H;
+    const rx = W * (big ? 0.12 + r() * 0.2 : 0.04 + r() * 0.08);
+    const ry = H * (big ? 0.16 + r() * 0.3 : 0.07 + r() * 0.14);
+    const tone = tones[Math.floor(r() * tones.length)];
+    const alpha = big ? 0.3 + r() * 0.3 : 0.4 + r() * 0.4;
+    for (const ox of [-W, 0, W]) {
+      if (x + ox + rx < 0 || x + ox - rx > W) continue;
+      ctx.save();
+      ctx.translate(x + ox, y);
+      ctx.rotate((r() - 0.5) * 0.5);
+      ctx.scale(rx, ry);
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+      g.addColorStop(0, rgba(tone, alpha));
+      g.addColorStop(0.55, rgba(tone, alpha * 0.7));
+      g.addColorStop(1, rgba(tone, 0));
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(0, 0, 1, 0, 6.2832);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+/* ───────── Bases ───────── */
+
+/** Fatia de tronco: anéis de crescimento irregulares e veios. */
+function woodCanvas(size) {
+  const c = makeCanvas(size);
+  const ctx = c.getContext('2d');
+  const r = rng(311);
+  const g = ctx.createRadialGradient(size * 0.5, size * 0.5, 0, size * 0.5, size * 0.5, size * 0.72);
+  g.addColorStop(0, '#b78a5c');
+  g.addColorStop(0.62, '#9c6e42');
+  g.addColorStop(0.9, '#7a5230');
+  g.addColorStop(1, '#4e3320'); // casca escura na borda da fatia de tronco
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const cx = size * (0.5 + (r() - 0.5) * 0.08);
+  const cy = size * (0.5 + (r() - 0.5) * 0.08);
+  for (let rad = size * 0.012; rad < size * 0.78; rad += size * (0.006 + r() * 0.012)) {
+    ctx.strokeStyle = `rgba(${90 + Math.floor(r() * 30)},${52 + Math.floor(r() * 20)},${24},${0.1 + r() * 0.22})`;
+    ctx.lineWidth = size * (0.0015 + r() * 0.004);
+    ctx.beginPath();
+    const ph = r() * 6.28;
+    for (let a = 0; a <= 6.3; a += 0.08) {
+      const rr = rad * (1 + 0.03 * Math.sin(a * 3 + ph) + 0.015 * Math.sin(a * 7 + ph * 2));
+      const x = cx + Math.cos(a) * rr;
+      const y = cy + Math.sin(a) * rr * 0.96;
+      if (a === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  // rachaduras finas saindo do miolo
+  for (let i = 0; i < 5; i++) {
+    const a = r() * 6.28;
+    ctx.strokeStyle = 'rgba(70,40,18,0.25)';
+    ctx.lineWidth = size * 0.002;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * size * 0.02, cy + Math.sin(a) * size * 0.02);
+    ctx.lineTo(cx + Math.cos(a + 0.05) * size * (0.2 + r() * 0.3), cy + Math.sin(a + 0.05) * size * (0.2 + r() * 0.3));
+    ctx.stroke();
+  }
+  return c;
+}
+
+/** Mármore branco com veios cinzentos. */
+function marbleCanvas(size) {
+  const c = makeCanvas(size);
+  const ctx = c.getContext('2d');
+  const r = rng(733);
+  ctx.fillStyle = '#f3f1ee';
+  ctx.fillRect(0, 0, size, size);
+  // nuvens claras
+  for (let i = 0; i < 26; i++) {
+    const x = r() * size;
+    const y = r() * size;
+    const rad = size * (0.08 + r() * 0.2);
+    const g = ctx.createRadialGradient(x, y, 0, x, y, rad);
+    const tone = r() < 0.5 ? '215,213,214' : '255,255,255';
+    g.addColorStop(0, `rgba(${tone},${0.18 + r() * 0.2})`);
+    g.addColorStop(1, `rgba(${tone},0)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+  }
+  const vein = (width, alpha) => {
+    let x = r() * size;
+    let y = -10;
+    let dir = Math.PI / 2 + (r() - 0.5) * 1.2;
+    ctx.strokeStyle = `rgba(120,118,124,${alpha})`;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    while (y < size + 10 && x > -20 && x < size + 20) {
+      dir += (r() - 0.5) * 0.7;
+      dir = Math.max(0.5, Math.min(2.6, dir));
+      x += Math.cos(dir) * size * 0.03;
+      y += Math.sin(dir) * size * 0.03;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  };
+  for (let i = 0; i < 5; i++) vein(size * (0.012 + r() * 0.014), 0.07);
+  for (let i = 0; i < 7; i++) vein(size * (0.002 + r() * 0.004), 0.3 + r() * 0.2);
+  for (let i = 0; i < 6; i++) vein(size * 0.0012, 0.35);
   return c;
 }
 
@@ -393,6 +596,11 @@ export function createTextureKit({ aniso = 4, small = false, size = 0 } = {}) {
     crumbBump: () => get('crumbBump', () => texture(drawn('crumb', () => crumbCanvas(S, 5)), { aniso })),
     crust: () => get('crust', () => texture(drawn('crust', () => crustCanvas(S / 2, 71)), { srgb: true, aniso })),
     scrape: () => get('scrape', () => texture(drawn('scrape', () => scrapeCanvas(S, 83)), { srgb: true, aniso })),
+    scrapeDense: () => get('scrapeDense', () => texture(drawn('scrapeDense', () => scrapeCanvas(S, 83, true)), { srgb: true, aniso })),
+    combNormal: () => get('comb', () => texture(drawn('comb', () => heightToNormal(combHeight(S), 3.2)), { aniso })),
+    rusticNormal: () => get('rustic', () => texture(drawn('rustic', () => heightToNormal(rusticHeight(S, 57), 3)), { aniso })),
+    wood: () => get('wood', () => texture(drawn('wood', () => woodCanvas(S)), { repeat: false, srgb: true, aniso })),
+    marble: () => get('marble', () => texture(drawn('marble', () => marbleCanvas(S)), { repeat: false, srgb: true, aniso })),
     glitterNormal: () =>
       get('glitter', () =>
         texture(

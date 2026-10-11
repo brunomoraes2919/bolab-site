@@ -1,13 +1,14 @@
-// BOLAB — detalhe e acompanhamento de um pedido (#/pedido/:id).
-import { html, raw, icon, money, dateLong, dateTime, plural, on, toast, confirmDialog, copyText, confetti } from '../ui.js';
-import { lineThumb, pageHead, notice, totalsSummary } from '../components.js';
+// BOLAB — acompanhamento de um pedido (#/pedido/:id).
+import { html, raw, icon, money, dateTime, plural, on, toast, confirmDialog, copyText, confetti } from '../ui.js';
+import { lineThumb, pageHead, totalsSummary, listRow, dayLabel, slotLabel } from '../components.js';
 import { addresses, auth, orders } from '../store.js';
 import { navigate } from '../router.js';
 import { SITE } from '../data/site.js';
+import { getProduct, isCake } from '../data/products.js';
 import { whenStore, keepFocus } from './cart.js';
 
 const STEP_ICONS = { received: 'receipt', paid: 'credit-card', preparing: 'cake', ready: 'gift', out: 'truck', delivered: 'home' };
-const BADGE_TONES = { amber: 'badge--amber', gold: 'badge--gold', green: 'badge--green', red: 'badge--red', rose: '' };
+const BADGE_TONES = { amber: 'badge--amber', gold: 'badge--gold', green: 'badge--green', red: 'badge--red', rose: 'badge--rose' };
 
 const celebrated = new Set(); // pedidos que já ganharam confete nesta visita
 const PIX_KEY = 'bolab:pix'; // sessionStorage: pedido → momento em que um novo código Pix foi gerado
@@ -38,7 +39,7 @@ export const isOff = (order) => orders.statusOf(order).canceled;
 export const isPickup = (order) => order.delivery.mode === 'pickup';
 export const isPixPending = (order) => order.payment.method === 'pix' && !order.payment.paidAt && !isOff(order);
 
-/** Pedido encerrado: entregue, retirado ou cancelado. */
+/** Pedido encerrado: entregue, retirado, cancelado ou expirado. */
 export function isClosed(order) {
   const st = orders.statusOf(order);
   return st.canceled || st.id === 'delivered';
@@ -47,13 +48,14 @@ export function isClosed(order) {
 /** Selo de situação. → { label, tone, icon } */
 export function statusInfo(order) {
   const st = orders.statusOf(order);
-  if (st.canceled) return { label: st.label, tone: 'red', icon: st.expired ? 'clock' : 'x' };
+  if (st.expired) return { label: 'Expirado', tone: 'red', icon: 'clock' };
+  if (st.canceled) return { label: 'Cancelado', tone: 'red', icon: 'x' };
   if (!order.payment.paidAt) return { label: order.payment.method === 'pix' ? 'Aguardando Pix' : 'Aguardando pagamento', tone: 'amber', icon: 'clock' };
-  if (st.id === 'preparing') return { label: st.label, tone: 'gold', icon: 'cake' };
+  if (st.id === 'preparing') return { label: st.label, tone: 'rose', icon: 'cake' };
   if (st.id === 'ready') return { label: st.label, tone: 'green', icon: 'gift' };
   if (st.id === 'out') return { label: st.label, tone: 'green', icon: 'truck' };
   if (st.id === 'delivered') return { label: st.label, tone: 'green', icon: 'check' };
-  return { label: st.label, tone: 'rose', icon: 'check' };
+  return { label: 'Confirmado', tone: 'green', icon: 'check' };
 }
 
 export function statusBadge(order) {
@@ -61,9 +63,12 @@ export function statusBadge(order) {
   return html`<span class="badge ${BADGE_TONES[info.tone]} ord-badge">${icon(info.icon)}${info.label}</span>`;
 }
 
-/** "Sábado, 12 de outubro · 14:00 – 16:00" */
-export function whenText(order) {
-  return `${dateLong(order.delivery.date)} · ${order.delivery.slot}`;
+/** "14:00 – 16:00" → "14h–16h" (o formatador mora em js/components.js: slotLabel). */
+export const slotShort = slotLabel;
+
+/** "Entrega sáb, 11/10 · 14h–16h" | "Retirada amanhã · 9h–11h" */
+export function whenShort(order) {
+  return `${isPickup(order) ? 'Retirada' : 'Entrega'} ${dayLabel(order.delivery.date)} · ${slotShort(order.delivery.slot)}`;
 }
 
 /* ───────── Pix de demonstração ─────────
@@ -114,64 +119,59 @@ function clock(ms) {
 }
 
 /* ───────── Blocos ───────── */
-function hero(order, isNew) {
-  const first = (order.contact.name || auth.user()?.name || '').trim().split(/\s+/)[0];
+
+/** Título grande do acompanhamento, conforme a etapa. → { title, sub, tone } */
+function headline(order, st) {
   const pickup = isPickup(order);
-
-  if (isOff(order)) {
-    return html`
-      <div class="ord-headrow">
-        ${pageHead(`Pedido ${order.id}`, { back: '/pedidos', sub: `Feito em ${dateTime(order.createdAt)}` })} ${statusBadge(order)}
-      </div>
-    `;
+  const cake = order.items.some((l) => l.kind === 'custom' || isCake(getProduct(l.productId) || { cat: 'acess' }));
+  const thing = cake ? 'bolo' : 'pedido';
+  if (st.expired) return { title: 'Pedido expirado', sub: 'O pagamento não foi feito e a data combinada já passou. Nada foi cobrado.', tone: 'off' };
+  if (st.canceled) {
+    return {
+      title: 'Pedido cancelado',
+      sub: order.payment.paidAt ? 'Cancelado antes da produção. O valor pago volta integralmente pela mesma forma de pagamento.' : 'Cancelado antes do pagamento. Nada foi cobrado.',
+      tone: 'off',
+    };
   }
-
-  if (isNew && isPixPending(order)) {
-    return html`
-      <header class="ord-hero ord-hero--wait">
-        <span class="ord-hero__icon">${icon('pix')}</span>
-        <p class="eyebrow">Pedido ${order.id}</p>
-        <h1>Falta só o Pix</h1>
-        <p class="ord-hero__lead">
-          ${first ? `${first}, seu` : 'Seu'} pedido está reservado. Pague em até ${SITE.pix.expiresMin} minutos para garantir
-          ${pickup ? 'a retirada' : 'a entrega'} de <strong>${dateLong(order.delivery.date).toLowerCase()}</strong>.
-        </p>
-      </header>
-    `;
+  if (!order.payment.paidAt) return { title: 'Aguardando o pagamento', sub: 'Assim que o Pix for confirmado, seu pedido entra na nossa agenda.', tone: 'wait' };
+  switch (st.id) {
+    case 'preparing':
+      return { title: `Seu ${thing} está em produção`, sub: 'Feito à mão, perto do dia, para chegar fresquinho.', tone: 'go' };
+    case 'ready':
+      return pickup
+        ? { title: 'Pronto para retirada', sub: 'É só passar no ateliê no horário combinado.', tone: 'go' }
+        : { title: `Seu ${thing} está pronto`, sub: 'Embalado e esperando a saída para entrega.', tone: 'go' };
+    case 'out':
+      return { title: `Seu ${thing} saiu para entrega`, sub: 'Tenha o código de entrega em mãos.', tone: 'go' };
+    case 'delivered':
+      return { title: pickup ? 'Pedido retirado' : 'Pedido entregue', sub: 'Bom apetite! Obrigado por pedir na BOLAB.', tone: 'done' };
+    default:
+      return { title: 'Pedido confirmado', sub: 'Pagamento recebido. Seu pedido já está na nossa agenda.', tone: 'go' };
   }
+}
 
-  if (isNew) {
-    return html`
-      <header class="ord-hero ord-hero--ok">
-        <span class="ord-hero__icon">${icon('check')}</span>
-        <p class="eyebrow">Pedido ${order.id}</p>
-        <h1>Pedido confirmado!</h1>
-        <p class="ord-hero__lead">
-          ${first ? `Obrigado, ${first}!` : 'Obrigado!'} Agora é com a gente: seu pedido é feito à mão, bem perto do dia, para chegar fresquinho.
-          ${pickup ? 'Avisamos pelo WhatsApp quando o pedido estiver pronto para retirada.' : 'Avisamos pelo WhatsApp quando o bolo sair para entrega.'} E você acompanha cada etapa por aqui.
-        </p>
-        <ul class="ord-hero__facts">
-          <li>${icon('calendar')}<span>${whenText(order)}</span></li>
-          <li>${icon(pickup ? 'store' : 'map-pin')}<span>${pickup ? `Retirada no ${SITE.pickup.name}` : addresses.format(order.address)}</span></li>
-          <li>${icon('shield-check')}<span>Código de ${pickup ? 'retirada' : 'entrega'}: <strong>${order.code}</strong></span></li>
-        </ul>
-      </header>
-    `;
-  }
-
+/** Faixa de agradecimento logo depois de fechar o pedido (já pago). */
+function confirmBanner(order) {
+  const first = (order.contact.name || auth.user()?.name || '').trim().split(/\s+/)[0];
   return html`
-    <div class="ord-headrow">${pageHead(`Pedido ${order.id}`, { back: '/pedidos', sub: `Feito em ${dateTime(order.createdAt)}` })} ${statusBadge(order)}</div>
+    <div class="ord-confirm" role="status">
+      <span class="ord-confirm__icon">${icon('check')}</span>
+      <div>
+        <strong>${first ? `Obrigado, ${first}!` : 'Obrigado pelo pedido!'}</strong>
+        <p>${isPickup(order) ? 'Avisamos pelo WhatsApp quando o pedido estiver pronto para retirada.' : 'Avisamos pelo WhatsApp quando o pedido sair para entrega.'}</p>
+      </div>
+    </div>
   `;
 }
 
-function pixPanel(order) {
+function pixPanel(order, isNew) {
   const left = pixExpiresAt(order) - Date.now();
   const expired = left <= 0;
   const code = demoPixCode(order);
   const wasCopied = copied.has(order.id);
   const showQr = qrOpen.has(order.id);
   return html`
-    <section class="card ord-pix ${expired ? 'is-expired' : ''} ${showQr ? 'is-qr-open' : ''}" aria-labelledby="ord-pix-title">
+    <section class="card ord-pix ${expired ? 'is-expired' : ''} ${showQr ? 'is-qr-open' : ''}" aria-labelledby="ord-pix-t">
       <div class="ord-pix__qr" id="ord-pix-qr">
         <div class="ord-qr" role="img" aria-label="${SITE.demo ? 'QR Code de demonstração. Não é possível pagar com ele.' : 'QR Code do Pix'}">
           ${decorativeQr(order.id)}
@@ -184,7 +184,7 @@ function pixPanel(order) {
       <div class="ord-pix__body">
         <div class="ord-pix__top">
           <div>
-            <h2 id="ord-pix-title">Pague com Pix</h2>
+            <h2 id="ord-pix-t">${isNew ? 'Falta só o Pix' : 'Pague com Pix'}</h2>
             <p class="ord-pix__amount">${money(order.totals.total)}</p>
           </div>
           <p class="ord-pix__timer ${expired ? 'is-over' : ''}" data-pix-timer>
@@ -197,7 +197,7 @@ function pixPanel(order) {
           ? html`
               <div class="ord-pix__expired">
                 <p>O prazo deste código terminou, mas o seu pedido continua guardado. Gere um novo código para pagar.</p>
-                <button class="btn btn--block" type="button" id="ord-pix-renew" data-pix-renew>${icon('refresh')} Gerar novo código</button>
+                <button class="btn btn--block" type="button" id="ord-pix-renew" data-pix-renew>${icon('refresh')}Gerar novo código</button>
               </div>
             `
           : html`
@@ -209,7 +209,7 @@ function pixPanel(order) {
                 <ol class="ord-pix__how">
                   <li><span>Toque em <strong>Copiar código Pix</strong>.</span></li>
                   <li><span>No app do seu banco, escolha <strong>Pix copia e cola</strong>.</span></li>
-                  <li><span>Cole e confirme — a aprovação aparece aqui em segundos.</span></li>
+                  <li><span>Cole e confirme. A aprovação aparece aqui em segundos.</span></li>
                 </ol>
               </div>
 
@@ -223,7 +223,7 @@ function pixPanel(order) {
                   <label for="ord-pix-code">Pix copia e cola</label>
                   <div class="ord-pix__code">
                     <input class="input" id="ord-pix-code" type="text" readonly value="${code}" data-pix-code />
-                    <button class="btn btn--secondary ${wasCopied ? 'is-copied' : ''}" type="button" id="ord-pix-copy" data-pix-copy>
+                    <button class="btn btn--soft ${wasCopied ? 'is-copied' : ''}" type="button" id="ord-pix-copy" data-pix-copy>
                       ${wasCopied ? '' : icon('copy')}<span>${wasCopied ? 'Copiado ✓' : 'Copiar'}</span>
                     </button>
                   </div>
@@ -243,7 +243,7 @@ function pixPanel(order) {
                 ${icon('info')}
                 <div>
                   <p><strong>Modo demonstração:</strong> o código e o QR Code são ilustrativos e nada é cobrado. Use o botão abaixo para ver o pedido ser confirmado.</p>
-                  <button class="btn btn--block ord-pix__sim" type="button" id="ord-pix-pay" data-pix-pay>${icon('pix')} Simular pagamento do Pix</button>
+                  <button class="btn btn--secondary btn--block ord-pix__sim" type="button" id="ord-pix-pay" data-pix-pay>${icon('pix')}Simular pagamento do Pix</button>
                 </div>
               </div>
             `
@@ -253,68 +253,41 @@ function pixPanel(order) {
   `;
 }
 
-function timeline(order, st) {
-  if (st.expired) {
-    return html`
-      <section class="card ord-box ord-box--track">
-        <h2>Pedido expirado</h2>
-        ${notice('O pagamento não foi feito e a data combinada já passou, então este pedido não foi produzido. Nada foi cobrado. Se ainda quiser, é só pedir de novo e escolher uma nova data.', {
-          tone: 'red',
-          iconName: 'clock',
-        })}
-      </section>
-    `;
-  }
-
-  if (st.canceled) {
-    return html`
-      <section class="card ord-box ord-box--track">
-        <h2>Pedido cancelado</h2>
-        ${notice(
-          order.payment.paidAt
-            ? 'Este pedido foi cancelado antes de entrar em produção. O valor pago volta integralmente pela mesma forma de pagamento.'
-            : 'Este pedido foi cancelado antes do pagamento. Nada foi cobrado.',
-          { tone: 'red', iconName: 'info' },
-        )}
-      </section>
-    `;
-  }
-
+/** Cartão de acompanhamento: previsão, status em título grande, barra de etapas e linha do tempo. */
+function trackCard(order, st) {
+  const head = headline(order, st);
+  const off = st.canceled;
   const pending = isPixPending(order);
-  const current = st.steps.find((s) => s.current);
-  const finished = st.index === st.steps.length - 1;
-  const headline = pending ? 'Aguardando o pagamento' : st.label;
-  const detail = pending
-    ? 'Assim que o Pix for confirmado, seu pedido entra na nossa agenda.'
-    : finished
-      ? 'Pedido concluído. Obrigado por escolher a BOLAB!'
-      : current?.desc || '';
-
+  const total = st.steps.length;
+  const doneAll = st.index === total - 1;
   return html`
-    <section class="card ord-box ord-box--track" aria-labelledby="ord-track-title">
-      <div class="ord-track__head">
-        <div>
-          <p class="eyebrow">Acompanhe seu pedido</p>
-          <h2 id="ord-track-title">${headline}</h2>
-          <p class="muted">${detail}</p>
-        </div>
-      </div>
-      <ol class="ord-tl" style="--ord-steps:${st.steps.length}">
-        ${st.steps.map((s) => {
-          const time = s.id === 'received' ? order.createdAt : s.id === 'paid' && order.payment.paidAt && s.done ? order.payment.paidAt : null;
-          const desc = pending && s.id === 'received' ? 'Aguardando o Pix para seguir.' : s.desc;
-          return html`
-            <li class="ord-tl__step ${s.done ? 'is-done' : ''} ${s.current ? 'is-current' : ''}" ${s.current ? raw('aria-current="step"') : ''}>
-              <span class="ord-tl__dot">${icon(s.done ? 'check' : STEP_ICONS[s.id] || 'check')}</span>
-              <div class="ord-tl__text">
-                <strong>${s.label}</strong>
-                <span>${desc}</span>
-                ${time ? html`<time>${dateTime(time)}</time>` : ''}
-              </div>
-            </li>
-          `;
-        })}
-      </ol>
+    <section class="card ord-track ord-track--${head.tone}" aria-labelledby="ord-track-t">
+      ${off ? '' : html`<p class="ord-track__when">${icon(isPickup(order) ? 'store' : 'truck')}${whenShort(order)}</p>`}
+      <h2 class="ord-track__title" id="ord-track-t">${head.title}</h2>
+      <p class="ord-track__sub">${head.sub}</p>
+      ${off
+        ? ''
+        : html`
+            <div class="ord-bar" role="img" aria-label="Etapa ${st.index + 1} de ${total}: ${st.label}">
+              ${st.steps.map((s) => html`<i class="${s.done ? 'is-done' : s.current ? 'is-current' : ''}"></i>`)}
+            </div>
+            <ol class="ord-tl">
+              ${st.steps.map((s) => {
+                const time = s.id === 'received' ? order.createdAt : s.id === 'paid' && order.payment.paidAt && (s.done || s.current) ? order.payment.paidAt : null;
+                const desc = pending && s.id === 'received' ? 'Aguardando o Pix para seguir.' : s.desc;
+                const state = s.done ? 'is-done' : s.current ? 'is-current' : '';
+                return html`
+                  <li class="ord-tl__step ${state}" ${s.current ? raw('aria-current="step"') : ''}>
+                    <span class="ord-tl__dot">${icon(s.done ? 'check' : STEP_ICONS[s.id] || 'check')}</span>
+                    <div class="ord-tl__text">
+                      <strong>${s.label}</strong>
+                      ${s.done || s.current || doneAll ? html`<span>${time ? dateTime(time) : desc}</span>` : ''}
+                    </div>
+                  </li>
+                `;
+              })}
+            </ol>
+          `}
     </section>
   `;
 }
@@ -322,32 +295,24 @@ function timeline(order, st) {
 function deliveryCard(order) {
   const pickup = isPickup(order);
   const a = order.address;
+  const fact = (iconName, title, ...lines) => html`
+    <li>
+      <span class="row__icon">${icon(iconName)}</span>
+      <div>
+        <strong>${title}</strong>
+        ${lines.filter(Boolean).map((line) => html`<span>${line}</span>`)}
+      </div>
+    </li>
+  `;
   return html`
-    <section class="card ord-box ord-box--delivery" aria-labelledby="ord-delivery-title">
-      <h2 id="ord-delivery-title">${pickup ? 'Retirada' : 'Entrega'}</h2>
+    <section class="card ord-box ord-box--delivery" aria-labelledby="ord-delivery-t">
+      <h2 id="ord-delivery-t">${pickup ? 'Retirada' : 'Entrega'}</h2>
       <ul class="ord-facts">
-        <li>
-          ${icon('calendar')}
-          <div>
-            <strong>${dateLong(order.delivery.date)}</strong>
-            <span>Entre ${order.delivery.slot.replace(' – ', ' e ')}</span>
-          </div>
-        </li>
-        <li>
-          ${icon(pickup ? 'store' : 'map-pin')}
-          <div>
-            <strong>${pickup ? SITE.pickup.name : a?.label || 'Endereço de entrega'}</strong>
-            <span>${pickup ? `${SITE.pickup.address} · ${SITE.city}/${SITE.uf}` : addresses.format(a)}</span>
-            ${pickup ? html`<span>${SITE.pickup.note}</span>` : a?.reference ? html`<span>Referência: ${a.reference}</span>` : ''}
-          </div>
-        </li>
-        <li>
-          ${icon('user')}
-          <div>
-            <strong>${order.contact.name}</strong>
-            <span>${order.contact.phone}</span>
-          </div>
-        </li>
+        ${fact('calendar', dayLabelLong(order), `Entre ${slotShort(order.delivery.slot).replace('–', ' e ')}`)}
+        ${pickup
+          ? fact('store', SITE.pickup.name, `${SITE.pickup.address} · ${SITE.city}/${SITE.uf}`, SITE.pickup.note)
+          : fact('map-pin', a?.label || 'Endereço de entrega', addresses.format(a), a?.reference ? `Referência: ${a.reference}` : '')}
+        ${fact('user', order.contact.name, order.contact.phone)}
       </ul>
       ${isOff(order)
         ? ''
@@ -355,49 +320,38 @@ function deliveryCard(order) {
             <div class="ord-code">
               <div>
                 <strong>Código de ${pickup ? 'retirada' : 'entrega'}</strong>
-                <span>${pickup ? 'Informe no balcão ao retirar o pedido.' : 'Informe a quem entregar o seu pedido.'}</span>
+                <span>${pickup ? 'Informe no balcão ao retirar.' : 'Informe a quem entregar o pedido.'}</span>
               </div>
-              <span class="ord-code__digits" aria-label="${order.code.split('').join(' ')}">${order.code}</span>
+              <span class="ord-code__digits" aria-label="${order.code.split('').join(' ')}">${order.code.split('').map((d) => html`<i>${d}</i>`)}</span>
             </div>
           `}
     </section>
   `;
 }
 
-function itemsCard(order) {
-  const count = order.items.reduce((n, l) => n + l.qty, 0);
-  return html`
-    <section class="card ord-box ord-box--items" aria-labelledby="ord-items-title">
-      <h2 id="ord-items-title">Itens do pedido <small>${plural(count, 'item', 'itens')}</small></h2>
-      <ul class="ord-items">
-        ${order.items.map(
-          (l) => html`
-            <li class="ord-item">
-              <span class="ord-item__thumb">${lineThumb(l, { w: 144 })}</span>
-              <div class="ord-item__body">
-                <strong>${l.name}</strong>
-                ${l.sizeLabel ? html`<span>${l.sizeLabel}</span>` : ''}
-                ${l.kind === 'custom' && l.summary?.length ? html`<span>${l.summary.join(' · ')}</span>` : ''}
-                ${l.note ? html`<span class="ord-item__note">“${l.note}”</span>` : ''}
-                <span class="ord-item__qty">${l.qty} × ${money(l.price)}</span>
-              </div>
-              <strong class="ord-item__total">${money(l.price * l.qty)}</strong>
-            </li>
-          `,
-        )}
-      </ul>
-      ${order.note ? html`<div class="ord-note">${icon('message')}<div><strong>Seu recado</strong><span>${order.note}</span></div></div>` : ''}
-    </section>
-  `;
+/** "Sábado, 11 de outubro" (data por extenso para o cartão de entrega). */
+function dayLabelLong(order) {
+  const [y, m, d] = order.delivery.date.split('-').map(Number);
+  const text = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(y, m - 1, d));
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function paymentCard(order) {
+/** "Massa: Baunilha" → "Baunilha" (no recibo entram só as escolhas, sem os rótulos). */
+function summaryValue(text) {
+  const str = String(text);
+  const i = str.indexOf(': ');
+  return i > 0 && i <= 40 ? str.slice(i + 2) : str;
+}
+
+/** Itens, valores e forma de pagamento em um cartão só. */
+function receiptCard(order) {
+  const count = order.items.reduce((n, l) => n + l.qty, 0);
   const p = order.payment;
+  const off = isOff(order);
   const isCard = p.method === 'card';
   const n = p.installments || 1;
-  const line = isCard ? `${p.brand || 'Cartão'} •••• ${p.last4 || '····'}` : 'Pix';
-  const off = isOff(order);
-  const sub = off
+  const payTitle = isCard ? `${p.brand || 'Cartão'} final ${p.last4 || '····'}` : 'Pix';
+  const paySub = off
     ? p.paidAt
       ? 'Valor estornado'
       : 'Nenhum valor cobrado'
@@ -407,27 +361,51 @@ function paymentCard(order) {
         ? `Pago em ${dateTime(p.paidAt)}`
         : 'Aguardando pagamento';
   return html`
-    <section class="card ord-box ord-box--pay" aria-labelledby="ord-pay-title">
-      <h2 id="ord-pay-title">Pagamento</h2>
-      <div class="ord-paymethod">
-        <span class="ord-paymethod__icon">${icon(isCard ? 'credit-card' : 'pix')}</span>
+    <section class="card ord-box ord-box--receipt" aria-labelledby="ord-items-t">
+      <h2 id="ord-items-t">Itens <small>${plural(count, 'item', 'itens')}</small></h2>
+      <ul class="ord-items">
+        ${order.items.map(
+          (l) => html`
+            <li class="ord-item">
+              <span class="ord-item__thumb">${lineThumb(l, { w: 112 })}</span>
+              <div class="ord-item__body">
+                <strong>${l.qty > 1 ? `${l.qty}× ` : ''}${l.name}</strong>
+                ${l.sizeLabel ? html`<span>${l.sizeLabel}</span>` : ''}
+                ${l.kind === 'custom' && l.summary?.length ? html`<span class="ord-item__recipe">${l.summary.map(summaryValue).join(' · ')}</span>` : ''}
+                ${l.note ? html`<span>Recado: ${l.note}</span>` : ''}
+              </div>
+              <strong class="ord-item__total">${money(l.price * l.qty)}</strong>
+            </li>
+          `,
+        )}
+      </ul>
+      ${order.note ? html`<div class="ord-note">${icon('message')}<div><strong>Observação</strong><span>${order.note}</span></div></div>` : ''}
+      <div class="ord-totals">${totalsSummary(order.totals, { mode: order.delivery.mode })}</div>
+      <div class="ord-pay">
+        <span class="row__icon">${icon(isCard ? 'credit-card' : 'pix')}</span>
         <div>
-          <strong>${line}</strong>
-          <span>${sub}</span>
+          <strong>${payTitle}</strong>
+          <span>${paySub}</span>
         </div>
         ${off ? '' : p.paidAt ? html`<span class="badge badge--green">${icon('check')}Pago</span>` : html`<span class="badge badge--amber">Pendente</span>`}
       </div>
-      <div class="ord-totals">${totalsSummary(order.totals, { mode: order.delivery.mode })}</div>
     </section>
   `;
 }
 
 function actions(order, st) {
   const canAdvance = SITE.demo && !st.canceled && st.index < st.steps.length - 1;
+  const closed = isClosed(order);
+  const wa = `https://wa.me/${SITE.whatsapp}?text=${encodeURIComponent(`Olá! É sobre o pedido ${order.id}.`)}`;
+  const reorderRow = listRow({ iconName: 'repeat', title: 'Pedir de novo', desc: 'Coloca os mesmos itens no carrinho', attrs: 'data-reorder' });
   return html`
     <div class="ord-actions">
-      ${isClosed(order) ? html`<button class="btn btn--block" type="button" id="ord-reorder" data-reorder>${icon('refresh')} Pedir de novo</button>` : ''}
-      <a class="btn btn--secondary btn--block" href="#/atendimento">${icon('message')} Preciso de ajuda</a>
+      ${closed ? html`<button class="btn btn--lg btn--block" type="button" id="ord-reorder" data-reorder>${icon('repeat')}Pedir de novo</button>` : ''}
+      <div class="card ord-actions__list">
+        ${listRow({ iconName: 'whatsapp', title: 'Falar no WhatsApp', desc: SITE.whatsappLabel, href: wa, attrs: 'target="_blank" rel="noopener"' })}
+        ${listRow({ iconName: 'help', title: 'Preciso de ajuda', desc: 'Dúvidas, troca de horário ou de endereço', href: '#/atendimento' })}
+        ${closed ? '' : reorderRow}
+      </div>
       ${orders.canCancel(order) ? html`<button class="ord-cancel" type="button" id="ord-cancel" data-cancel>Cancelar pedido</button>` : ''}
     </div>
     ${canAdvance
@@ -448,7 +426,7 @@ function notFound(id) {
   return html`
     <div class="container ord">
       <div class="empty">
-        <div class="empty__art">${icon('package')}</div>
+        <div class="empty__art">${icon('receipt')}</div>
         <h1 class="ord-notfound">Não encontramos o pedido ${id}</h1>
         <p>Confira o número ou veja todos os pedidos feitos com esta conta.</p>
         <div class="cart-empty__cta">
@@ -471,14 +449,15 @@ export default {
     if (!order) return notFound(ctx.params.id);
     const st = orders.statusOf(order);
     const isNew = ctx.query.novo === '1' && !isClosed(order); // a comemoração vale enquanto o pedido está em andamento
+    const pending = isPixPending(order);
     return html`
-      <div class="container ord ${isNew ? 'ord--new' : ''}">
-        ${hero(order, isNew)} ${isPixPending(order) ? pixPanel(order) : ''}
+      <div class="container ord">
+        <div class="ord-head">${pageHead(`Pedido ${order.id}`, { back: '/pedidos', sub: `Feito em ${dateTime(order.createdAt)}` })}</div>
+        ${isNew && !pending && st.index <= 1 ? confirmBanner(order) : ''} ${pending ? pixPanel(order, isNew) : ''}
         <div class="ord-layout">
-          <div class="ord-main">${timeline(order, st)} ${itemsCard(order)} ${paymentCard(order)}</div>
+          <div class="ord-main">${trackCard(order, st)} ${receiptCard(order)}</div>
           <div class="ord-side">${deliveryCard(order)} ${actions(order, st)}</div>
         </div>
-        <p class="ord-foot"><a class="link-arrow" href="#/pedidos">Ver todos os meus pedidos ${icon('arrow-right')}</a></p>
       </div>
     `;
   },
@@ -574,7 +553,7 @@ export default {
       const yes = await confirmDialog({
         title: 'Cancelar este pedido?',
         message: paid
-          ? 'Seu bolo ainda não entrou em produção, então o cancelamento é gratuito e o valor pago volta integralmente.'
+          ? 'Seu pedido ainda não entrou em produção, então o cancelamento é gratuito e o valor pago volta integralmente.'
           : 'Seu pedido ainda não foi pago, então é só confirmar: nada será cobrado.',
         confirmLabel: 'Sim, cancelar',
         cancelLabel: 'Manter pedido',

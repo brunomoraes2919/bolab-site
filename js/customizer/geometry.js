@@ -3,7 +3,7 @@
 // Unidades: 1 = 10 cm. O bolo apoia em y = 0 e cresce para cima.
 import * as THREE from 'three';
 import { rng } from './textures.js';
-import { getSize } from '../data/customizer.js';
+import { getSize, getHeight, tierRadii } from '../data/customizer.js';
 
 const TAU = Math.PI * 2;
 const smoothstep = (a, b, x) => {
@@ -120,11 +120,36 @@ function heartPath(k) {
   return b.finish();
 }
 
+/** Hexágono de quinas arredondadas, com um lado plano de frente (as quinas ficam à direita e à esquerda). */
+function hexPath(R) {
+  const rc = 0.12;
+  const apothem = (R - 0.045) * 0.98;
+  const H = Math.PI / 3;
+  const cr = (apothem - rc) / Math.cos(H / 2);
+  const b = new PathBuilder();
+  for (let k = 0; k < 6; k++) {
+    const ang = k * H;
+    const cx = cr * Math.cos(ang);
+    const cz = cr * Math.sin(ang);
+    if (k > 0) {
+      const nx = Math.cos(ang - H / 2);
+      const nz = Math.sin(ang - H / 2);
+      b.lineTo(cx + rc * nx, cz + rc * nz, nx, nz);
+    }
+    b.arc(cx, cz, rc, ang - H / 2, ang + H / 2);
+  }
+  const nx = Math.cos(-H / 2);
+  const nz = Math.sin(-H / 2);
+  b.lineTo(cr + rc * nx, rc * nz, nx, nz);
+  return b.finish();
+}
+
 /** Contorno da massa para um formato e raio nominal R (já descontada a espessura da cobertura). */
 export function shapePath(shape, R, detail = 1) {
   if (shape === 'square') return roundedRectPath(R * 0.9 - 0.045, R * 0.9 - 0.045, 0.17);
   if (shape === 'rect') return roundedRectPath(R * 1.14 - 0.045, R * 0.76 - 0.045, 0.17);
   if (shape === 'heart') return heartPath(R);
+  if (shape === 'hex') return hexPath(R);
   return circlePath(R - 0.045, detail < 1 ? 80 : 112);
 }
 
@@ -295,17 +320,17 @@ const FROST = {
 };
 
 /**
- * Todas as medidas de que os construtores precisam.
- * layerY[i] = base da camada i · fillY[i] = base do recheio acima da camada i.
+ * Medidas de UM andar. layerY[i] = base da camada i · fillY[i] = base do recheio acima da camada i,
+ * sempre a partir do pé do andar (y0 diz a que altura do bolo esse pé fica).
  */
-export function cakeMetrics(config, detail = 1) {
-  const R = getSize(config.size)?.radius || 1;
-  const type = config.covering.type;
-  const naked = type === 'naked';
+function tierMetrics(config, R, cover, y0, detail) {
+  const type = cover.type;
+  const semi = cover.style === 'seminaked' && type !== 'naked';
+  const naked = type === 'naked' || semi;
   const n = config.layers.length;
-  const layerH = n === 1 ? 0.5 : n === 2 ? 0.38 : n === 3 ? 0.31 : 0.275;
+  const layerH = (n === 1 ? 0.5 : n === 2 ? 0.38 : n === 3 ? 0.31 : 0.275) * (getHeight(config.height)?.k || 1);
   const fillH = 0.066;
-  const { t, rf, lip = 0, skirt = 0 } = FROST[type] || FROST.buttercream;
+  const { t, rf, lip = 0, skirt = 0 } = naked ? FROST.naked : FROST[type] || FROST.buttercream;
   const layerY = [];
   const fillY = [];
   let y = 0;
@@ -329,13 +354,39 @@ export function cakeMetrics(config, detail = 1) {
   // menor distância do centro até a borda plana do topo: dá a escala das decorações
   let rMin = Infinity;
   for (let i = 0; i < topFlat.n; i++) rMin = Math.min(rMin, Math.hypot(topFlat.x[i] - center.x, topFlat.z[i] - center.z));
-  return { R, type, naked, n, layerH, fillH, t, rf, lip, skirt, detail, tTop, layerY, fillY, H, Ht: H + tTop, sponge, frost, topFlat, center, bounds, rMin, shape: config.shape };
+  // espatulado e riscado não deixam a coroinha lisa na borda
+  const crown = cover.style === 'rustico' || cover.style === 'pente' ? 0 : lip;
+  return { R, type, naked, semi, style: cover.style || 'liso', cover, n, layerH, fillH, t, rf, lip: crown, skirt, detail, tTop, layerY, fillY, H, Ht: H + tTop, y0, sponge, frost, topFlat, center, bounds, rMin, shape: config.shape };
+}
+
+/**
+ * Medidas do bolo inteiro. Devolve o andar de CIMA (onde ficam bicos do topo e decorações), com:
+ *  stack = todos os andares, de baixo para cima · base = o andar de baixo (boleira, enquadramento) ·
+ *  Htot = altura total do bolo. Num bolo de 1 andar, é o próprio andar (y0 = 0, Htot = Ht).
+ */
+export function cakeMetrics(config, detail = 1) {
+  const radii = tierRadii(getSize(config.size)?.radius || 1, config.tiers || 1);
+  let y = 0;
+  const stack = radii.map((R, i) => {
+    const tier = tierMetrics(config, R, (config.tierCover && config.tierCover[i]) || config.covering, y, detail);
+    tier.index = i;
+    y += tier.Ht;
+    return tier;
+  });
+  const top = stack[stack.length - 1];
+  stack.forEach((tier) => {
+    tier.stack = stack;
+    tier.base = stack[0];
+    tier.Htot = y;
+    tier.isTop = tier === top;
+  });
+  return top;
 }
 
 /* ───────── Superfície varrida ─────────
    profile: [{ d, y, nd, ny }] de baixo para cima (d = deslocamento para fora do contorno).
    Fecha com tampa plana no último ponto quando capTop = true. */
-export function sweep(path, profile, { capTop = false, capBottom = false, uRepeat = 1, vScale = 1, capScale = 0.5, center = { x: 0, z: 0 }, flip = false } = {}) {
+export function sweep(path, profile, { capTop = false, capBottom = false, uRepeat = 1, vScale = 1, capScale = 0.5, center = { x: 0, z: 0 }, flip = false, wrap = false } = {}) {
   const n = path.n;
   const m = profile.length;
   const cols = n + 1;
@@ -344,6 +395,13 @@ export function sweep(path, profile, { capTop = false, capBottom = false, uRepea
   const pos = new Float32Array(count * 3);
   const nor = new Float32Array(count * 3);
   const uv = new Float32Array(count * 2);
+  const uv1 = new Float32Array(count * 2);
+  let yLo = Infinity;
+  let yHi = -Infinity;
+  profile.forEach((q) => {
+    yLo = Math.min(yLo, q.y);
+    yHi = Math.max(yHi, q.y);
+  });
   const vAt = [0];
   for (let j = 1; j < m; j++) vAt.push(vAt[j - 1] + Math.hypot(profile[j].d - profile[j - 1].d, profile[j].y - profile[j - 1].y));
   let k = 0;
@@ -361,6 +419,8 @@ export function sweep(path, profile, { capTop = false, capBottom = false, uRepea
       nor[k * 3 + 2] = (path.nz[ii] * p.nd) / l;
       uv[k * 2] = u;
       uv[k * 2 + 1] = vAt[j] * vScale;
+      uv1[k * 2] = path.s[i] / path.length;
+      uv1[k * 2 + 1] = (p.y - yLo) / (yHi - yLo || 1);
       k++;
     }
   }
@@ -386,11 +446,13 @@ export function sweep(path, profile, { capTop = false, capBottom = false, uRepea
       pos.set([x, p.y, z], k * 3);
       nor.set([0, up ? 1 : -1, 0], k * 3);
       uv.set([(x - center.x) * capScale + 0.5, (z - center.z) * capScale + 0.5], k * 2);
+      uv1.set([(x - center.x) * capScale + 0.5, (z - center.z) * capScale + 0.5], k * 2);
       k++;
     }
     pos.set([center.x, p.y, center.z], k * 3);
     nor.set([0, up ? 1 : -1, 0], k * 3);
     uv.set([0.5, 0.5], k * 2);
+    uv1.set([0.5, 0.5], k * 2);
     const c = k++;
     for (let i = 0; i < n; i++) {
       if (up) index.push(c, start + i + 1, start + i);
@@ -404,6 +466,9 @@ export function sweep(path, profile, { capTop = false, capBottom = false, uRepea
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  // segundo conjunto de UV (0…1 em volta × 0…1 de altura): só a cobertura usa, para os estilos de duas cores.
+  // As outras peças ficam sem ele — assim os shaders delas são os mesmos de sempre (já adiantados no aquecimento).
+  if (wrap) geo.setAttribute('uv1', new THREE.BufferAttribute(uv1, 2));
   geo.setIndex(index);
   // grupo 0 = lateral (e tampa de baixo), grupo 1 = tampa de cima: permite materiais diferentes
   geo.addGroup(0, sideCount, 0);
@@ -443,7 +508,7 @@ export function buildFrosting(m) {
     ].forEach(([inset, k]) => profile.push({ d: edge - inset, y: m.Ht + m.lip * k, nd: 0.12, ny: 1 }));
   }
   const uRepeat = Math.max(2, Math.round(m.frost.length / 1.6));
-  return sweep(m.sponge, profile, { capTop: true, uRepeat, vScale: 1 / 1.6, capScale: 1 / (2.9 * m.R), center: m.center });
+  return sweep(m.sponge, profile, { capTop: true, uRepeat, vScale: 1 / 1.6, capScale: 1 / (2.9 * m.R), center: m.center, wrap: true });
 }
 
 /** Uma camada de massa (bolo naked): bordas levemente arredondadas. */
@@ -475,7 +540,8 @@ export function buildFillingBand(m, i) {
     const a = -Math.PI / 2 + (k / 8) * Math.PI;
     profile.push({ d: -0.016 + bulge * Math.cos(a), y: mid + half * Math.sin(a), nd: Math.cos(a) * half, ny: Math.sin(a) * bulge });
   }
-  return sweep(m.sponge, profile, { uRepeat: 1 });
+  // no semi-naked a faixa é feita do próprio creme da cobertura (mesmo material, mesmo conjunto de UV)
+  return sweep(m.sponge, profile, { uRepeat: 1, wrap: Boolean(m.semi) });
 }
 
 /** Creme do topo do bolo naked: disco macio com borda arredondada. */
@@ -490,7 +556,7 @@ export function buildTopCream(m) {
     profile.push({ d: out - rr + rr * Math.cos(a), y: y0 + rr + rr * Math.sin(a), nd: Math.cos(a), ny: Math.sin(a) });
   }
   filletUp(profile, out, y1, rr, 6);
-  return sweep(m.sponge, profile, { capTop: true, uRepeat: Math.max(2, Math.round(m.sponge.length / 1.6)), vScale: 1 / 1.6, capScale: 1 / (2.9 * m.R), center: m.center });
+  return sweep(m.sponge, profile, { capTop: true, uRepeat: Math.max(2, Math.round(m.sponge.length / 1.6)), vScale: 1 / 1.6, capScale: 1 / (2.9 * m.R), center: m.center, wrap: true });
 }
 
 /** Véu fino de creme raspado sobre a lateral do bolo naked. */
@@ -508,6 +574,7 @@ export function buildScrapeCoat(m, i) {
 /* ───────── Calda escorrendo ─────────
    Um lençol de espessura variável sobre o topo e a lateral: onde há calda ele fica para fora;
    onde não há, mergulha para dentro da cobertura e some. As gotas se fundem à borda como líquido. */
+const HIDDEN = -0.006; // calda mais de 0,6 mm para dentro da cobertura: não se vê
 export function buildDrip(m, seed = 1) {
   const d0 = m.naked ? 0.014 : m.t;
   const rf = m.rf;
@@ -543,6 +610,7 @@ export function buildDrip(m, seed = 1) {
   const rows = 1 + F + rowsSide;
   const vertCount = (cols + 1) * rows + 1;
   const pos = new Float32Array(vertCount * 3);
+  const depth = new Float32Array(vertCount); // quanto cada ponto da lateral fica para fora (+) ou para dentro (−) da cobertura
   const K = 0.03;
   const smin = (a, b) => {
     const h = Math.max(K - Math.abs(a - b), 0) / K;
@@ -595,16 +663,22 @@ export function buildDrip(m, seed = 1) {
       const v = j * dv;
       const th = thickness(sx, v, near);
       pos.set([px + nx * th, Math.max(0.004, sideH - v), pz + nz * th], k * 3);
+      depth[k] = th;
       k++;
     }
   }
   const centerIndex = k;
   pos.set([m.center.x, yTop + t0, m.center.z], k * 3);
   const index = [];
+  // no naked a calda fica sobre o creme raspado (meio transparente): só some o que entra na massa
+  const hidden = m.naked ? -(d0 + 0.002) : HIDDEN;
   for (let i = 0; i < cols; i++) {
     for (let j = 0; j < rows - 1; j++) {
       const a = i * rows + j;
       const b = (i + 1) * rows + j;
+      // onde não há calda o lençol mergulha na cobertura: esses quadrados nunca aparecem e ficam de fora
+      // (entre as gotas é a maior parte da malha; quem tem um canto à vista continua inteiro)
+      if (j > F && depth[a] < hidden && depth[b] < hidden && depth[a + 1] < hidden && depth[b + 1] < hidden) continue;
       index.push(a, b, a + 1, b, b + 1, a + 1);
     }
     index.push(centerIndex, (i + 1) * rows, i * rows);
@@ -870,15 +944,48 @@ export function buildCutFaces(m, { thetaA, thetaB, drip = false, seed = 1 }) {
 
 /* ───────── Boleira ───────── */
 
+/** Placa (tábua, cake board, mármore): contorno + espessura, com as quinas levemente chanfradas. */
+function slab(path, yTop, thick, bevel = 0.012) {
+  const profile = [
+    { d: -bevel, y: yTop - thick, nd: 0.4, ny: -0.9 },
+    { d: 0, y: yTop - thick + bevel, nd: 1, ny: -0.2 },
+    { d: 0, y: yTop - bevel, nd: 1, ny: 0.2 },
+    { d: -bevel, y: yTop, nd: 0.4, ny: 0.9 },
+  ];
+  return sweep(path, profile, { capTop: true, capBottom: true, capScale: 0.21 });
+}
+
 /**
- * Prato de porcelana com filete dourado, pé torneado e a base dourada do bolo.
- * → { plate, rim, foot, board, floorY, plateRadius }
+ * A base do bolo. m = o andar de baixo.
+ *  boleira  prato de porcelana com filete dourado sobre um pé torneado
+ *  prato    o mesmo prato, baixo, sem pé
+ *  madeira  tábua rústica · dourada / prateada  cake board espelhado que acompanha o formato · marmore  placa
+ * → { parts: [{ geo, mat, cast }], floorY, plateRadius, standHeight, shade: { x, z } }
+ * mat: 'porcelain' | 'gold' | 'wood' | 'goldfoil' | 'silver' | 'marble'
  */
-export function buildStand(m) {
+export function buildStand(m, base = 'boleira') {
   const b = m.bounds;
-  const round = m.shape === 'round' || m.shape === 'heart';
+  const round = m.shape === 'round' || m.shape === 'heart' || m.shape === 'hex';
+  const low = m.detail < 1;
+  const outline = (margin) => (round ? circlePath(b.maxR + margin, low ? 80 : 128) : roundedRectPath(b.hx + margin, b.hz + margin, Math.min(b.hx, b.hz) * 0.42 + margin * 0.5));
+  const reach = (margin) => (round ? b.maxR + margin : Math.hypot(b.hx + margin, b.hz + margin) * 0.92);
+  const shade = (margin) => (round ? { x: b.maxR + margin, z: b.maxR + margin } : { x: b.hx + margin, z: b.hz + margin });
+
+  if (base === 'madeira' || base === 'marmore') {
+    const margin = base === 'madeira' ? 0.26 : 0.24;
+    const thick = base === 'madeira' ? 0.075 : 0.05;
+    const geo = slab(outline(margin), -0.002, thick, base === 'madeira' ? 0.014 : 0.006);
+    return { parts: [{ geo, mat: base === 'madeira' ? 'wood' : 'marble' }], floorY: -0.002 - thick, plateRadius: reach(margin), standHeight: thick, shade: shade(margin - 0.03) };
+  }
+  if (base === 'dourada' || base === 'prateada') {
+    const margin = 0.14;
+    const thick = 0.11;
+    const geo = slab(cleanOffset(m.frost, margin), -0.002, thick, 0.01);
+    return { parts: [{ geo, mat: base === 'dourada' ? 'goldfoil' : 'silver' }], floorY: -0.002 - thick, plateRadius: b.maxR + margin, standHeight: thick, shade: { x: (round ? b.maxR : b.hx) + margin - 0.02, z: (round ? b.maxR : b.hz) + margin - 0.02 } };
+  }
+
   const margin = 0.2 + m.R * 0.07;
-  const platePath = round ? circlePath(b.maxR + margin, m.detail < 1 ? 80 : 128) : roundedRectPath(b.hx + margin, b.hz + margin, Math.min(b.hx, b.hz) * 0.42 + margin * 0.5);
+  const platePath = outline(margin);
   const top = -0.014;
   const plateProfile = [
     { d: -0.16, y: top - 0.058, nd: 0.05, ny: -1 },
@@ -893,12 +1000,31 @@ export function buildStand(m) {
     { d: -0.09, y: top, nd: 0, ny: 1 },
   ];
   const plate = sweep(platePath, plateProfile, { capTop: true, capBottom: true });
-  const rimProfile = plateProfile.slice(3, 8).map((p) => ({ ...p, d: p.d + p.nd * 0.0014, y: p.y + p.ny * 0.0014 }));
+  const rimProfile = plateProfile.slice(3, 8).map((q) => ({ ...q, d: q.d + q.nd * 0.0014, y: q.y + q.ny * 0.0014 }));
   const rim = sweep(platePath, rimProfile);
-
+  const boardProfile = [
+    { d: m.t + 0.024, y: -0.014, nd: 1, ny: 0 },
+    { d: m.t + 0.024, y: -0.004, nd: 1, ny: 0.2 },
+    { d: m.t + 0.02, y: 0, nd: 0.3, ny: 1 },
+    { d: m.t - 0.02, y: 0, nd: 0, ny: 1 },
+  ];
+  const board = sweep(m.sponge, boardProfile);
   const rho = Math.min(b.hx, b.hz) + margin;
-  const hs = 0.3 + m.R * 0.1;
   const yTop = top - 0.056;
+  const parts = [{ geo: plate, mat: 'porcelain' }, { geo: rim, mat: 'gold', cast: false }, { geo: board, mat: 'gold', cast: false }];
+
+  if (base === 'prato') {
+    // prato baixo: só um anel de apoio por baixo
+    const hs = 0.026;
+    const ring = new THREE.LatheGeometry(
+      [new THREE.Vector2(0, yTop - hs), new THREE.Vector2(rho * 0.5, yTop - hs), new THREE.Vector2(rho * 0.54, yTop - hs * 0.5), new THREE.Vector2(rho * 0.52, yTop + 0.004)].reverse(),
+      low ? 44 : 72,
+    );
+    parts.push({ geo: ring, mat: 'porcelain' });
+    return { parts, floorY: yTop - hs, plateRadius: reach(margin), standHeight: hs + 0.07, shade: shade(margin - 0.035) };
+  }
+
+  const hs = 0.3 + m.R * 0.1;
   const curve = new THREE.SplineCurve([
     new THREE.Vector2(rho * 0.5, yTop + 0.004),
     new THREE.Vector2(rho * 0.3, yTop - hs * 0.1),
@@ -910,16 +1036,8 @@ export function buildStand(m) {
     new THREE.Vector2(rho * 0.512, yTop - hs * 0.99),
     new THREE.Vector2(rho * 0.5, yTop - hs),
   ]);
-  const pts = curve.getPoints(m.detail < 1 ? 26 : 44);
+  const pts = curve.getPoints(low ? 26 : 44);
   pts.push(new THREE.Vector2(0, yTop - hs));
-  const foot = new THREE.LatheGeometry(pts.reverse(), m.detail < 1 ? 44 : 72);
-
-  const boardProfile = [
-    { d: m.t + 0.024, y: -0.014, nd: 1, ny: 0 },
-    { d: m.t + 0.024, y: -0.004, nd: 1, ny: 0.2 },
-    { d: m.t + 0.02, y: 0, nd: 0.3, ny: 1 },
-    { d: m.t - 0.02, y: 0, nd: 0, ny: 1 },
-  ];
-  const board = sweep(m.sponge, boardProfile);
-  return { plate, rim, foot, board, floorY: yTop - hs, plateRadius: round ? b.maxR + margin : Math.hypot(b.hx + margin, b.hz + margin) * 0.92, standHeight: hs + 0.07 };
+  parts.push({ geo: new THREE.LatheGeometry(pts.reverse(), low ? 44 : 72), mat: 'porcelain' });
+  return { parts, floorY: yTop - hs, plateRadius: reach(margin), standHeight: hs + 0.07, shade: shade(margin - 0.035) };
 }

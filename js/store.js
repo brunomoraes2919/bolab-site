@@ -506,8 +506,9 @@ export const favs = {
   list() {
     return scope().favorites.map(getProduct).filter(Boolean);
   },
+  /** Conta só o que aparece na tela de favoritos (produto fora do cardápio não entra). */
   count() {
-    return scope().favorites.length + scope().savedCakes.length;
+    return favs.list().length + scope().savedCakes.length;
   },
 };
 

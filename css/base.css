@@ -18,8 +18,11 @@ body {
   color: var(--text);
   font-family: var(--font-body);
   font-size: var(--fs-md);
-  line-height: 1.55;
+  font-weight: 500;
+  line-height: 1.5;
+  word-spacing: 0.04em; /* os espaços desta fonte são estreitos; um respiro a mais ajuda a leitura */
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   -webkit-tap-highlight-color: transparent;
   overflow-x: hidden;
   overflow-wrap: break-word; /* palavra gigante (nome sem espaços) quebra em vez de alargar a página */
@@ -31,9 +34,9 @@ h3,
 h4 {
   margin: 0;
   font-family: var(--font-display);
-  font-weight: 700;
-  line-height: 1.15;
-  letter-spacing: -0.01em;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
   color: var(--text);
   text-wrap: balance;
 }
@@ -41,6 +44,20 @@ h4 {
 p {
   margin: 0;
   text-wrap: pretty;
+}
+
+/* Sem itálico em lugar nenhum: a loja usa uma família só, sempre reta. */
+em,
+i,
+cite,
+address,
+blockquote {
+  font-style: normal;
+}
+
+strong,
+b {
+  font-weight: 700;
 }
 
 a {
@@ -68,6 +85,7 @@ select,
 textarea {
   font: inherit;
   color: inherit;
+  letter-spacing: inherit;
 }
 
 button {
@@ -85,7 +103,7 @@ ol {
 }
 
 :focus-visible {
-  outline: 2.5px solid var(--focus);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
   border-radius: 6px;
 }
@@ -119,60 +137,105 @@ ol {
   max-width: calc(760px + var(--gutter) * 2);
 }
 
+/* Seções: compactas. Uma loja de delivery mostra muita coisa por tela. */
 .section {
-  padding-block: var(--s-12);
+  padding-block: var(--s-5);
 }
 
 @media (min-width: 900px) {
   .section {
-    padding-block: var(--s-20);
+    padding-block: var(--s-8);
   }
 }
 
+/* Rótulo pequeno acima de um título. EM DESUSO: títulos agora são curtos e bastam sozinhos.
+   Continua existindo (discreto) só para as telas que ainda não foram atualizadas. */
 .eyebrow {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: var(--fs-xs);
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--brand-strong);
+  font-weight: 600;
+  color: var(--text-2);
 }
 
 .eyebrow svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 .section-title {
-  font-size: var(--fs-3xl);
+  font-size: var(--fs-title);
+  font-weight: 800;
+  letter-spacing: -0.015em;
 }
 
+/* Frase de destaque dentro de título (antigo itálico rosa): agora é texto comum. */
 .section-title em,
-.display em {
-  font-style: italic;
-  color: var(--brand-strong);
+.display em,
+h1 em,
+h2 em,
+h3 em {
+  font-style: normal;
+  color: inherit;
 }
 
-.section-lead {
-  margin-top: var(--s-3);
-  max-width: 56ch;
+.section-lead,
+.section-sub {
+  margin-top: 2px;
+  max-width: 60ch;
   color: var(--text-2);
-  font-size: var(--fs-lg);
+  font-size: var(--fs-sm);
 }
 
 .section-head {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: var(--s-4);
-  margin-bottom: var(--s-6);
+  gap: var(--s-3);
+  margin-bottom: var(--s-3);
+}
+
+.section-head > :first-child {
+  min-width: 0;
 }
 
 @media (min-width: 900px) {
   .section-head {
-    margin-bottom: var(--s-10);
+    margin-bottom: var(--s-4);
+  }
+}
+
+/* "Ver todos" à direita do título de seção (use sectionHead() de js/components.js). */
+.section-link {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--action);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* área de toque de 44 px sem mudar o desenho */
+.section-link::before {
+  content: "";
+  position: absolute;
+  inset: -12px -8px;
+}
+
+.section-link svg {
+  width: 16px;
+  height: 16px;
+}
+
+@media (hover: hover) {
+  .section-link:hover {
+    color: var(--action-hover);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
 }
 
@@ -205,11 +268,11 @@ ol {
   }
 }
 
-/* Revelar ao rolar (ativado por js/ui.js -> observeReveal) */
+/* Revelar ao rolar (ativado por js/ui.js -> observeReveal). Discreto: sobe 8 px. */
 .reveal {
   opacity: 0;
-  transform: translateY(18px);
-  transition: opacity var(--t-slow) var(--ease), transform var(--t-slow) var(--ease);
+  transform: translateY(8px);
+  transition: opacity var(--t-med) var(--ease), transform var(--t-med) var(--ease);
   transition-delay: var(--reveal-delay, 0ms);
 }
 

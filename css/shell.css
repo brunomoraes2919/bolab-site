@@ -1,4 +1,5 @@
-/* BOLAB — moldura: faixa de aviso, cabeçalho, rodapé, barra inferior e layouts. */
+/* BOLAB — moldura: cabeçalho, faixa de seções (computador), barra "Ver carrinho",
+   barra inferior, rodapé e layouts. */
 
 .skip-link {
   position: absolute;
@@ -9,7 +10,7 @@
   border-radius: var(--r-md);
   background: var(--cocoa-900);
   color: #fff;
-  font-weight: 800;
+  font-weight: 700;
   transition: top var(--t-fast);
 }
 
@@ -64,104 +65,120 @@
   animation: none;
 }
 
-/* ───────── Faixa de aviso ───────── */
-.announce {
-  background: var(--cocoa-900);
-  color: #FBE9EE;
-  font-size: var(--fs-xs);
-  font-weight: 700;
-}
-
-.announce__inner {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  min-height: 36px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.announce__inner > * {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.announce svg {
-  width: 15px;
-  height: 15px;
-  color: var(--rose-300);
-}
-
-.announce button {
-  min-height: 36px;
-  padding-inline: 6px;
-  color: inherit;
-  font-weight: 700;
-}
-
-.announce button strong {
-  padding: 1px 8px;
-  border-radius: var(--r-pill);
-  border: 1px dashed var(--rose-300);
-  color: #fff;
-  letter-spacing: 0.06em;
-}
-
-@media (max-width: 640px) {
-  .announce__inner > span:first-child,
-  .announce__sep {
-    display: none;
-  }
-}
-
-/* ───────── Cabeçalho ───────── */
+/* ───────── Cabeçalho ─────────
+   Celular: marca · contexto de entrega ("Entregar em …") · busca · carrinho.
+   Computador: logo · contexto de entrega · busca larga · conta · favoritos · carrinho com o valor. */
 .header {
   position: sticky;
   top: 0;
   z-index: var(--z-header);
-  background: rgba(253, 245, 247, 0.88);
-  backdrop-filter: saturate(160%) blur(14px);
-  border-bottom: 1px solid transparent;
-  transition: border-color var(--t-med), box-shadow var(--t-med), background var(--t-med);
+  background: var(--surface);
+  box-shadow: 0 1px 0 transparent;
+  transition: box-shadow var(--t-med);
 }
 
 .header.is-scrolled {
-  background: rgba(255, 255, 255, 0.92);
-  border-bottom-color: var(--line-soft);
-  box-shadow: 0 6px 24px rgba(122, 44, 64, 0.06);
-}
-
-/* Celular, tablet e janelas estreitas: o vidro fosco (backdrop-filter) obriga o aparelho a
-   desfocar de novo tudo o que passa por baixo a cada quadro da rolagem. Nessas telas as
-   faixas fixas ficam com cor cheia, que dá o mesmo aspecto sem esse custo. */
-@media (hover: none), (pointer: coarse), (max-width: 899px) {
-  .header {
-    background: var(--rose-50);
-    backdrop-filter: none;
-  }
-
-  .header.is-scrolled {
-    background: var(--white);
-  }
+  box-shadow: 0 1px 0 var(--line), 0 4px 16px rgba(17, 17, 20, 0.05);
 }
 
 .header__inner {
   display: flex;
   align-items: center;
-  gap: var(--s-4);
+  gap: 10px;
   height: var(--header-h);
 }
 
 .header__logo {
   flex: none;
-  display: block;
+  display: grid;
+  place-items: center start;
+  min-width: 44px; /* área de toque; a margem negativa devolve o espaço ao contexto de entrega */
+  min-height: 44px;
+  margin-right: -10px;
 }
 
 .header__logo img {
-  height: 38px;
+  height: 34px;
   width: auto;
+}
+
+.header__logo--full {
+  margin-right: 0;
+}
+
+.header__logo--full img {
+  height: 36px;
+}
+
+/* Contexto de entrega: rótulo pequeno em cima, lugar em negrito embaixo, seta. */
+.header__where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 2px 6px;
+  margin-left: -2px;
+  border-radius: var(--r-md);
+  text-align: left;
+  transition: background var(--t-fast);
+}
+
+.header__where:active {
+  background: var(--fill);
+}
+
+.header__where-icon {
+  display: none;
+}
+
+.header__where-text {
+  display: grid;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.header__where-label {
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+}
+
+.header__where-place {
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header__where-chev {
+  flex: none;
+  align-self: flex-end;
+  width: 16px;
+  height: 16px;
+  margin-bottom: 3px;
+  color: var(--action);
+  stroke-width: 2.6;
+}
+
+/* Celulares de 360 px: "Cuiabá e Várzea Grande" (o texto de quem ainda não tem endereço)
+   precisa caber inteiro ao lado da lupa e do carrinho. */
+@media (max-width: 379px) {
+  .header__inner {
+    gap: 6px;
+  }
+
+  .header__where {
+    gap: 4px;
+    padding-inline: 4px;
+  }
+
+  .header__where-place {
+    font-size: var(--fs-meta);
+  }
 }
 
 .header__nav,
@@ -172,8 +189,54 @@
 .header__actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
   margin-left: auto;
+  margin-right: -8px;
+}
+
+/* No início o campo de busca já está logo abaixo do cabeçalho: a lupa só aparece depois que
+   a pessoa rola e o campo sai da tela (o lugar dela fica reservado, nada se mexe). */
+.header__search-link.is-home {
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity var(--t-med), visibility 0s linear var(--t-med);
+}
+
+.header.is-deep .header__search-link.is-home {
+  visibility: visible;
+  opacity: 1;
+  transition: opacity var(--t-med), visibility 0s;
+}
+
+/* Carrinho: ícone com contador no celular; no computador ganha o valor ao lado. */
+.header__cart {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: var(--text);
+  transition: background var(--t-fast), transform var(--t-fast);
+}
+
+.header__cart:active {
+  transform: scale(0.94);
+}
+
+.header__cart-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.header__cart-icon svg {
+  width: 23px;
+  height: 23px;
+}
+
+.header__cart-total {
+  display: none;
 }
 
 .count-badge {
@@ -182,16 +245,22 @@
   right: 0;
   display: grid;
   place-items: center;
-  min-width: 19px;
-  height: 19px;
+  min-width: 18px;
+  height: 18px;
   padding: 0 5px;
   border-radius: var(--r-pill);
-  background: var(--rose-600);
+  background: var(--action);
   color: #fff;
-  font-size: 11px;
-  font-weight: 900;
-  box-shadow: 0 0 0 2px var(--rose-50);
+  font-size: 10.5px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--surface);
   animation: pop 320ms var(--ease);
+}
+
+.header__cart-icon .count-badge {
+  top: -6px;
+  right: -8px;
 }
 
 .header__secure {
@@ -200,13 +269,13 @@
   gap: 6px;
   margin-left: auto;
   color: var(--green);
-  font-size: var(--fs-sm);
-  font-weight: 800;
+  font-size: var(--fs-meta);
+  font-weight: 700;
 }
 
 .header__secure svg {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
 }
 
 .header__back {
@@ -219,115 +288,89 @@
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--rose-400), var(--rose-600));
-  color: #fff;
-  font-weight: 900;
+  background: var(--rose-100);
+  color: var(--rose-700);
+  font-weight: 800;
   font-size: var(--fs-lg);
-  letter-spacing: 0.02em;
   flex: none;
 }
 
 .avatar--sm {
-  width: 30px;
-  height: 30px;
-  font-size: 12px;
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
 }
 
 .avatar--lg {
-  width: 76px;
-  height: 76px;
+  width: 72px;
+  height: 72px;
   font-size: var(--fs-xl);
 }
 
 @media (min-width: 900px) {
+  .header {
+    box-shadow: 0 1px 0 var(--line);
+  }
+
+  .header__inner {
+    gap: var(--s-4);
+  }
+
+  .header__logo {
+    margin-right: 0;
+  }
+
   .header__logo img {
-    height: 48px;
+    height: 44px;
   }
 
-  .header__nav {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin-left: var(--s-4);
+  .header__where {
+    flex: none;
+    gap: 10px;
+    max-width: 260px;
+    min-height: 48px;
+    padding: 4px 12px 4px 6px;
+    margin-left: var(--s-2);
+    box-shadow: inset 0 0 0 1px var(--border);
   }
 
-  .header__nav a {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 9px 14px;
-    border-radius: var(--r-pill);
+  .header__where-icon {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: var(--rose-50);
+    color: var(--action);
+  }
+
+  .header__where-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .header__where-chev {
+    align-self: center;
+    margin-bottom: 0;
     color: var(--text-2);
-    font-weight: 800;
-    font-size: var(--fs-sm);
-    white-space: nowrap;
-    transition: background var(--t-fast), color var(--t-fast);
-  }
-
-  .header__nav a:hover {
-    background: var(--rose-100);
-    color: var(--rose-700);
-  }
-
-  .header__nav a.is-active {
-    color: var(--text);
-    background: var(--white);
-    box-shadow: var(--shadow-1);
-  }
-
-  .header__nav a.is-highlight {
-    color: var(--rose-700);
-  }
-
-  .header__nav svg {
-    width: 16px;
-    height: 16px;
   }
 
   .header__search {
-    position: relative;
     display: block;
     flex: 1;
-    max-width: 320px;
-    margin-left: auto;
-  }
-
-  .header__search svg {
-    position: absolute;
-    left: 14px;
-    top: 50%;
-    width: 18px;
-    height: 18px;
-    transform: translateY(-50%);
-    color: var(--text-3);
-    pointer-events: none;
+    min-width: 0;
+    max-width: 560px;
   }
 
   .header__search input {
-    width: 100%;
-    height: 44px;
-    padding: 0 16px 0 42px;
-    border: 0;
-    border-radius: var(--r-pill);
-    background: var(--white);
-    box-shadow: inset 0 0 0 1.5px var(--line);
-    font-weight: 600;
+    height: 48px;
     font-size: var(--fs-sm);
   }
 
-  .header__search input:focus {
-    outline: 0;
-    box-shadow: inset 0 0 0 2px var(--rose-600), 0 0 0 4px var(--rose-100);
-  }
-
   .header__actions {
-    margin-left: 0;
-    gap: 6px;
-  }
-
-  /* No cardápio a busca fica na própria página; o cabeçalho cede o espaço. */
-  .header__search[hidden] + .header__actions {
-    margin-left: auto;
+    gap: 4px;
+    margin-right: 0;
   }
 
   .header__account {
@@ -335,22 +378,17 @@
     align-items: center;
     gap: 8px;
     height: 44px;
-    padding: 0 14px 0 10px;
-    border-radius: var(--r-pill);
+    padding: 0 12px 0 10px;
+    border-radius: var(--r-md);
     color: var(--text);
-    font-weight: 800;
+    font-weight: 700;
     font-size: var(--fs-sm);
     white-space: nowrap;
   }
 
-  .header__account:hover {
-    background: var(--rose-100);
-    color: var(--rose-700);
-  }
-
   /* Primeiro nome muito longo não empurra o cabeçalho. */
   .header__account span:last-child {
-    max-width: 16ch;
+    max-width: 14ch;
     overflow: hidden;
     text-overflow: ellipsis;
   }
@@ -359,31 +397,290 @@
     width: 20px;
     height: 20px;
   }
-}
 
-@media (min-width: 900px) and (max-width: 1080px) {
-  /* Pouco espaço: a busca vira ícone (leva ao cardápio, onde há o campo completo). */
-  .header__search {
-    display: none;
+  .header__cart {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    width: auto;
+    height: 48px;
+    margin-left: 4px;
+    padding: 0 16px 0 14px;
+    border-radius: var(--r-md);
+    background: var(--fill);
+    font-weight: 700;
+    font-size: var(--fs-sm);
+    white-space: nowrap;
+  }
+
+  .header__cart.has-items {
+    background: var(--action);
+    color: #fff;
+  }
+
+  .header__cart.has-items .count-badge {
+    background: #fff;
+    color: var(--rose-700);
+    box-shadow: none;
+  }
+
+  .header__cart-icon svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .header__cart-total {
+    display: inline;
+    font-variant-numeric: tabular-nums;
   }
 
   .header__search-link {
-    display: inline-grid !important;
+    display: none;
+  }
+}
+
+@media (min-width: 1200px) {
+  .header__where {
+    max-width: 300px;
+  }
+}
+
+@media (hover: hover) and (min-width: 900px) {
+  .header__where:hover {
+    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px var(--border-strong);
   }
 
-  .header__actions {
-    margin-left: auto;
+  .header__account:hover {
+    background: var(--fill);
   }
 
+  .header__cart:hover {
+    background: var(--line);
+  }
+
+  .header__cart.has-items:hover {
+    background: var(--action-hover);
+  }
+}
+
+@media (min-width: 900px) and (max-width: 1099px) {
+  /* Pouco espaço: a conta vira só o ícone. O contexto de entrega mantém a largura em que
+     "Cuiabá e Várzea Grande" cabe inteiro; quem cede é o campo de busca. */
   .header__account span:last-child {
     display: none;
   }
+
+  .header__where {
+    max-width: 256px;
+  }
+}
+
+/* ───────── Faixa de seções (computador) ─────────
+   Fica logo abaixo do cabeçalho e rola junto com a página (só o cabeçalho é fixo). */
+.subnav {
+  display: none;
 }
 
 @media (min-width: 900px) {
-  .header__search-link {
+  .subnav {
+    display: block;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .subnav__inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-4);
+    min-height: 46px;
+  }
+
+  .header__nav {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: -12px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .header__nav a {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 46px;
+    padding: 0 12px;
+    color: var(--text-2);
+    font-weight: 600;
+    font-size: var(--fs-sm);
+    white-space: nowrap;
+    transition: color var(--t-fast);
+  }
+
+  .header__nav a:hover {
+    color: var(--text);
+  }
+
+  .header__nav a.is-active {
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  .header__nav a.is-active::after {
+    content: "";
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 0;
+    height: 3px;
+    border-radius: 3px 3px 0 0;
+    background: var(--action);
+  }
+
+  .header__nav a.is-highlight {
+    color: var(--action);
+    font-weight: 700;
+  }
+
+  .header__nav svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .subnav__info {
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+    flex: none;
+    color: var(--text-2);
+    font-size: var(--fs-meta);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .subnav__info > * {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .subnav__info svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .subnav__info button {
+    min-height: 36px;
+    padding: 0 10px;
+    border-radius: 8px;
+    background: var(--rose-50);
+    color: var(--rose-700);
+    font-weight: 600;
+  }
+
+  .subnav__info button strong {
+    font-weight: 800;
+    letter-spacing: 0.03em;
+  }
+
+  .subnav__info button:hover {
+    background: var(--rose-100);
+  }
+
+  .subnav__free {
+    color: var(--green);
+  }
+}
+
+/* Pouco espaço: o cupom sai da faixa (continua no banner do início e no carrinho). */
+@media (min-width: 900px) and (max-width: 1179px) {
+  .subnav__info {
     display: none;
   }
+}
+
+/* ───────── Folha "Como você quer receber?" ───────── */
+.recv__tabs {
+  margin-bottom: var(--s-4);
+}
+
+.recv__facts {
+  display: grid;
+  gap: var(--s-4);
+}
+
+.recv__facts li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.recv__facts svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  color: var(--text-2);
+}
+
+.recv__facts strong {
+  display: block;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.recv__facts span {
+  display: block;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+}
+
+.recv__facts .recv__free {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.recv__title {
+  margin: var(--s-5) 0 var(--s-2);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.recv__addresses {
+  display: grid;
+  gap: 8px;
+}
+
+/* nome do endereço e endereço em linhas separadas (são <span> dentro de <label>) */
+.recv__addresses .option__title,
+.recv__addresses .option__desc {
+  display: block;
+}
+
+.recv__add {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  margin-top: var(--s-3);
+  color: var(--action);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+
+.recv__add span {
+  flex: 1;
+}
+
+.recv__add svg {
+  width: 18px;
+  height: 18px;
 }
 
 /* ───────── Barra inferior (celular) ───────── */
@@ -395,24 +692,15 @@
   z-index: var(--z-tabbar);
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  align-items: end;
+  align-items: start;
   height: calc(var(--tabbar-h) + var(--safe-bottom));
   padding-bottom: var(--safe-bottom);
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(14px);
-  box-shadow: 0 -4px 24px rgba(122, 44, 64, 0.1);
-  border-radius: 22px 22px 0 0;
-}
-
-/* Sem vidro fosco em telas de toque (mesmo motivo do cabeçalho). */
-@media (hover: none), (pointer: coarse), (max-width: 899px) {
-  .tabbar {
-    background: var(--white);
-    backdrop-filter: none;
-  }
+  background: var(--surface);
+  box-shadow: 0 -1px 0 var(--line);
 }
 
 .tabbar a {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -420,54 +708,119 @@
   gap: 3px;
   height: var(--tabbar-h);
   color: var(--text-3);
-  font-size: 11px;
-  font-weight: 800;
+  font-size: var(--fs-2xs);
+  font-weight: 600;
   transition: color var(--t-fast);
 }
 
 .tabbar a svg {
   width: 23px;
   height: 23px;
-  transition: transform var(--t-fast) var(--ease);
 }
 
 .tabbar a.is-active {
-  color: var(--rose-600);
+  color: var(--action);
+  font-weight: 800;
 }
 
 .tabbar a.is-active svg {
-  transform: translateY(-1px) scale(1.06);
+  stroke-width: 2.4;
 }
 
+/* traço no alto do item atual */
+.tabbar a.is-active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 28px;
+  height: 3px;
+  margin-left: -14px;
+  border-radius: 0 0 3px 3px;
+  background: var(--action);
+}
+
+/* Botão central "Montar" (personalizador 3D): redondo, na cor de ação, dentro da barra. */
 .tabbar__fab {
-  color: var(--rose-700) !important;
+  gap: 2px !important;
+  color: var(--action) !important;
+  font-weight: 800 !important;
 }
 
 .tabbar__fab-btn {
   display: grid;
   place-items: center;
-  width: 58px;
-  height: 58px;
-  margin-top: -30px;
+  width: 40px;
+  height: 40px;
+  margin-top: -8px;
   border-radius: 50%;
-  background: linear-gradient(140deg, var(--rose-400), var(--rose-600));
+  background: var(--action);
   color: #fff;
-  box-shadow: var(--shadow-brand), 0 0 0 6px var(--rose-50);
+  box-shadow: 0 0 0 4px var(--surface), 0 4px 10px rgba(209, 45, 88, 0.3);
   transition: transform var(--t-fast) var(--ease);
 }
 
 .tabbar__fab:active .tabbar__fab-btn {
-  transform: scale(0.94);
+  transform: scale(0.92);
 }
 
 .tabbar__fab-btn svg {
-  width: 26px !important;
-  height: 26px !important;
+  width: 22px !important;
+  height: 22px !important;
 }
 
-/* Espaço para a barra inferior não cobrir o conteúdo. */
+/* ───────── Barra "Ver carrinho" (celular) ─────────
+   js/shell.js põe .has-cartbar no <body> quando ela está à vista. --cartbar-h é o espaço que
+   ela ocupa acima da barra inferior (0 quando não aparece): some na conta do padding do <body>
+   e da posição dos avisos. Tela com barra fixa própria deve somar var(--cartbar-h). */
+.cartbar {
+  display: none;
+}
+
+@media (max-width: 899px) {
+  body.has-cartbar {
+    --cartbar-h: 64px;
+  }
+
+  body.has-cartbar .cartbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(var(--tabbar-h) + var(--safe-bottom));
+    z-index: var(--z-sticky);
+    display: block;
+    padding: 6px 12px;
+    pointer-events: none;
+    animation: cartbar-in var(--t-med) var(--ease) backwards;
+  }
+
+  .cartbar__btn {
+    display: flex;
+    width: 100%;
+    max-width: 560px;
+    min-height: 52px;
+    margin-inline: auto;
+    border-radius: 14px;
+    box-shadow: 0 6px 20px rgba(17, 17, 20, 0.2);
+    pointer-events: auto;
+  }
+
+  .cartbar__btn svg {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+@keyframes cartbar-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+/* Espaço para as barras fixas não cobrirem o conteúdo. */
 body {
-  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom));
+  padding-bottom: calc(var(--tabbar-h) + var(--cartbar-h) + var(--safe-bottom));
 }
 
 @media (min-width: 900px) {
@@ -484,7 +837,10 @@ body {
    uma faixa só no rodapé, nunca duas empilhadas. Cada tela reserva a altura da sua barra. */
 @media (max-width: 899px) {
   body:has(.pd-sticky) .tabbar,
-  body:has(.cart-bar) .tabbar {
+  body:has(.cart-bar) .tabbar,
+  body:has(.pd-sticky) .cartbar,
+  body:has(.cart-bar) .cartbar,
+  body:has(.sup) .cartbar {
     display: none;
   }
 
@@ -492,150 +848,214 @@ body {
   body:has(.cart-bar) {
     padding-bottom: 0;
   }
+
+  body:has(.pd-sticky),
+  body:has(.cart-bar),
+  body:has(.sup) {
+    --cartbar-h: 0px;
+  }
 }
 
 /* ───────── Rodapé ─────────
    Enquanto a primeira tela não chega, o rodapé fica vazio e não ocupa espaço (js/shell.js o
-   preenche junto com a tela). Antes, a faixa escura aparecia no meio da abertura e pulava. */
+   preenche junto com a tela). Celular: bloco curto, claro, com cara de aplicativo.
+   Computador: rodapé completo em colunas, sobre cacau escuro. */
 .footer:empty {
   display: none;
 }
 
 .footer {
-  margin-top: var(--s-16);
-  padding-block: var(--s-12) var(--s-8);
-  background: var(--cocoa-900);
-  color: #E9D3D9;
-  font-size: var(--fs-sm);
-}
-
-.footer__grid {
-  display: grid;
-  gap: var(--s-8);
-}
-
-.footer__brand p {
-  max-width: 36ch;
   margin-top: var(--s-4);
-  color: #C9AAB3;
+  padding-block: var(--s-2) var(--s-6);
+  color: var(--text-2);
+  font-size: var(--fs-meta);
 }
 
-.footer__brand img {
-  height: 54px;
-  width: auto;
+.footer__app {
+  display: grid;
+  justify-items: center;
+  gap: var(--s-3);
+  text-align: center;
+}
+
+.footer__contact {
+  width: 100%;
+  overflow: hidden;
+  text-align: left;
 }
 
 .footer__social {
   display: flex;
   gap: 8px;
-  margin-top: var(--s-4);
 }
 
-.footer__social .icon-btn {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.footer__social .icon-btn:hover {
-  background: var(--rose-600);
-  color: #fff;
-}
-
-.footer h3 {
-  margin-bottom: var(--s-3);
-  color: #fff;
-  font-family: var(--font-body);
-  font-size: var(--fs-xs);
-  font-weight: 900;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.footer li {
-  padding-block: 5px;
-  color: #C9AAB3;
-}
-
-.footer li a {
-  display: inline-block;
-  padding-block: 6px; /* área de toque confortável no celular */
-}
-
-.footer li a:hover {
-  color: #fff;
-  text-decoration: underline;
-}
-
-.footer__bottom {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px 24px;
-  margin-top: var(--s-10);
-  padding-top: var(--s-6);
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-  color: #B8959F;
-  font-size: var(--fs-xs);
+.footer__app .footer__social .icon-btn {
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  color: var(--cocoa-700);
 }
 
 .footer__pay {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  gap: 4px 6px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
 }
 
 .footer__pay svg {
-  width: 16px;
-  height: 16px;
-  margin-left: 8px;
-  color: var(--rose-300);
+  width: 15px;
+  height: 15px;
+  color: var(--text-3);
 }
 
 .footer__demo {
-  padding: 3px 10px;
-  border-radius: var(--r-pill);
-  background: rgba(255, 255, 255, 0.1);
-  color: #F7D3DC;
-  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--amber-soft);
+  color: #7A4208;
+  font-size: var(--fs-xs);
+  font-weight: 600;
 }
 
-@media (min-width: 720px) {
+.footer__copy {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+@media (min-width: 900px) {
+  .footer {
+    margin-top: var(--s-12);
+    padding-block: var(--s-12) var(--s-8);
+    background: var(--stage);
+    color: #E6D5DA;
+    font-size: var(--fs-sm);
+  }
+
   .footer__grid {
+    display: grid;
     grid-template-columns: 1.6fr 1fr 1fr 1.2fr;
+    gap: var(--s-8);
+  }
+
+  .footer__brand p {
+    max-width: 36ch;
+    margin-top: var(--s-4);
+    color: #C9B3BA;
+  }
+
+  .footer__brand img {
+    height: 48px;
+    width: auto;
+  }
+
+  .footer__social {
+    margin-top: var(--s-4);
+  }
+
+  .footer__social .icon-btn {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .footer__social .icon-btn:hover {
+    background: var(--action);
+    color: #fff;
+  }
+
+  .footer h3 {
+    margin-bottom: var(--s-3);
+    color: #fff;
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+
+  .footer li {
+    padding-block: 2px;
+    color: #C9B3BA;
+  }
+
+  .footer li a {
+    display: inline-block;
+    padding-block: 6px; /* área de toque confortável em tablet deitado */
+  }
+
+  .footer li:not(:has(a)) {
+    padding-block: 8px;
+  }
+
+  .footer li a:hover {
+    color: #fff;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .footer__bottom {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 24px;
+    margin-top: var(--s-10);
+    padding-top: var(--s-6);
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    color: #B8A0A8;
+    font-size: var(--fs-xs);
+  }
+
+  .footer__pay {
+    gap: 6px;
+    font-weight: 500;
+  }
+
+  .footer__pay svg {
+    margin-left: 8px;
+    color: var(--rose-300);
+  }
+
+  .footer__demo {
+    background: rgba(255, 255, 255, 0.1);
+    color: #FCD9E1;
+  }
+
+  .footer :focus-visible {
+    outline-color: #fff;
   }
 }
 
 /* ───────── Layouts ─────────
    default    cabeçalho + rodapé + barra inferior
-   plain      cabeçalho + barra inferior (telas de conta: sem rodapé)
+   plain      cabeçalho + barra inferior (telas de conta: sem rodapé no celular)
    focus      só cabeçalho enxuto (login e checkout: nada que distraia)
    immersive  tela cheia (personalizador 3D) */
 body[data-layout="plain"] .footer,
 body[data-layout="focus"] .footer,
 body[data-layout="focus"] .tabbar,
-body[data-layout="focus"] .announce,
+body[data-layout="focus"] .subnav,
+body[data-layout="focus"] .cartbar,
 body[data-layout="immersive"] .footer,
 body[data-layout="immersive"] .tabbar,
-body[data-layout="immersive"] .announce,
+body[data-layout="immersive"] .subnav,
+body[data-layout="immersive"] .cartbar,
 body[data-layout="immersive"] .header {
   display: none;
 }
 
 body[data-layout="focus"],
 body[data-layout="immersive"] {
+  --cartbar-h: 0px;
   padding-bottom: 0;
+}
+
+body[data-layout="focus"] .header {
+  box-shadow: 0 1px 0 var(--line);
 }
 
 body[data-layout="focus"] .header__inner {
   justify-content: flex-start;
-}
-
-@media (max-width: 899px) {
-  body[data-layout="plain"] .announce {
-    display: none;
-  }
 }
 
 @media (min-width: 900px) {
@@ -649,10 +1069,10 @@ body[data-layout="focus"] .header__inner {
   display: inline-flex;
   gap: 1px;
   color: var(--line);
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1;
 }
 
 .stars .is-on {
-  color: var(--gold);
+  color: var(--star);
 }

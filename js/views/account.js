@@ -1,23 +1,17 @@
-// BOLAB — minha conta: visão geral (#/conta).
-// Também exporta a moldura e os utilitários usados pelas telas #/conta/*.
-import { html, icon, initials, on, plural, toast, confirmDialog, dateLong, toDate } from '../ui.js';
-import { pageHead } from '../components.js';
-import { auth, orders, favs, addresses, cards, prefs, store } from '../store.js';
+// BOLAB — minha conta: perfil (#/conta).
+// Também exporta a moldura (menu lateral no computador) e os utilitários das telas #/conta/*.
+import { html, icon, initials, on, plural, money, toast, confirmDialog, toDate } from '../ui.js';
+import { pageHead, listRow, sectionHead, dayLabel, slotLabel } from '../components.js';
+import { auth, orders, favs, addresses, cards, savedCakes, prefs, store } from '../store.js';
 import { navigate } from '../router.js';
 import { COUPONS, WALLET_COUPONS, SITE } from '../data/site.js';
 import { demoNote } from './auth.js';
+import { statusBadge } from './order.js';
 
 /* ───────── Utilitários compartilhados ───────── */
 export function firstName(user) {
   const first = String(user?.name || '').trim().split(/\s+/)[0] || '';
   return first.length > 24 ? `${first.slice(0, 24)}…` : first; // primeiro nome gigante não vira parede de texto
-}
-
-const MONTH_YEAR = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' });
-
-/** "outubro de 2026" */
-export function memberSince(user) {
-  return MONTH_YEAR.format(new Date(user?.createdAt || Date.now()));
 }
 
 const walletKey = () => `wallet:${auth.user()?.id || 'guest'}`;
@@ -36,7 +30,7 @@ export function addToWallet(code) {
 
 /** O cupom pode ser usado por esta pessoa agora? → { usable, why } (mesmas regras da loja). */
 export function couponStatus(coupon) {
-  if (coupon.expires && toDate(coupon.expires) < new Date()) return { usable: false, why: 'Expirado' };
+  if (coupon.expires && toDate(coupon.expires) < new Date()) return { usable: false, why: 'Vencido' };
   if (coupon.firstOrderOnly && orders.list().some((o) => !o.canceled)) return { usable: false, why: 'Só no 1º pedido' };
   return { usable: true, why: '' };
 }
@@ -79,50 +73,98 @@ export async function withLoading(btn, work, minMs = 320) {
   }
 }
 
-export const ACCOUNT_MENU = [
-  { id: 'pedidos', href: '#/pedidos', icon: 'package', title: 'Meus pedidos' },
-  { id: 'favoritos', href: '#/favoritos', icon: 'heart', title: 'Favoritos e bolos criados' },
-  { id: 'dados', href: '#/conta/dados', icon: 'user', title: 'Dados pessoais' },
-  { id: 'enderecos', href: '#/conta/enderecos', icon: 'map-pin', title: 'Endereços' },
-  { id: 'pagamentos', href: '#/conta/pagamentos', icon: 'credit-card', title: 'Formas de pagamento' },
-  { id: 'cupons', href: '#/conta/cupons', icon: 'ticket', title: 'Cupons' },
-  { id: 'indicar', href: '#/conta/indicar', icon: 'gift', title: 'Indique e ganhe' },
-  { id: 'atendimento', href: '#/atendimento', icon: 'message', title: 'Atendimento' },
+/* ───────── Menu da conta ───────── */
+const MENU = {
+  pedidos: { href: '#/pedidos', icon: 'receipt', title: 'Meus pedidos' },
+  favoritos: { href: '#/favoritos', icon: 'heart', title: 'Favoritos' },
+  dados: { href: '#/conta/dados', icon: 'user', title: 'Meus dados' },
+  enderecos: { href: '#/conta/enderecos', icon: 'map-pin', title: 'Endereços' },
+  pagamentos: { href: '#/conta/pagamentos', icon: 'credit-card', title: 'Pagamentos' },
+  cupons: { href: '#/conta/cupons', icon: 'ticket', title: 'Cupons' },
+  indicar: { href: '#/conta/indicar', icon: 'gift', title: 'Indique e ganhe' },
+  atendimento: { href: '#/atendimento', icon: 'message', title: 'Atendimento' },
+};
+
+/** Grupos de linhas do perfil no celular (no computador o menu lateral faz esse papel). */
+const GROUPS = [
+  { title: 'Conta', ids: ['dados', 'enderecos', 'pagamentos'] },
+  { title: 'Vantagens', ids: ['cupons', 'indicar'] },
+  { title: 'Ajuda', ids: ['atendimento'] },
 ];
 
+const SIDE_ORDER = ['pedidos', 'favoritos', 'dados', 'enderecos', 'pagamentos', 'cupons', 'indicar', 'atendimento'];
+
+/** Menu lateral fixo do computador: quem é, para onde ir e a saída. */
+function sideNav(active) {
+  const user = auth.user();
+  const link = (id, m) =>
+    html`<a href="${m.href}" class="${id === active ? 'is-active' : ''}" ${id === active ? html`aria-current="page"` : ''}>${icon(m.icon)}<span>${m.title}</span></a>`;
+  return html`
+    <aside class="acc-side only-desktop">
+      <div class="acc-side__me">
+        <span class="avatar" data-user-initials>${initials(user.name)}</span>
+        <div>
+          <strong data-user-name>${user.name}</strong>
+          <span data-user-email>${user.email}</span>
+        </div>
+      </div>
+      <nav class="card acc-side__nav" aria-label="Minha conta">
+        ${link('visao', { href: '#/conta', icon: 'home', title: 'Visão geral' })} ${SIDE_ORDER.map((id) => link(id, MENU[id]))}
+      </nav>
+      <button class="acc-side__out" type="button" data-signout>${icon('log-out')}<span>Sair da conta</span></button>
+    </aside>
+  `;
+}
+
 /**
- * Moldura das telas internas da conta: título com voltar e, no desktop, menu lateral.
+ * Moldura das telas internas da conta: no celular, título com voltar; no computador, menu lateral + conteúdo.
  *   accountPage({ title, sub, active: 'enderecos', body: html`…` })
+ * Na montagem da tela, chame bindAccount(root) para ligar o "Sair da conta" do menu lateral.
  */
 export function accountPage({ title, sub = '', active = '', body }) {
-  const user = auth.user();
-  if (!user) return '';
+  if (!auth.user()) return '';
   return html`
     <div class="container acc">
-      ${pageHead(title, { back: '/conta', sub })}
       <div class="acc-shell">
-        <aside class="acc-side only-desktop">
-          <a class="acc-side__me" href="#/conta" aria-label="Visão geral da conta">
-            <span class="avatar" data-user-initials>${initials(user.name)}</span>
-            <div>
-              <strong data-user-name>${user.name}</strong>
-              <span data-user-email>${user.email}</span>
-            </div>
-          </a>
-          <nav class="acc-side__nav" aria-label="Minha conta">
-            <a href="#/conta">${icon('home')} Visão geral</a>
-            ${ACCOUNT_MENU.map(
-              (m) => html`<a href="${m.href}" class="${m.id === active ? 'is-active' : ''}" ${m.id === active ? html`aria-current="page"` : ''}>${icon(m.icon)} ${m.title}</a>`,
-            )}
-          </nav>
-        </aside>
-        <div class="acc-main">${body}</div>
+        ${sideNav(active)}
+        <div class="acc-main">${pageHead(title, { back: '/conta', sub })} ${body}</div>
       </div>
     </div>
   `;
 }
 
-/* ───────── Visão geral ───────── */
+/** Liga as ações comuns a todas as telas da conta: sair e (em demonstração) apagar os dados. */
+export function bindAccount(root) {
+  on(root, 'click', '[data-signout]', async () => {
+    const ok = await confirmDialog({
+      title: 'Sair da conta?',
+      message: 'Seus pedidos, endereços e favoritos continuam guardados para quando você voltar.',
+      confirmLabel: 'Sair',
+      cancelLabel: 'Continuar na conta',
+    });
+    if (!ok) return;
+    // Primeiro muda de tela, depois encerra a sessão: assim ninguém cai no login sem querer.
+    navigate('/');
+    auth.signOut();
+    toast('Você saiu da conta. Até logo!');
+  });
+
+  on(root, 'click', '[data-reset]', async () => {
+    const ok = await confirmDialog({
+      title: 'Apagar dados de demonstração?',
+      message: 'Isso remove deste aparelho as contas de teste, pedidos, endereços, cartões, favoritos e o carrinho. Não dá para desfazer.',
+      confirmLabel: 'Apagar tudo',
+      cancelLabel: 'Cancelar',
+      danger: true,
+    });
+    if (!ok) return;
+    navigate('/');
+    store.reset();
+    toast('Pronto: os dados de demonstração foram apagados deste aparelho.', { type: 'success' });
+  });
+}
+
+/* ───────── Perfil ───────── */
 function activeOrder() {
   for (const o of orders.list()) {
     try {
@@ -136,57 +178,80 @@ function activeOrder() {
 }
 
 function orderCard({ o, st }) {
-  const step = st.steps[st.index];
   const waiting = !o.payment?.paidAt;
   const pct = Math.round(((st.index + 1) / st.steps.length) * 100);
-  const when = o.delivery?.date ? `${dateLong(o.delivery.date)}${o.delivery.slot ? `, ${o.delivery.slot}` : ''}` : '';
+  const how = o.delivery?.mode === 'pickup' ? 'Retirada' : 'Entrega';
+  const when = o.delivery?.date ? `${how} ${dayLabel(o.delivery.date)}${o.delivery.slot ? ` · ${slotLabel(o.delivery.slot)}` : ''}` : how;
   return html`
     <a class="card acc-order" href="#/pedido/${o.id}">
       <div class="acc-order__top">
-        <span class="acc-order__live"><i></i>Pedido em andamento</span>
-        <span class="badge ${waiting ? 'badge--amber' : 'badge--green'}">${st.label}</span>
+        ${statusBadge(o)}
+        <span class="acc-order__go">Acompanhar${icon('chevron-right')}</span>
       </div>
-      <h3>Pedido ${o.id}</h3>
-      <p>
-        ${waiting ? 'Estamos aguardando a confirmação do pagamento.' : step.desc}
-        ${when ? html`<br />${o.delivery.mode === 'pickup' ? 'Retirada' : 'Entrega'}: ${when}` : ''}
-      </p>
+      <strong class="acc-order__title">Pedido ${o.id}</strong>
+      <span class="acc-order__meta">${when}</span>
       <div class="progress ${waiting ? '' : 'progress--green'}" role="img" aria-label="Etapa ${st.index + 1} de ${st.steps.length}"><i style="width:${pct}%"></i></div>
-      <span class="link-arrow">Acompanhar pedido ${icon('arrow-right')}</span>
     </a>
   `;
 }
 
-function menuRows() {
+function shortcuts() {
   const nOrders = orders.count();
+  const nCoupons = usableCoupons().length;
   const nFavs = favs.count();
+  const tile = (href, ic, label, info) => html`
+    <a class="card acc-quick__item" href="${href}">
+      <span class="acc-quick__icon">${icon(ic)}</span>
+      <strong>${label}</strong>
+      <span>${info}</span>
+    </a>
+  `;
+  return html`
+    <nav class="acc-quick" aria-label="Atalhos">
+      ${tile('#/pedidos', 'receipt', 'Pedidos', nOrders ? plural(nOrders, 'pedido', 'pedidos') : 'Nenhum ainda')}
+      ${tile('#/conta/cupons', 'ticket', 'Cupons', nCoupons ? plural(nCoupons, 'disponível', 'disponíveis') : 'Nenhum agora')}
+      ${tile('#/favoritos', 'heart', 'Favoritos', nFavs ? plural(nFavs, 'salvo', 'salvos') : 'Nenhum ainda')}
+    </nav>
+  `;
+}
+
+/** Bolos montados no 3D e salvos: carrossel compacto que reabre o personalizador. */
+function cakesRail() {
+  const cakes = savedCakes.list();
+  if (!cakes.length) return '';
+  return html`
+    <section class="acc-cakes" aria-label="Seus bolos em 3D">
+      ${sectionHead('Seus bolos em 3D', { href: '#/favoritos', label: 'Ver todos' })}
+      <div class="rail acc-cakes__rail">
+        ${cakes.slice(0, 8).map(
+          (c) => html`
+            <a class="acc-cake" href="#/monte-seu-bolo?bolo=${c.id}">
+              <span class="acc-cake__thumb">${c.thumb ? html`<img src="${c.thumb}" alt="" loading="lazy" />` : icon('cake')}</span>
+              <strong>${c.name || 'Bolo personalizado'}</strong>
+              ${c.price ? html`<span class="price">${money(c.price)}</span>` : ''}
+            </a>
+          `,
+        )}
+      </div>
+    </section>
+  `;
+}
+
+function rowDesc(id) {
   const addr = addresses.default();
   const card = cards.default();
   const nCoupons = usableCoupons().length;
-  const desc = {
-    pedidos: nOrders ? `${plural(nOrders, 'pedido', 'pedidos')} até agora` : 'Acompanhe seus pedidos',
-    favoritos: nFavs ? `${plural(nFavs, 'item salvo', 'itens salvos')}` : 'O que você salvar e montar no 3D',
-    dados: 'Nome, contato, aniversário e senha',
-    enderecos: addr ? `${addr.label}: ${[addr.street, addr.number].filter(Boolean).join(', ')}` : 'Cadastre para agilizar a entrega',
-    pagamentos: card ? `${card.brand} final ${card.last4}` : `Pix com ${SITE.pix.discountPct}% OFF e cartões salvos`,
-    cupons: nCoupons ? 'Descontos prontos para usar' : 'Seus descontos aparecem aqui',
+  return {
+    dados: 'Nome, contato e senha',
+    enderecos: addr ? `${addr.label}: ${[addr.street, addr.number].filter(Boolean).join(', ')}` : 'Nenhum endereço salvo',
+    pagamentos: card ? `${card.brand} final ${card.last4}` : `Pix com ${SITE.pix.discountPct}% OFF ou cartão`,
+    cupons: nCoupons ? `${plural(nCoupons, 'cupom disponível', 'cupons disponíveis')}` : 'Nenhum cupom agora',
     indicar: 'Ganhe R$ 20 a cada indicação',
-    atendimento: 'Tire dúvidas ou fale com a equipe',
-  };
-  return ACCOUNT_MENU.map(
-    (m) => html`
-      <a class="row" href="${m.href}">
-        <span class="row__icon">${icon(m.icon)}</span>
-        <span class="row__body">
-          <span class="row__title">${m.title}</span>
-          <span class="row__desc">${desc[m.id]}</span>
-        </span>
-        ${m.id === 'cupons' && nCoupons ? html`<span class="badge badge--solid">${nCoupons}</span>` : ''}
-        ${icon('chevron-right', { cls: 'row__chev' })}
-      </a>
-    `,
-  );
+    atendimento: 'Dúvidas e ajuda com o pedido',
+  }[id];
 }
+
+const menuRow = (id) => listRow({ iconName: MENU[id].icon, title: MENU[id].title, desc: rowDesc(id), href: MENU[id].href });
 
 export default {
   title: 'Minha conta',
@@ -197,68 +262,51 @@ export default {
     const user = auth.user();
     if (!user) return '';
     const current = activeOrder();
-    const coupons = usableCoupons();
-    const welcome = coupons.includes('BOLAB10') && !current;
     return html`
       <div class="container acc">
-        <div class="page-head">
-          <div>
-            <h1>Minha conta</h1>
-            <p class="muted">Olá, ${firstName(user)}! Tudo o que é seu na BOLAB está aqui.</p>
-          </div>
-        </div>
+        <div class="acc-shell">
+          ${sideNav('visao')}
+          <div class="acc-main">
+            <div class="page-head"><div><h1>Minha conta</h1></div></div>
 
-        <div class="acc-hub">
-          <div class="acc-hub__col acc-hub__col--side">
-            <section class="card acc-profile" aria-label="Seu perfil">
-              <div class="acc-profile__cover"></div>
-              <div class="acc-profile__body">
-                <span class="avatar avatar--lg">${initials(user.name)}</span>
-                <a class="btn btn--sm btn--secondary acc-profile__edit" href="#/conta/dados">${icon('edit')} Editar</a>
+            <a class="card acc-me" href="#/conta/dados" aria-label="Meus dados: ${user.name}">
+              <span class="avatar">${initials(user.name)}</span>
+              <span class="acc-me__body">
+                <strong>${user.name}</strong>
+                <span>${user.email}</span>
+              </span>
+              <span class="acc-me__edit">Editar${icon('chevron-right')}</span>
+            </a>
+
+            ${shortcuts()} ${current ? orderCard(current) : ''} ${cakesRail()}
+
+            <div class="acc-groups only-mobile">
+              ${GROUPS.map(
+                (g) => html`
+                  <section class="acc-group">
+                    <h2 class="acc-group__title">${g.title}</h2>
+                    <div class="card acc-list">${g.ids.map(menuRow)}</div>
+                  </section>
+                `,
+              )}
+              <div class="card acc-list">
+                <button class="row acc-out" type="button" data-signout>
+                  <span class="row__icon">${icon('log-out')}</span>
+                  <span class="row__body"><span class="row__title">Sair da conta</span></span>
+                </button>
               </div>
-              <div class="acc-profile__info">
-                <h2>${user.name}</h2>
-                <p>${user.email}</p>
-                <span class="acc-profile__since">${icon('calendar')} Cliente desde ${memberSince(user)}</span>
-              </div>
-              <div class="acc-stats">
-                <a class="acc-stat" href="#/pedidos"><strong>${orders.count()}</strong><span>${orders.count() === 1 ? 'Pedido' : 'Pedidos'}</span></a>
-                <a class="acc-stat" href="#/favoritos"><strong>${favs.count()}</strong><span>${favs.count() === 1 ? 'Favorito' : 'Favoritos'}</span></a>
-                <a class="acc-stat" href="#/conta/cupons" aria-label="${plural(coupons.length, 'cupom disponível', 'cupons disponíveis')}">
-                  <strong>${coupons.length}</strong><span>${coupons.length === 1 ? 'Cupom' : 'Cupons'}</span>
-                </a>
-              </div>
-            </section>
-
-            ${current ? orderCard(current) : ''}
-            ${welcome
-              ? html`
-                  <a class="card acc-gift" href="#/conta/cupons">
-                    <span class="acc-gift__icon">${icon('gift')}</span>
-                    <span><strong>Seu presente de boas-vindas</strong>${COUPONS.BOLAB10.label} com o cupom BOLAB10.</span>
-                    ${icon('chevron-right')}
-                  </a>
-                `
-              : ''}
-          </div>
-
-          <div class="acc-hub__col">
-            <nav class="card acc-menu" aria-label="Minha conta">${menuRows()}</nav>
-
-            <div class="card acc-menu acc-out">
-              <button class="row" type="button" data-signout>
-                <span class="row__icon">${icon('log-out')}</span>
-                <span class="row__body"><span class="row__title">Sair da conta</span></span>
-              </button>
             </div>
 
+            <section class="acc-group only-desktop">
+              <h2 class="acc-group__title">Para o próximo pedido</h2>
+              <div class="card acc-list">${['enderecos', 'pagamentos', 'cupons'].map(menuRow)}</div>
+            </section>
+
             ${SITE.demo
-              ? html`<div class="acc-hub__foot">
-                  ${demoNote(
-                    html`conta, pedidos e carrinho ficam salvos só neste aparelho.
-                      <button class="acc-reset" type="button" data-reset>Apagar dados de demonstração deste aparelho</button>`,
-                  )}
-                </div>`
+              ? demoNote(
+                  html`conta, pedidos e carrinho ficam salvos só neste aparelho.
+                    <button class="acc-reset" type="button" data-reset>Apagar dados de demonstração</button>`,
+                )
               : ''}
           </div>
         </div>
@@ -267,34 +315,7 @@ export default {
   },
 
   mount(root, ctx) {
-    on(root, 'click', '[data-signout]', async () => {
-      const ok = await confirmDialog({
-        title: 'Sair da conta?',
-        message: 'Seus pedidos, endereços e favoritos continuam guardados para quando você voltar.',
-        confirmLabel: 'Sair',
-        cancelLabel: 'Continuar na conta',
-      });
-      if (!ok) return;
-      // Primeiro muda de tela, depois encerra a sessão: assim ninguém cai no login sem querer.
-      navigate('/');
-      auth.signOut();
-      toast('Você saiu da conta. Até logo!');
-    });
-
-    on(root, 'click', '[data-reset]', async () => {
-      const ok = await confirmDialog({
-        title: 'Apagar dados de demonstração?',
-        message: 'Isso remove deste aparelho as contas de teste, pedidos, endereços, cartões, favoritos e o carrinho. Não dá para desfazer.',
-        confirmLabel: 'Apagar tudo',
-        cancelLabel: 'Cancelar',
-        danger: true,
-      });
-      if (!ok) return;
-      navigate('/');
-      store.reset();
-      toast('Pronto: os dados de demonstração foram apagados deste aparelho.', { type: 'success' });
-    });
-
+    bindAccount(root);
     // Pedidos, favoritos, endereços… qualquer mudança atualiza os números da tela.
     return rerenderOn(ctx, ['*']);
   },

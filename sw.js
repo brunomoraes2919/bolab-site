@@ -2,7 +2,7 @@
 // Estratégia: sempre busca a versão nova na rede; o cache só entra quando a rede falha.
 // Assim uma publicação nova aparece no próximo carregamento, sem precisar "limpar cache".
 
-const CACHE = 'bolab-v1';
+const CACHE = 'bolab-v2';
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', (event) => {

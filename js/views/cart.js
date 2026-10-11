@@ -1,12 +1,13 @@
-// BOLAB — carrinho.
-import { html, icon, money, dateLong, plural, on, toast, observeReveal } from '../ui.js';
-import { photo, lineThumb, qtyStepper, pageHead, productCard, totalsSummary } from '../components.js';
+// BOLAB — carrinho ("sacola" do aplicativo).
+import { html, icon, money, plural, on, toast } from '../ui.js';
+import { photo, lineThumb, qtyStepper, pageHead, productCard, totalsSummary, priceButton, sectionHead, promoBanner, dayLabel, listRow } from '../components.js';
 import { cart, schedule, store } from '../store.js';
+import { receiveContext } from '../shell.js';
 import { PRODUCTS, addOns, getProduct, isCake } from '../data/products.js';
 import { SITE, COUPONS, WALLET_COUPONS } from '../data/site.js';
 
 /* O que a pessoa está digitando (e o que já viu) sobrevive aos redesenhos da tela. */
-const draft = { coupon: '', couponError: '', walletOpen: false, pct: 0, openDetails: new Set(), freshLine: '' };
+const draft = { coupon: '', couponError: '', pct: 0, openDetails: new Set(), freshLine: '' };
 
 /**
  * Parcelas possíveis no cartão para um valor, conforme SITE.card.
@@ -73,32 +74,47 @@ export function keepFocus(redraw) {
 }
 
 /* ───────── Blocos ───────── */
-function shippingBanner(t) {
+
+/**
+ * Quando e como a pessoa vai receber. É a mesma linha da tela do item ("Receba a partir de…" em
+ * destaque, o lugar embaixo): a data é a informação nova aqui, porque o endereço já está no
+ * cabeçalho logo acima. Toque abre a folha de troca.
+ */
+function receiveCard(ctx) {
+  const pickup = ctx.mode === 'pickup';
+  const first = dayLabel(schedule.earliest());
+  return html`
+    <div class="card cart-recv">
+      ${listRow({
+        iconName: pickup ? 'store' : 'calendar',
+        title: `${pickup ? 'Retire' : 'Receba'} a partir de ${first}`,
+        desc: pickup ? `${SITE.pickup.name} · ${SITE.pickup.address}` : `${ctx.label} ${ctx.place}`,
+        trail: 'Trocar',
+        attrs: 'data-open-receive aria-haspopup="dialog"',
+      })}
+    </div>
+  `;
+}
+
+/** Faixa "Faltam R$ X para entrega grátis" (só faz sentido em entrega). */
+function shippingStrip(t) {
   const byCoupon = t.coupon?.type === 'frete';
-  const reached = t.freeShippingMissing === 0;
-  const free = reached || byCoupon;
+  const free = t.freeShippingMissing === 0 || byCoupon;
   const pct = free ? 100 : t.freeShippingPct;
   return html`
     <div class="cart-ship ${free ? 'is-free' : ''}">
-      <span class="cart-ship__icon">${icon(free ? 'check' : 'truck')}</span>
-      <div class="cart-ship__body">
-        <p>
-          ${reached
-            ? html`<strong>Você ganhou entrega grátis!</strong>`
-            : byCoupon
-              ? html`<strong>Entrega grátis</strong> garantida pelo cupom ${t.coupon.code}.`
-              : html`Faltam <strong>${money(t.freeShippingMissing)}</strong> para a entrega grátis`}
-        </p>
-        <div
-          class="progress ${free ? 'progress--green' : ''}"
-          role="progressbar"
-          aria-label="Progresso para a entrega grátis"
-          aria-valuemin="0"
-          aria-valuemax="100"
-          aria-valuenow="${pct}"
-        >
-          <i style="width:${draft.pct}%" data-pct="${pct}"></i>
-        </div>
+      <p>
+        ${icon(free ? 'check-circle' : 'truck')}
+        <span>
+          ${free
+            ? byCoupon && t.freeShippingMissing > 0
+              ? html`<strong>Entrega grátis</strong> com o cupom ${t.coupon.code}`
+              : html`<strong>Você ganhou entrega grátis</strong>`
+            : html`Faltam <strong>${money(t.freeShippingMissing)}</strong> para entrega grátis`}
+        </span>
+      </p>
+      <div class="progress ${free ? 'progress--green' : ''}" role="progressbar" aria-label="Progresso para a entrega grátis" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}">
+        <i style="width:${draft.pct}%" data-pct="${pct}"></i>
       </div>
     </div>
   `;
@@ -111,211 +127,157 @@ function summaryPart(text) {
   return i > 0 && i <= 40 ? { label: str.slice(0, i), value: str.slice(i + 2) } : { label: '', value: str };
 }
 
-/** Bolo criado no 3D: receita em uma frase curta, lista completa sob demanda e atalho para editar. */
-function customExtra(l) {
-  const parts = (Array.isArray(l.summary) ? l.summary : []).map(summaryPart);
-  const open = draft.openDetails.has(l.lineId);
-  return html`
-    <div class="cart-line__extra">
-      ${parts.length && !open ? html`<p class="cart-line__recipe">${parts.map((p) => p.value).join(' · ')}</p>` : ''}
-      ${parts.length && open
-        ? html`
-            <dl class="cart-line__details" id="cart-details-${l.lineId}">
-              ${parts.map((p) => html`<div><dt>${p.label || 'Detalhe'}</dt><dd>${p.value}</dd></div>`)}
-            </dl>
-          `
-        : ''}
-      <div class="cart-line__links">
-        ${parts.length
-          ? html`
-              <button class="cart-line__link" type="button" id="cart-more-${l.lineId}" data-details="${l.lineId}" aria-expanded="${open ? 'true' : 'false'}">
-                ${open ? 'Ocultar detalhes' : 'Ver todos os detalhes'}${icon('chevron-down')}
-              </button>
-            `
-          : ''}
-        <a class="cart-line__link" href="#/monte-seu-bolo?linha=${l.lineId}">${icon('edit')}Editar no 3D</a>
-      </div>
-    </div>
-  `;
-}
-
 function lineItem(l) {
   const custom = l.kind === 'custom';
   const href = !custom && getProduct(l.productId) ? `#/produto/${l.productId}` : '';
+  const parts = custom && Array.isArray(l.summary) ? l.summary.map(summaryPart) : [];
+  const open = draft.openDetails.has(l.lineId);
   const cls = ['cart-line', custom ? 'cart-line--custom' : '', draft.freshLine === l.lineId ? 'is-new' : ''].filter(Boolean).join(' ');
   return html`
     <li class="${cls}">
       ${href
-        ? html`<a class="cart-line__media" href="${href}" tabindex="-1" aria-hidden="true">${lineThumb(l, { w: 208 })}</a>`
-        : html`<div class="cart-line__media">${lineThumb(l, { w: 256 })}</div>`}
+        ? html`<a class="cart-line__media" href="${href}" tabindex="-1" aria-hidden="true">${lineThumb(l, { w: 160 })}</a>`
+        : html`<div class="cart-line__media">${lineThumb(l, { w: 160 })}</div>`}
       <div class="cart-line__body">
-        <div class="cart-line__head">
-          <div class="cart-line__titles">
-            ${custom ? html`<span class="badge badge--gold">${icon('cube')} Criado <span class="cart-line__by">por você</span> em 3D</span>` : ''}
-            <h3 class="cart-line__name">${href ? html`<a href="${href}">${l.name}</a>` : l.name}</h3>
-            ${l.sizeLabel ? html`<p class="cart-line__meta">${l.sizeLabel}</p>` : ''}
-          </div>
-          <button class="icon-btn cart-line__remove" type="button" data-remove="${l.lineId}" aria-label="Remover ${l.name} do carrinho">
-            ${icon('trash')}
-          </button>
+        <div class="cart-line__top">
+          <h3 class="cart-line__name">${href ? html`<a href="${href}">${l.name}</a>` : l.name}</h3>
+          <strong class="cart-line__price">${money(l.price * l.qty)}</strong>
         </div>
-        ${l.note ? html`<p class="cart-line__note">${icon('edit')}<span>${l.note}</span></p>` : ''}
+        ${custom ? html`<span class="badge badge--rose cart-line__tag">${icon('cube')}Montado em 3D</span>` : ''}
+        ${l.sizeLabel ? html`<p class="cart-line__meta">${l.sizeLabel}</p>` : ''}
+        ${parts.length && !open ? html`<p class="cart-line__meta cart-line__recipe">${parts.map((p) => p.value).join(' · ')}</p>` : ''}
+        ${l.note ? html`<p class="cart-line__meta cart-line__note">${icon('message')}<span>${l.note}</span></p>` : ''}
+        ${l.qty > 1 ? html`<p class="cart-line__meta">${l.qty} × ${money(l.price)}</p>` : ''}
+        ${open
+          ? html`
+              <dl class="cart-line__details" id="cart-details-${l.lineId}">
+                ${parts.map((p) => html`<div><dt>${p.label || 'Detalhe'}</dt><dd>${p.value}</dd></div>`)}
+              </dl>
+            `
+          : ''}
       </div>
-      ${custom ? customExtra(l) : ''}
       <div class="cart-line__foot">
-        ${qtyStepper(l.qty, { id: l.lineId })}
-        <div class="cart-line__price">
-          <small>${money(l.price)} cada</small>
-          <strong>${money(l.price * l.qty)}</strong>
+        <div class="cart-line__links">
+          ${custom ? html`<a class="cart-line__link" href="#/monte-seu-bolo?linha=${l.lineId}">${icon('edit')}Editar</a>` : ''}
+          ${parts.length
+            ? html`<button class="cart-line__link" type="button" id="cart-more-${l.lineId}" data-details="${l.lineId}" aria-expanded="${open ? 'true' : 'false'}">
+                ${open ? 'Ocultar' : 'Detalhes'}${icon('chevron-down')}
+              </button>`
+            : ''}
+        </div>
+        <div class="cart-line__ctrl">
+          <button class="icon-btn cart-line__remove" type="button" data-remove="${l.lineId}" aria-label="Remover ${l.name} do carrinho">${icon('trash')}</button>
+          ${qtyStepper(l.qty, { id: l.lineId, small: true })}
         </div>
       </div>
     </li>
   `;
 }
 
-function couponBlock(t) {
-  const code = cart.couponCode();
-
-  if (code && t.coupon) {
-    return html`
-      <div class="cart-coupon cart-coupon--on" role="status">
-        <span class="cart-coupon__icon">${icon('ticket')}</span>
-        <div class="cart-coupon__body">
-          <strong>${t.coupon.code}</strong>
-          <span>${t.couponDiscount > 0 ? `Você economiza ${money(t.couponDiscount)}` : t.coupon.label}</span>
-        </div>
-        <button class="cart-coupon__remove" type="button" id="cart-coupon-remove" data-coupon-remove aria-label="Remover o cupom ${t.coupon.code}">Remover</button>
-      </div>
-    `;
-  }
-
-  if (code && t.couponIssue) {
-    return html`
-      <div class="notice notice--amber cart-coupon__issue">
-        ${icon('alert')}
-        <div>
-          <strong>O cupom ${code} não está valendo agora.</strong> ${t.couponIssue}
-          <button class="link" type="button" id="cart-coupon-remove" data-coupon-remove>Remover cupom</button>
-        </div>
-      </div>
-    `;
-  }
-
-  const wallet = WALLET_COUPONS.map((c) => COUPONS[c]).filter(Boolean);
+/** "Peça também": acessórios que ainda não estão no carrinho, em carrossel compacto. */
+function alsoRail() {
+  const inCart = new Set(cart.lines().map((l) => l.productId));
+  const list = addOns(6)
+    .filter((p) => !inCart.has(p.id))
+    .slice(0, 4);
+  if (!list.length) return '';
   return html`
-    <form class="cart-coupon" data-coupon-form novalidate>
-      <div class="field ${draft.couponError ? 'is-invalid' : ''}">
-        <label for="cart-coupon">Cupom de desconto</label>
-        <div class="cart-coupon__row">
-          <div class="input-group">
-            ${icon('ticket')}
-            <input
-              class="input cart-coupon__input"
-              id="cart-coupon"
-              name="coupon"
-              type="text"
-              value="${draft.coupon}"
-              placeholder="Digite o código"
-              autocomplete="off"
-              autocapitalize="characters"
-              spellcheck="false"
-              maxlength="20"
-              enterkeyhint="done"
-              aria-describedby="cart-coupon-msg"
-            />
-          </div>
-          <button class="btn btn--secondary" type="submit">Aplicar</button>
-        </div>
-        <div class="field__error" id="cart-coupon-msg" role="alert">${draft.couponError}</div>
-      </div>
-      ${wallet.length
-        ? html`
-            <details class="cart-wallet" ${draft.walletOpen ? html`open` : ''}>
-              <summary id="cart-wallet-toggle">${icon('gift')} Ver cupons disponíveis (${wallet.length})${icon('chevron-down')}</summary>
-              <ul>
-                ${wallet.map(
-                  (c) => html`
-                    <li>
-                      <button type="button" data-coupon-apply="${c.code}" aria-label="Aplicar o cupom ${c.code}: ${c.label}">
-                        <strong>${c.code}</strong>
-                        <span>${c.label}</span>
-                        <em>Aplicar</em>
-                      </button>
-                    </li>
-                  `,
-                )}
-              </ul>
-            </details>
-          `
-        : ''}
-    </form>
-  `;
-}
-
-function summaryCard(t) {
-  const pix = cart.totals({ payment: 'pix' });
-  const parcels = installmentOptions(t.total);
-  const best = parcels[parcels.length - 1];
-  const first = schedule.earliest();
-  return html`
-    <section class="card cart-summary" aria-labelledby="cart-summary-title">
-      <h2 id="cart-summary-title">Resumo do pedido</h2>
-      ${couponBlock(t)}
-      <div class="cart-summary__totals">
-        ${totalsSummary(t)}
-        <p class="cart-summary__pay">
-          ${icon('pix')}
-          <span>
-            <strong>${money(pix.total)} no Pix</strong> (${SITE.pix.discountPct}% de desconto)${best.n > 1 ? ` ou ${best.n}x de ${money(best.value)} sem juros` : ''}
-          </span>
-        </p>
-      </div>
-      <div class="cart-summary__date">
-        ${icon('calendar')}
-        <div>
-          <strong>Receba a partir de ${dateLong(first).toLowerCase()}</strong>
-          <span>Você escolhe o dia e o horário no próximo passo.</span>
-        </div>
-      </div>
-      <div class="cart-summary__actions">
-        <a class="btn btn--lg btn--block only-desktop" href="#/checkout">Fechar pedido ${icon('arrow-right')}</a>
-        <a class="btn btn--ghost btn--block" href="#/cardapio">Continuar comprando</a>
-      </div>
-      <ul class="cart-trust">
-        <li>${icon('pix')}<span>${SITE.pix.discountPct}% de desconto no Pix</span></li>
-        <li>${icon('credit-card')}<span>Até ${SITE.card.maxInstallments}x sem juros no cartão</span></li>
-        <li>${icon('shield-check')}<span>Cancelamento grátis antes da produção</span></li>
+    <section class="cart-also" aria-labelledby="cart-also-t">
+      ${sectionHead('Peça também', { id: 'cart-also-t', sub: 'Chega junto com o seu pedido.' })}
+      <ul class="rail cart-also__rail">
+        ${list.map(
+          (p) => html`
+            <li class="card cart-also__item">
+              <a class="cart-also__media" href="#/produto/${p.id}" tabindex="-1" aria-hidden="true">${photo(p.photo, { w: 200, alt: '', sizes: '(min-width: 900px) 180px, 132px' })}</a>
+              <a class="cart-also__name" href="#/produto/${p.id}">${p.name}</a>
+              <div class="cart-also__foot">
+                <span class="price">${money(p.price)}</span>
+                <button class="add-btn" type="button" data-cart-add="${p.id}" aria-label="Adicionar ${p.name} ao carrinho">${icon('plus')}</button>
+              </div>
+            </li>
+          `,
+        )}
       </ul>
     </section>
   `;
 }
 
-function crossSell() {
-  const inCart = new Set(cart.lines().map((l) => l.productId));
-  const list = addOns(5)
-    .filter((p) => !inCart.has(p.id))
-    .slice(0, 3);
-  if (!list.length) return '';
+function couponCard(t) {
+  const code = cart.couponCode();
+
+  if (code && t.coupon) {
+    return html`
+      <section class="card cart-coupon" aria-label="Cupom">
+        <div class="cart-coupon__on" role="status">
+          <span class="row__icon cart-coupon__icon">${icon('ticket')}</span>
+          <div class="cart-coupon__body">
+            <strong>${t.coupon.code} aplicado</strong>
+            <span>${t.couponDiscount > 0 ? `Você economiza ${money(t.couponDiscount)}` : t.coupon.label}</span>
+          </div>
+          <button class="btn btn--ghost btn--sm" type="button" id="cart-coupon-remove" data-coupon-remove aria-label="Remover o cupom ${t.coupon.code}">Remover</button>
+        </div>
+      </section>
+    `;
+  }
+
+  if (code && t.couponIssue) {
+    return html`
+      <section class="card cart-coupon" aria-label="Cupom">
+        <div class="notice notice--amber">
+          ${icon('alert')}
+          <div>
+            <strong>O cupom ${code} não está valendo agora.</strong> ${t.couponIssue}
+            <button class="link cart-coupon__drop" type="button" id="cart-coupon-remove" data-coupon-remove>Remover cupom</button>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  const wallet = WALLET_COUPONS.map((c) => COUPONS[c]).filter(Boolean);
   return html`
-    <section class="cart-cross" aria-labelledby="cart-cross-title">
-      <div class="cart-cross__head">
-        <h2 id="cart-cross-title">Complete a festa</h2>
-        <p>Chegam junto com o seu pedido, sem frete a mais.</p>
-      </div>
-      <ul class="cart-cross__list">
-        ${list.map(
-          (p) => html`
-            <li class="cart-cross__item">
-              <a class="cart-cross__media" href="#/produto/${p.id}" tabindex="-1" aria-hidden="true">${photo(p.photo, { w: 144, alt: '' })}</a>
-              <div class="cart-cross__body">
-                <a class="cart-cross__name" href="#/produto/${p.id}">${p.name}</a>
-                <span class="cart-cross__price">${money(p.price)}</span>
-              </div>
-              <button class="cart-cross__add" type="button" data-cart-add="${p.id}" aria-label="Adicionar ${p.name} ao carrinho">${icon('plus')}</button>
-            </li>
-          `,
-        )}
-      </ul>
+    <section class="card cart-coupon" aria-label="Cupom">
+      <form data-coupon-form novalidate>
+        <div class="field ${draft.couponError ? 'is-invalid' : ''}">
+          <label for="cart-coupon">Cupom</label>
+          <div class="cart-coupon__row">
+            <div class="input-group">
+              ${icon('ticket')}
+              <input
+                class="input cart-coupon__input"
+                id="cart-coupon"
+                name="coupon"
+                type="text"
+                value="${draft.coupon}"
+                placeholder="Digite o código"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+                maxlength="20"
+                enterkeyhint="done"
+                aria-describedby="cart-coupon-msg"
+              />
+            </div>
+            <button class="btn btn--soft" type="submit">Aplicar</button>
+          </div>
+          <div class="field__error" id="cart-coupon-msg" role="alert">${draft.couponError}</div>
+        </div>
+        ${wallet.length
+          ? html`
+              <ul class="chips cart-coupon__wallet" aria-label="Cupons disponíveis">
+                ${wallet.map(
+                  (c) => html`
+                    <li>
+                      <button class="chip" type="button" data-coupon-apply="${c.code}" aria-label="Aplicar o cupom ${c.code}: ${c.label}">
+                        ${icon('ticket')}<span><strong>${c.code}</strong> · ${c.label}</span>
+                      </button>
+                    </li>
+                  `,
+                )}
+              </ul>
+            `
+          : ''}
+      </form>
     </section>
   `;
 }
@@ -325,23 +287,36 @@ function noteCard() {
   return html`
     <section class="card cart-note">
       <div class="field">
-        <label for="cart-note">Algum recado para a nossa confeitaria? <span class="cart-optional">(opcional)</span></label>
+        <label for="cart-note">Observação do pedido <span class="cart-optional">(opcional)</span></label>
         <textarea
           class="textarea"
           id="cart-note"
           name="note"
           maxlength="300"
-          rows="3"
-          placeholder="Ex.: escrever “Parabéns, Ana!” no topper, vela de número 7, alergia a castanhas…"
+          rows="2"
+          placeholder="Ex.: vela de número 7, tocar o interfone 12…"
           aria-describedby="cart-note-hint"
         >
 ${note}</textarea
         >
         <div class="field__hint cart-note__hint" id="cart-note-hint">
-          <span>A gente lê antes de começar o seu bolo.</span>
+          <span>A gente lê antes de começar o seu pedido.</span>
           <span data-note-count>${note.length}/300</span>
         </div>
       </div>
+    </section>
+  `;
+}
+
+function summaryCard(t, mode) {
+  const pix = cart.totals({ mode, payment: 'pix' });
+  return html`
+    <section class="card cart-summary" aria-labelledby="cart-summary-t">
+      <h2 id="cart-summary-t">Resumo</h2>
+      ${totalsSummary(t, { mode })}
+      <p class="notice notice--green cart-summary__pix">${icon('pix')}<span><strong>${money(pix.total)} no Pix</strong> · ${SITE.pix.discountPct}% de desconto</span></p>
+      <div class="cart-summary__cta">${priceButton('Fechar pedido', t.total, { href: '#/checkout', cls: 'btn--lg' })}</div>
+      <p class="cart-summary__trust">${icon('shield-check')}<span>Cancelamento grátis antes da produção.</span></p>
     </section>
   `;
 }
@@ -352,25 +327,32 @@ function emptyCart() {
     .slice(0, 4);
   return html`
     <div class="container cart cart--empty">
+      ${pageHead('Carrinho', { back: '/cardapio' })}
       <div class="empty cart-empty">
         <div class="empty__art">${icon('bag')}</div>
-        <h1>Seu carrinho está esperando um bolo</h1>
-        <p>Escolha um dos nossos clássicos ou crie o seu em 3D, camada por camada. Do resto a gente cuida.</p>
+        <h2>Seu carrinho está vazio</h2>
+        <p>Escolha um bolo do cardápio ou monte o seu em 3D.</p>
         <div class="cart-empty__cta">
-          <a class="btn btn--lg" href="#/cardapio">${icon('cake')} Ver cardápio</a>
-          <a class="btn btn--lg btn--secondary" href="#/monte-seu-bolo">${icon('sparkles')} Montar meu bolo em 3D</a>
+          <a class="btn" href="#/cardapio">Ver cardápio</a>
+          <a class="btn btn--secondary" href="#/monte-seu-bolo">${icon('cube')}Montar meu bolo em 3D</a>
         </div>
       </div>
-      <section class="cart-picks" aria-labelledby="cart-picks-title">
-        <div class="section-head">
-          <div>
-            <span class="eyebrow">Para começar</span>
-            <h2 class="section-title" id="cart-picks-title">Os mais <em>pedidos</em></h2>
-          </div>
-          <a class="link-arrow only-desktop" href="#/cardapio">Ver todo o cardápio ${icon('arrow-right')}</a>
-        </div>
-        <div class="product-grid">${picks.map((p) => html`<div class="reveal">${productCard(p)}</div>`)}</div>
+      <section class="cart-picks" aria-labelledby="cart-picks-t">
+        ${sectionHead('Mais pedidos', { href: '#/cardapio', id: 'cart-picks-t' })}
+        <div class="rail rail--grid cart-picks__rail">${picks.map((p) => productCard(p, { compact: true }))}</div>
       </section>
+      <div class="cart-empty__promo">
+        ${promoBanner({
+          tone: 'stage',
+          tag: 'Só na BOLAB',
+          title: 'Monte o seu em 3D',
+          text: 'Massa, recheio e cobertura do seu jeito.',
+          cta: 'Montar agora',
+          href: '#/monte-seu-bolo',
+          img: 'assets/img/cz-morango.webp',
+          cutout: true,
+        })}
+      </div>
     </div>
   `;
 }
@@ -378,43 +360,46 @@ function emptyCart() {
 /* ───────── Tela ───────── */
 export default {
   title: 'Carrinho',
-  layout: 'default',
+  layout: 'plain', // como em um aplicativo: sem rodapé do site no celular
 
   render() {
     if (cart.isEmpty()) return emptyCart();
-    const t = cart.totals();
+    const ctx = receiveContext();
+    const t = cart.totals({ mode: ctx.mode });
     return html`
       <div class="container cart">
-        ${pageHead('Seu carrinho', { back: '/cardapio', sub: plural(t.itemCount, 'item', 'itens') })}
+        ${pageHead('Carrinho', { back: '/cardapio', sub: plural(t.itemCount, 'item', 'itens') })}
         <div class="cart-layout">
           <div class="cart-main">
-            ${shippingBanner(t)}
-            <ul class="cart-lines" aria-label="Itens do carrinho">
-              ${cart.lines().map(lineItem)}
-            </ul>
-            ${crossSell()} ${noteCard()}
+            ${receiveCard(ctx)}
+            <section class="card cart-items" aria-label="Itens do carrinho">
+              ${ctx.mode === 'pickup' ? '' : shippingStrip(t)}
+              <ul class="cart-lines">
+                ${cart.lines().map(lineItem)}
+              </ul>
+              <a class="cart-more" href="#/cardapio">${icon('plus')}Adicionar mais itens</a>
+            </section>
+            ${alsoRail()} ${noteCard()}
           </div>
-          <aside class="cart-side">${summaryCard(t)}</aside>
+          <aside class="cart-side">${couponCard(t)} ${summaryCard(t, ctx.mode)}</aside>
         </div>
         <p class="sr-only" role="status" data-cart-live></p>
-        <div class="cart-bar">
-          <div class="cart-bar__info">
-            <span>Total · ${plural(t.itemCount, 'item', 'itens')}</span>
-            <strong>${money(t.total)}</strong>
-          </div>
-          <a class="btn cart-bar__btn" href="#/checkout">Fechar pedido ${icon('arrow-right')}</a>
-        </div>
+        <div class="sticky-cta cart-bar">${priceButton('Fechar pedido', t.total, { href: '#/checkout' })}</div>
       </div>
     `;
   },
 
   mount(root, ctx) {
     const page = root.firstElementChild;
-    const off = whenStore('cart', () => keepFocus(() => ctx.rerender()));
-    if (cart.isEmpty()) {
-      observeReveal(root);
-      return off;
-    }
+    const redraw = () => keepFocus(() => ctx.rerender());
+    const offStore = whenStore('cart', redraw);
+    // O modo de receber escolhido no cabeçalho (entrega ou retirada) muda a taxa e a data.
+    window.addEventListener('bolab:receive', redraw);
+    const off = () => {
+      offStore();
+      window.removeEventListener('bolab:receive', redraw);
+    };
+    if (cart.isEmpty()) return off;
 
     /* Quantidade e remoção */
     page.addEventListener('qty', (ev) => cart.setQty(ev.target.dataset.id, ev.detail));
@@ -426,10 +411,9 @@ export default {
     });
 
     /* Cupom */
-    const couponField = () => page.querySelector('[data-coupon-form] .field');
     const showCouponError = (message) => {
       draft.couponError = message;
-      const field = couponField();
+      const field = page.querySelector('[data-coupon-form] .field');
       if (!field) return;
       field.classList.toggle('is-invalid', Boolean(message));
       field.querySelector('.field__error').textContent = message;
@@ -467,25 +451,22 @@ export default {
     });
     on(page, 'click', '[data-coupon-apply]', (_ev, btn) => applyCoupon(btn.dataset.couponApply));
     on(page, 'click', '[data-coupon-remove]', () => cart.removeCoupon());
-    page.querySelector('.cart-wallet')?.addEventListener('toggle', (ev) => {
-      draft.walletOpen = ev.target.open;
-    });
 
-    /* Recado */
+    /* Observação */
     on(page, 'input', '#cart-note', (_ev, area) => {
       cart.setNote(area.value);
       page.querySelector('[data-note-count]').textContent = `${area.value.length}/300`;
     });
 
-    /* Bolo criado no 3D: abre e fecha a lista completa de escolhas. */
+    /* Bolo montado no 3D: abre e fecha a lista completa de escolhas. */
     on(page, 'click', '[data-details]', (_ev, btn) => {
       const id = btn.dataset.details;
       if (draft.openDetails.has(id)) draft.openDetails.delete(id);
       else draft.openDetails.add(id);
-      keepFocus(() => ctx.rerender());
+      redraw();
     });
 
-    /* Complete a festa: o item novo aparece destacado na lista, sem aviso por cima do que mudou. */
+    /* Peça também: o item novo aparece destacado na lista, sem aviso por cima do que mudou. */
     on(page, 'click', '[data-cart-add]', (_ev, btn) => {
       const line = cart.addProduct(btn.dataset.cartAdd);
       if (line) draft.freshLine = line.lineId;
@@ -500,8 +481,8 @@ export default {
       });
     }
 
-    /* Barra de frete: anima do valor anterior até o atual. */
-    const bar = page.querySelector('.progress > i');
+    /* Barra de entrega grátis: anima do valor anterior até o atual. */
+    const bar = page.querySelector('.cart-ship .progress > i');
     if (bar) {
       const pct = Number(bar.dataset.pct);
       requestAnimationFrame(() => {

@@ -145,7 +145,7 @@ const ALL_PRODUCTS = [
     long: 'A dupla que nunca sai de moda. Massa de chocolate bem molhadinha, recheio cremoso de coco fresco e cobertura de chocolate meio amargo.',
     price: 154.9,
     cat: 'trad',
-    badge: 'Favorito',
+    badge: 'Queridinho', // não usar "Favorito": ao lado do coração do card parece um favorito da própria pessoa
     rating: 4.8,
     reviews: 89,
     prepHours: 24,

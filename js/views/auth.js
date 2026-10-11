@@ -1,7 +1,7 @@
 // BOLAB — entrar / criar conta (#/entrar?next=&modo=cadastro).
 // Também exporta o campo de senha (mostrar/ocultar + medidor) usado em "Dados pessoais".
 import { html, raw, icon, on, sleep, toast, formData, applyErrors, setFieldError, validators, bindMasks, openDialog } from '../ui.js';
-import { photo, notice } from '../components.js';
+import { notice } from '../components.js';
 import { auth, cart, store } from '../store.js';
 import { navigate, goBack } from '../router.js';
 import { GOOGLE_LOGO } from '../icons.js';
@@ -93,14 +93,14 @@ export function firstNameOf(user) {
 }
 
 /* ───────── Tela ───────── */
-const BENEFITS = [
-  { icon: 'package', title: 'Acompanhe cada pedido', text: 'Da confirmação à entrega, em tempo real.' },
-  { icon: 'layers', title: 'Salve os bolos montados em 3D', text: 'Monte hoje, peça quando a data chegar.' },
-  { icon: 'map-pin', title: 'Endereços e pagamento salvos', text: 'Feche o próximo pedido em poucos toques.' },
-  { icon: 'ticket', title: 'Cupons exclusivos', text: 'Descontos que só quem tem conta recebe.' },
-];
-
 const WELCOME = COUPONS.BOLAB10; // cupom de boas-vindas (o texto vem de js/data/site.js)
+
+/** O que a conta dá, em três linhas objetivas. */
+const BENEFITS = [
+  { icon: 'receipt', title: 'Acompanhe o pedido', text: 'Do pagamento à entrega' },
+  { icon: 'map-pin', title: 'Endereços salvos', text: 'Sem digitar tudo de novo' },
+  { icon: 'ticket', title: 'Cupons', text: WELCOME ? WELCOME.label : 'Descontos para quem tem conta' },
+];
 
 const mounted = new WeakMap(); // root → { setMode, setNext }
 
@@ -133,28 +133,19 @@ export function demoNote(text) {
 }
 
 /**
- * Convite do cupom de boas-vindas. Com destino marcado (a pessoa veio do carrinho) o convite
- * "use no carrinho" não faz sentido: some, ou vira a confirmação de que o cupom já está aplicado.
+ * Cupom de boas-vindas. Com destino marcado (a pessoa veio do carrinho) o convite "use no carrinho"
+ * não faz sentido: some, ou vira a confirmação de que o cupom já está aplicado.
  */
-function couponHtml(next, place) {
+function couponHtml(next) {
   if (next) {
     const applied = cart.isEmpty() ? null : cart.totals().coupon;
     return applied ? html`<p class="auth-applied">${icon('check-circle')}<span>Seu cupom ${applied.code} já está aplicado.</span></p>` : '';
   }
   if (!WELCOME) return '';
-  if (place === 'brand') {
-    return html`
-      <button class="auth-brand__coupon" type="button" data-copy-coupon="${WELCOME.code}">
-        <span class="auth-gift__icon">${icon('gift')}</span>
-        <span><strong>${WELCOME.label}</strong>Use o cupom <code>${WELCOME.code}</code> no carrinho</span>
-        ${icon('copy')}
-      </button>
-    `;
-  }
   return html`
-    <button class="auth-gift" type="button" data-copy-coupon="${WELCOME.code}">
-      <span class="auth-gift__icon">${icon('gift')}</span>
-      <span><strong>${WELCOME.label}</strong><br />Use o cupom <code>${WELCOME.code}</code> no carrinho. Toque para copiar.</span>
+    <button class="auth-coupon" type="button" data-copy-coupon="${WELCOME.code}" aria-label="${WELCOME.label}. Copiar o cupom ${WELCOME.code}">
+      <span class="auth-coupon__text"><strong>Cupom de boas-vindas</strong><span>Toque para copiar</span></span>
+      <span class="auth-coupon__code">${WELCOME.code}${icon('copy')}</span>
     </button>
   `;
 }
@@ -184,9 +175,8 @@ function signInForm({ email, password }) {
     <form class="auth-form" novalidate data-form="signin">
       ${emailField(email)} ${passwordField({ id: 'auth-password', value: password })}
       <button class="auth-textlink auth-forgot" type="button" data-forgot>Esqueci minha senha</button>
-      <button class="btn btn--block" type="submit">Entrar</button>
+      <button class="btn btn--lg btn--block" type="submit">Entrar</button>
     </form>
-    <p class="auth-switch">Primeira vez por aqui? <button class="auth-textlink" type="button" data-mode="signup">Criar minha conta</button></p>
   `;
 }
 
@@ -201,16 +191,15 @@ function signUpForm({ name = '', email, phone = '', password }) {
       <div class="field">
         <label for="auth-phone">WhatsApp</label>
         <input class="input" id="auth-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel-national" data-mask="phone" placeholder="(65) 99999-0000" value="${phone}" />
-        <div class="field__hint">Só para falar do seu pedido e avisar quando ele sair para entrega.</div>
+        <div class="field__hint">Para avisar quando o pedido sair para entrega.</div>
       </div>
       ${passwordField({ id: 'auth-password', label: 'Crie uma senha', autocomplete: 'new-password', value: password, meter: true })}
-      <button class="btn btn--block" type="submit">Criar minha conta</button>
+      <button class="btn btn--lg btn--block" type="submit">Criar conta</button>
       <p class="auth-terms">
         Ao criar a conta, você concorda com os <button class="auth-textlink" type="button" data-legal="termos">Termos de uso</button> e a
         <button class="auth-textlink" type="button" data-legal="privacidade">Política de privacidade</button>.
       </p>
     </form>
-    <p class="auth-switch">Já tem conta? <button class="auth-textlink" type="button" data-mode="signin">Entrar</button></p>
   `;
 }
 
@@ -230,26 +219,20 @@ function cardHtml(mode, { name = '', email = '', phone = '', password = '', next
             )}
           </div>`
         : ''}
-      <h1 class="auth-card__title">${signup ? 'Crie sua conta em 1 minuto' : 'Que bom te ver por aqui'}</h1>
-      ${checkout
-        ? '' /* vindo do carrinho, o aviso acima já diz tudo: o formulário sobe na tela */
-        : html`<p class="auth-card__sub">
-            ${signup
-              ? `Acompanhe pedidos, salve seus bolos 3D e ganhe ${WELCOME ? WELCOME.label : 'cupons exclusivos'}.`
-              : 'Entre para acompanhar pedidos, rever seus bolos salvos e usar seus cupons.'}
-          </p>`}
+      <h1 class="auth-title">${signup ? 'Crie sua conta' : 'Entre para pedir'}</h1>
+      ${checkout ? '' : html`<p class="auth-sub">${signup ? 'Leva um minuto. Depois é só escolher o bolo.' : 'Use o e-mail e a senha da sua conta BOLAB.'}</p>`}
 
-      <div class="tabs" role="tablist" aria-label="Entrar ou criar conta">
+      <div class="tabs auth-tabs" role="tablist" aria-label="Entrar ou criar conta">
         <button type="button" role="tab" data-mode="signin" data-tab aria-selected="${signup ? 'false' : 'true'}">Entrar</button>
         <button type="button" role="tab" data-mode="signup" data-tab aria-selected="${signup ? 'true' : 'false'}">Criar conta</button>
       </div>
 
-      <button class="btn btn--secondary btn--block auth-google" type="button" data-google>${raw(GOOGLE_LOGO)} Continuar com Google</button>
-      ${SITE.demo ? html`<div class="auth-demo">${demoNote('o Google usa uma conta de exemplo e tudo fica só neste aparelho.')}</div>` : ''}
-
-      <div class="auth-or"><span>${signup ? 'ou cadastre com e-mail' : 'ou entre com e-mail'}</span></div>
-
       ${signup ? signUpForm({ name, email, phone, password }) : signInForm({ email, password })}
+
+      <div class="auth-or"><span>ou</span></div>
+
+      <button class="btn btn--secondary btn--block auth-google" type="button" data-google>${raw(GOOGLE_LOGO)} Continuar com Google</button>
+      ${SITE.demo ? html`<p class="auth-demo"><strong>Modo demonstração:</strong> o Google entra com uma conta de exemplo e tudo fica só neste aparelho.</p>` : ''}
     </div>
   `;
 }
@@ -310,26 +293,22 @@ export default {
     const next = safeNext(ctx.query);
     return html`
       <div class="auth">
-        <div class="container auth__grid">
+        <div class="container auth__wrap">
           <section class="auth-card" data-auth-card>${cardHtml(modeOf(ctx.query), { next })}</section>
 
-          <div class="auth-below" data-auth-coupon="card">${couponHtml(next, 'card')}</div>
-
-          <aside class="auth-brand" aria-label="Vantagens de ter uma conta BOLAB">
-            ${photo('celebration', { w: 900, alt: '', cls: 'auth-brand__img', sizes: '(min-width: 1000px) 50vw, 1px' })}
-            <span class="eyebrow">${icon('sparkles')} Sua conta ${SITE.name}</span>
-            <h2>Seu próximo bolo <em>começa aqui.</em></h2>
-            <ul class="auth-brand__list">
+          <aside class="auth-side" aria-label="O que você ganha com a conta">
+            <h2 class="auth-side__title">Com a sua conta</h2>
+            <ul class="auth-perks">
               ${BENEFITS.map(
                 (b) => html`
                   <li>
-                    <span class="auth-brand__icon">${icon(b.icon)}</span>
-                    <span><strong>${b.title}</strong><span>${b.text}</span></span>
+                    <span class="auth-perks__icon">${icon(b.icon)}</span>
+                    <span class="auth-perks__text"><strong>${b.title}</strong><span>${b.text}</span></span>
                   </li>
                 `,
               )}
             </ul>
-            <div class="auth-brand__slot" data-auth-coupon="brand">${couponHtml(next, 'brand')}</div>
+            <div class="auth-side__coupon" data-auth-coupon>${couponHtml(next)}</div>
           </aside>
         </div>
       </div>
@@ -349,7 +328,7 @@ export default {
     let leaving = false;
 
     const formEl = () => cardEl.querySelector('[data-form]');
-    const desktop = () => window.matchMedia('(min-width: 1000px) and (pointer: fine)').matches;
+    const desktop = () => window.matchMedia('(min-width: 900px) and (pointer: fine)').matches;
 
     // O que a pessoa já digitou: trocar de aba nunca apaga nada.
     const draft = { name: '', email: '', phone: '', password: '' };
@@ -366,7 +345,7 @@ export default {
       cardEl.innerHTML = String(cardHtml(mode, { ...draft, next }));
       bindMasks(cardEl);
       root.querySelectorAll('[data-auth-coupon]').forEach((slot) => {
-        slot.innerHTML = String(couponHtml(next, slot.dataset.authCoupon));
+        slot.innerHTML = String(couponHtml(next));
       });
       document.title = `${mode === 'signup' ? 'Criar conta' : 'Entrar'} · BOLAB`;
     }
@@ -429,7 +408,7 @@ export default {
       btn.type = 'button';
       btn.className = 'auth-suggest';
       btn.dataset.suggest = action;
-      btn.innerHTML = String(html`${label}${icon('arrow-right')}`);
+      btn.innerHTML = String(html`${label}${icon('chevron-right')}`);
       field.appendChild(btn);
     }
 

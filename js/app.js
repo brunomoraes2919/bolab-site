@@ -4,7 +4,7 @@ import { startShell } from './shell.js';
 import { cart, favs, store } from './store.js';
 import { toast, on, openDialog, html, raw, icon, money } from './ui.js';
 import { getProduct, sizesOf, priceOf } from './data/products.js';
-import { mediaFallback } from './components.js';
+import { mediaFallback, priceButton, optionGroupHead } from './components.js';
 
 /* Foto que não carregou (sem internet, link quebrado) vira um placeholder da marca. */
 document.addEventListener(
@@ -34,14 +34,14 @@ function openSizeSheet(p, el) {
   const dlg = openDialog({
     title: p.name,
     body: html`
-      <p class="muted">Para quantas pessoas é o bolo?</p>
-      <div class="size-sheet" role="radiogroup" aria-label="Tamanho">
+      ${optionGroupHead('Tamanho', { hint: 'Escolha 1', required: true, done: true, id: 'sheet-size-t' })}
+      <div class="size-sheet" role="radiogroup" aria-labelledby="sheet-size-t">
         ${sizes.map(
           (s, i) => html`
             <label class="option">
               <input type="radio" name="sheet-size" value="${s.id}" ${i === 0 ? raw('checked') : ''} />
               <span class="option__body">
-                <span class="option__title">Tamanho ${s.label} · ${s.diameter}</span>
+                <span class="option__title">${s.label} · ${s.diameter}</span>
                 <span class="option__desc">${s.serves}</span>
               </span>
               <strong class="size-sheet__price">${money(priceOf(p, s.id))}</strong>
@@ -51,12 +51,12 @@ function openSizeSheet(p, el) {
         )}
       </div>
     `,
-    footer: html`<button class="btn btn--block" type="button" data-sheet-add autofocus>Adicionar · ${money(priceOf(p, chosen))}</button>`,
+    footer: priceButton('Adicionar', priceOf(p, chosen), { attrs: 'data-sheet-add autofocus' }),
   });
   dlg.el.addEventListener('change', (ev) => {
     if (ev.target.name !== 'sheet-size') return;
     chosen = ev.target.value;
-    dlg.el.querySelector('[data-sheet-add]').textContent = `Adicionar · ${money(priceOf(p, chosen))}`;
+    dlg.el.querySelector('[data-sheet-add] .btn__price').textContent = money(priceOf(p, chosen));
   });
   dlg.el.addEventListener('click', (ev) => {
     if (!ev.target.closest('[data-sheet-add]')) return;

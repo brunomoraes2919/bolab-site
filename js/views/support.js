@@ -1,11 +1,13 @@
-// BOLAB — atendimento (#/atendimento): chat com o Assistente BOLAB + canais de contato.
+// BOLAB — atendimento (#/atendimento): central de ajuda + conversa com o Assistente BOLAB.
+//   #/atendimento              atalhos, perguntas frequentes e contato
+//   #/atendimento?conversa=1   a conversa (no celular ocupa a tela; no computador ela fica sempre ao lado)
 // O assistente é automático e responde com base em js/data (site.js, products.js) e nas regras
 // do personalizador (js/customizer/pricing.js), então as respostas mudam sozinhas quando o dono
-// ajusta preços, prazos ou horários.
+// ajusta preços, prazos ou horários. Por decisão da loja, não há conteúdo sobre restrição alimentar.
 import { html, raw, icon, on, money, dateLong, toDate, isoDate, confirmDialog } from '../ui.js';
-import { pageHead } from '../components.js';
+import { pageHead, listRow, dayLabel as shortDay, slotLabel } from '../components.js';
 import { auth, orders, chat, schedule } from '../store.js';
-import { SITE, COUPONS, WALLET_COUPONS, CATEGORIES } from '../data/site.js';
+import { SITE, COUPONS, WALLET_COUPONS } from '../data/site.js';
 import { PRODUCTS, SIZES, isCake } from '../data/products.js';
 import { SIZES as CUSTOM_SIZES, MAX_LAYERS, DECORS } from '../data/customizer.js';
 import { defaultConfig, prepHoursOf } from '../customizer/pricing.js';
@@ -39,25 +41,6 @@ function deliveryWindow() {
 function productsMentioned(text) {
   const t = norm(text);
   return PRODUCTS.filter((p) => isCake(p) && [p.name, ...(p.tags || [])].some((tag) => norm(tag).length > 3 && t.includes(norm(tag)))).slice(0, 3);
-}
-
-/** "glúten, leite e ovos" */
-function listPt(items) {
-  return items.length > 1 ? `${items.slice(0, -1).join(', ')} e ${items[items.length - 1]}` : items[0] || '';
-}
-
-/**
- * O que os bolos à venda contêm, lido do cadastro de produtos (campo `allergens`):
- * "Todos os bolos do cardápio levam glúten, leite e ovos. Alguns também levam coco. "
- */
-function allergenSummary() {
-  const cakes = PRODUCTS.filter(isCake);
-  const count = new Map();
-  cakes.forEach((p) => (p.allergens || []).forEach((a) => count.set(a, (count.get(a) || 0) + 1)));
-  const inAll = [...count].filter(([, n]) => n === cakes.length).map(([a]) => a.toLowerCase());
-  const inSome = [...count].filter(([, n]) => n < cakes.length).map(([a]) => a.toLowerCase());
-  if (inAll.length) return `Todos os bolos do cardápio levam ${listPt(inAll)}. ${inSome.length ? `Alguns também levam ${listPt(inSome)}. ` : ''}`;
-  return inSome.length ? `Conforme o sabor, os bolos podem levar ${listPt(inSome)}. ` : '';
 }
 
 /**
@@ -95,6 +78,20 @@ function daysRange(minHours, maxHours) {
   return daysOf(minHours) === daysOf(maxHours) ? inDays(maxHours) : `${daysOf(minHours)} a ${daysOf(maxHours)} dias`;
 }
 
+/** O pedido mais recente que ainda não foi entregue nem cancelado. */
+function activeOrder() {
+  if (!auth.isLogged()) return null;
+  for (const o of orders.list()) {
+    try {
+      const st = orders.statusOf(o);
+      if (!st.canceled && st.id !== 'delivered') return { o, st };
+    } catch {
+      // pedido com dados incompletos: ignora
+    }
+  }
+  return null;
+}
+
 const ANSWERS = {
   // Convenção da loja: primeiro a DATA em que dá para receber; a duração vem só como complemento.
   prazo() {
@@ -113,7 +110,7 @@ const ANSWERS = {
 
   pagamento() {
     return (
-      `Você paga aqui mesmo no site, ao fechar o pedido:\n` +
+      `Você paga aqui mesmo, ao fechar o pedido:\n` +
       `• Pix, com ${SITE.pix.discountPct}% de desconto e aprovação na hora\n` +
       `• Cartão de crédito em até ${SITE.card.maxInstallments}x sem juros (parcela mínima de ${money(SITE.card.minInstallment)})` +
       (SITE.demo ? `\n\nModo demonstração: os pagamentos são simulados e nada é cobrado.` : '')
@@ -123,7 +120,7 @@ const ANSWERS = {
   entrega() {
     const closed = SITE.closedWeekdays.map((d) => WEEKDAYS[d]).join(', ');
     return (
-      `Entregamos em ${SITE.region}, com hora marcada. A taxa é de ${money(SITE.shipping.fee)} e sai grátis em pedidos a partir de ${money(SITE.shipping.freeAbove)}.\n\n` +
+      `Entregamos em ${SITE.region}, com hora marcada. A taxa de entrega é ${money(SITE.shipping.fee)} e sai grátis em pedidos a partir de ${money(SITE.shipping.freeAbove)}.\n\n` +
       `Janelas de entrega: ${deliveryWindow()}.${closed ? ` Dia sem entrega: ${closed}.` : ''}\n\n` +
       `Prefere buscar? A retirada no ${SITE.pickup.name} (${SITE.pickup.address}) não tem custo.`
     );
@@ -132,34 +129,22 @@ const ANSWERS = {
   cancelar() {
     return (
       `Dá para cancelar sem custo enquanto o pedido ainda não entrou em produção: é só abrir o pedido em [Meus pedidos](#/pedidos).\n\n` +
-      `Para mudar data, sabor ou endereço, ou se o bolo já estiver em produção, fale com a equipe pelo ${WA_LINK} que a gente encontra a melhor solução.`
+      `Para mudar data, sabor ou endereço, ou se o bolo já estiver em produção, fale com a equipe pelo ${WA_LINK}.`
     );
   },
 
-  // A loja só fala de bolos para restrições alimentares quando a categoria existe em js/data/site.js.
-  // Sem categoria ativa, a resposta diz com clareza que hoje não há essas opções.
-  alergenicos(text = '') {
-    const has = (id) => CATEGORIES.some((c) => c.id === id);
-    const options = [has('veg') ? '[bolos veganos](#/cardapio?cat=veg)' : '', has('sg') ? '[bolos sem glúten](#/cardapio?cat=sg)' : ''].filter(Boolean).join(' e ');
-    const offer = options
-      ? `Temos ${options} no cardápio.`
-      : `No momento não temos bolos específicos para restrições alimentares (veganos, sem glúten ou sem lactose).`;
-    const contains = `${allergenSummary()}A página de cada produto lista os ingredientes e os alergênicos.`;
-    // Quem perguntou por uma dieta lê primeiro se temos ou não; quem perguntou pelos alergênicos, a lista.
-    const askedDiet = /vegan|gluten|lactose|restric|intoler|celiac|diabet|sem acucar/.test(norm(text));
-    return (
-      `${askedDiet ? `${offer} ${contains}` : `${contains}\n\n${offer}`}\n\n` +
-      `Importante: nossa cozinha manipula trigo, leite, ovos e castanhas, então pode haver traços em qualquer bolo. Em caso de alergia grave, converse com a equipe antes de pedir: ${WA_LINK}.`
-    );
+  // Só responde quando alguém pergunta: a loja não oferece (nem anuncia) opções para restrição alimentar.
+  restricao() {
+    return `No momento não temos bolos específicos para restrições alimentares. Se você tem alguma alergia, fale com a equipe antes de pedir: ${WA_LINK}.`;
   },
 
   bolo3d() {
     const [min3d, max3d] = customPrepRange();
     const varies = daysOf(min3d) !== daysOf(max3d);
     return (
-      `No Monte seu bolo você escolhe formato, andares, massa, recheio, cobertura e decoração, e vê o bolo girando na tela a cada escolha. O preço atualiza na hora, sem surpresa.\n\n` +
-      `Gostou do resultado? É só mandar para o carrinho, ou salvar na sua conta para pedir depois. ` +
-      `Bolos montados em 3D pedem ${daysRange(min3d, max3d)} de antecedência${varies ? ', conforme o tamanho e a decoração' : ''}. A primeira data de entrega aparece na tela enquanto você monta.\n\n` +
+      `No Monte seu bolo você escolhe formato, andares, massa, recheio, cobertura e decoração, e vê o bolo girando na tela a cada escolha. O preço atualiza na hora.\n\n` +
+      `Depois é só mandar para o carrinho, ou salvar na sua conta para pedir outro dia. ` +
+      `Bolos montados em 3D pedem ${daysRange(min3d, max3d)} de antecedência${varies ? ', conforme o tamanho e a decoração' : ''}.\n\n` +
       `[Montar meu bolo em 3D](#/monte-seu-bolo)`
     );
   },
@@ -176,7 +161,9 @@ const ANSWERS = {
     const st = orders.statusOf(o);
     if (st.canceled) return `Seu pedido mais recente, o ${o.id}, foi cancelado. Se precisar de ajuda com ele, fale com a equipe pelo ${WA_LINK}.\n\n[Ver pedido](#/pedido/${o.id})`;
     const step = st.steps[st.index];
-    const when = o.delivery?.date ? `${dateLong(o.delivery.date).toLowerCase()}${o.delivery.slot ? `, ${o.delivery.slot}` : ''}` : '';
+    const when = o.delivery?.date
+      ? `${dateLong(o.delivery.date).toLowerCase()}${o.delivery.slot ? `, entre ${slotLabel(o.delivery.slot).replace('–', ' e ')}` : ''}`
+      : '';
     const how = o.delivery?.mode === 'pickup' ? 'Retirada' : 'Entrega';
     return (
       `Seu pedido ${o.id} está na etapa “${st.label}”. ${o.payment?.paidAt ? step.desc : 'Estamos aguardando a confirmação do pagamento.'}` +
@@ -190,9 +177,9 @@ const ANSWERS = {
     const active = WALLET_COUPONS.map((code) => COUPONS[code]).filter(
       (c) => c && !(c.expires && toDate(c.expires) < new Date()) && !(c.firstOrderOnly && alreadyOrdered),
     );
-    const lines = active.map((c) => `• ${c.code}: ${c.label}${c.minSubtotal && !/R\$/.test(c.label) ? ` (a partir de ${money(c.minSubtotal)})` : ''}`);
+    const list = active.map((c) => `• ${c.code}: ${c.label}${c.minSubtotal && !/R\$/.test(c.label) ? ` (a partir de ${money(c.minSubtotal)})` : ''}`);
     return (
-      (lines.length ? `Cupons valendo agora:\n${lines.join('\n')}\n\nÉ só digitar o código no carrinho (um cupom por pedido). ` : 'No momento não temos cupons ativos. ') +
+      (list.length ? `Cupons valendo agora:\n${list.join('\n')}\n\nÉ só digitar o código no carrinho (um cupom por pedido). ` : 'No momento não temos cupons ativos. ') +
       `No Pix você ainda ganha ${SITE.pix.discountPct}% de desconto.` +
       (auth.isLogged() ? `\n\n[Ver meus cupons](#/conta/cupons)` : '')
     );
@@ -240,7 +227,7 @@ const ANSWERS = {
 
   fallback() {
     return (
-      `Essa eu ainda não sei responder direito. Posso ajudar com prazos, pagamento, entrega, alterações no pedido, alergênicos e o bolo 3D: é só tocar em um dos assuntos abaixo.\n\n` +
+      `Essa eu ainda não sei responder direito. Posso ajudar com prazos, pagamento, entrega, alterações no pedido e o bolo 3D: é só tocar em um dos assuntos abaixo.\n\n` +
       `Se preferir falar com uma pessoa, chame a equipe no ${WA_LINK}. Horário de atendimento: ${SITE.hours}.`
     );
   },
@@ -254,7 +241,7 @@ const INTENTS = [
   { id: 'pagamento', keys: ['pagament', 'pagar', 'pago$', 'pix', 'cartao', 'cartoes', 'parcel', 'credito', 'debito', 'boleto', 'dinheiro'] },
   { id: 'prazo', keys: ['prazo', 'anteceden', 'quanto tempo', 'demora', 'amanha', 'hoje$', 'urgent', 'ultima hora', 'fica pronto', 'quando fica', 'quando posso', 'para quando', 'pra quando', 'encomendar'] },
   { id: 'entrega', keys: ['entreg', 'frete', 'taxa', 'regiao', 'bairro', 'area$', 'retir', 'buscar', 'endereco', 'onde fica', 'localiz', 'horario de entrega', 'delivery'] },
-  { id: 'alergenicos', keys: ['alerg', 'gluten', 'lactose', 'vegan', 'intoler', 'castanh', 'amendoim', 'celiac', 'diabet', 'sem acucar', 'restric', 'ingrediente'] },
+  { id: 'restricao', keys: ['alerg', 'gluten', 'lactose', 'vegan', 'intoler', 'castanh', 'amendoim', 'celiac', 'diabet', 'sem acucar', 'restric'] },
   { id: 'bolo3d', keys: ['3d', 'personaliz', 'montar', 'monte', 'criar bolo', 'criar meu bolo', 'criar um bolo', 'customiz', 'andares', 'do meu jeito'] },
   { id: 'cupons', keys: ['cupom', 'cupons', 'desconto', 'promoc', 'codigo'] },
   { id: 'tamanhos', keys: ['tamanho', 'fatia', 'pessoas', 'serve', 'preco', 'valor', 'custa', 'convidad', 'quantos kg', 'quilo'] },
@@ -296,13 +283,15 @@ function replyTo(text, forced) {
   }
 }
 
-const QUICK = [
-  { id: 'prazo', label: 'Prazo para pedir', ask: 'Com quanta antecedência preciso pedir?' },
-  { id: 'pagamento', label: 'Formas de pagamento', ask: 'Quais são as formas de pagamento?' },
-  { id: 'entrega', label: 'Área de entrega', ask: 'Vocês entregam em qual região?' },
-  { id: 'cancelar', label: 'Alterar ou cancelar pedido', ask: 'Como altero ou cancelo um pedido?' },
-  { id: 'alergenicos', label: 'Alergênicos', ask: 'Quais alergênicos os bolos contêm?' },
-  { id: 'bolo3d', label: 'Como funciona o bolo 3D', ask: 'Como funciona o bolo personalizado em 3D?' },
+/** Assuntos que viram sugestão na conversa e pergunta no acordeão. */
+const TOPICS = [
+  { id: 'prazo', label: 'Prazo para pedir', ask: 'Qual a antecedência para pedir?' },
+  { id: 'entrega', label: 'Entrega e taxa', ask: 'Onde vocês entregam e quanto custa?' },
+  { id: 'pagamento', label: 'Pagamento', ask: 'Quais são as formas de pagamento?' },
+  { id: 'cancelar', label: 'Alterar ou cancelar', ask: 'Posso alterar ou cancelar o pedido?' },
+  { id: 'bolo3d', label: 'Bolo em 3D', ask: 'Como funciona o bolo montado em 3D?' },
+  { id: 'tamanhos', label: 'Tamanhos', ask: 'Quais tamanhos existem?' },
+  { id: 'cupons', label: 'Cupons', ask: 'Tem cupom de desconto?' },
 ];
 
 /* ───────── Mensagens ───────── */
@@ -332,11 +321,13 @@ function rich(text) {
   return out;
 }
 
+const botAvatar = (small = false) => html`<span class="sup-bot ${small ? 'sup-bot--sm' : ''}" aria-hidden="true">${icon('message')}</span>`;
+
 function messageHtml(m, { still = false } = {}) {
   const me = m.from === 'me';
   return html`
     <div class="sup-msg ${me ? 'sup-msg--me' : ''} ${still ? 'sup-msg--still' : ''}">
-      ${me ? '' : html`<span class="sup-bot sup-bot--sm" aria-hidden="true">${icon('cake')}</span>`}
+      ${me ? '' : botAvatar(true)}
       <div class="sup-msg__col">
         <div class="sup-msg__bubble"><span class="sr-only">${me ? 'Você: ' : 'Assistente: '}</span>${me ? lines(m.text) : rich(m.text)}</div>
         ${m.at ? html`<time class="sup-msg__time" datetime="${new Date(m.at).toISOString()}">${TIME.format(m.at)}</time>` : ''}
@@ -345,7 +336,7 @@ function messageHtml(m, { still = false } = {}) {
   `;
 }
 
-function dayLabel(at) {
+function dayOf(at) {
   const key = isoDate(new Date(at));
   const today = new Date();
   const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
@@ -371,38 +362,57 @@ function historyHtml() {
   let lastDay = '';
   return chat.list().map((m) => {
     const day = isoDate(new Date(m.at));
-    const sep = day !== lastDay ? html`<div class="sup-day">${dayLabel(m.at)}</div>` : '';
+    const sep = day !== lastDay ? html`<div class="sup-day">${dayOf(m.at)}</div>` : '';
     lastDay = day;
     return html`${sep}${messageHtml(m, { still: true })}`;
   });
 }
 
-function contactHtml() {
+/* ───────── Central de ajuda ───────── */
+function shortcuts() {
+  const current = activeOrder();
+  const how = current?.o.delivery?.mode === 'pickup' ? 'Retirada' : 'Entrega';
+  const orderRow = current
+    ? listRow({
+        iconName: 'receipt',
+        title: `Acompanhar pedido ${current.o.id}`,
+        desc: !current.o.payment?.paidAt
+          ? 'Aguardando pagamento'
+          : current.o.delivery?.date
+            ? `${how} ${shortDay(current.o.delivery.date)}${current.o.delivery.slot ? ` · ${slotLabel(current.o.delivery.slot)}` : ''}`
+            : current.st.label,
+        href: `#/pedido/${current.o.id}`,
+      })
+    : listRow({
+        iconName: 'receipt',
+        title: 'Meus pedidos',
+        desc: auth.isLogged() ? 'Acompanhe ou repita um pedido' : 'Entre para acompanhar seus pedidos',
+        href: '#/pedidos',
+      });
   return html`
-    <aside class="sup-contact" aria-label="Outros canais de atendimento">
-      <h2 class="sup-contact__title">Fale com a equipe</h2>
-      <div class="sup-contact__list">
-        <a class="sup-contact__item sup-contact__item--wa" href="${WA_URL}" target="_blank" rel="noopener">
-          <span class="sup-contact__icon">${icon('whatsapp')}</span>
-          <div><strong>WhatsApp</strong><small>${SITE.whatsappLabel}</small></div>
-          ${icon('chevron-right')}
-        </a>
-        <a class="sup-contact__item" href="mailto:${SITE.email}">
-          <span class="sup-contact__icon">${icon('mail')}</span>
-          <div><strong>E-mail</strong><small>${SITE.email}</small></div>
-          ${icon('chevron-right')}
-        </a>
-        <div class="sup-contact__item sup-contact__item--info">
-          <span class="sup-contact__icon">${icon('clock')}</span>
-          <div><strong>Horário de atendimento</strong><small>${SITE.hours}</small></div>
-        </div>
-        <div class="sup-contact__item sup-contact__item--info">
-          <span class="sup-contact__icon">${icon('store')}</span>
-          <div><strong>Retirada no ${SITE.pickup.name}</strong><small>${SITE.pickup.address}</small></div>
-        </div>
+    <div class="card sup-list">
+      ${listRow({ iconName: 'whatsapp', title: 'Falar no WhatsApp', desc: SITE.whatsappLabel, href: WA_URL, attrs: 'target="_blank" rel="noopener"' })}
+      ${orderRow}
+      ${listRow({ iconName: 'mail', title: 'Enviar e-mail', desc: SITE.email, href: `mailto:${SITE.email}` })}
+    </div>
+  `;
+}
+
+function faq() {
+  return html`
+    <section class="sup-group" aria-labelledby="sup-faq-t">
+      <h2 class="sup-group__title" id="sup-faq-t">Perguntas frequentes</h2>
+      <div class="card accordion sup-faq">
+        ${TOPICS.map(
+          (t) => html`
+            <details>
+              <summary>${t.ask}${icon('plus')}</summary>
+              <div class="accordion__body">${rich(ANSWERS[t.id]())}</div>
+            </details>
+          `,
+        )}
       </div>
-      <p class="acc-note sup-contact__note">${icon('info')}<span>A equipe responde no horário de atendimento. Fora dele, deixe sua mensagem que retornamos assim que abrirmos.</span></p>
-    </aside>
+    </section>
   `;
 }
 
@@ -410,44 +420,65 @@ export default {
   title: 'Atendimento',
   layout: 'plain',
 
-  render() {
-    const hasHistory = chat.list().length > 0;
+  render(ctx) {
+    const talk = ctx.query.conversa === '1';
+    const history = chat.list();
     const hasOrders = auth.isLogged() && orders.count() > 0;
     return html`
-      <div class="container sup">
-        ${pageHead('Atendimento', { back: '/', sub: 'Tire suas dúvidas na hora ou fale com a nossa equipe.' })}
-        <div class="sup-layout">
-          <section class="card sup-chat" aria-label="Conversa com o Assistente BOLAB">
-            <header class="sup-chat__head">
-              <span class="sup-bot" aria-hidden="true">${icon('cake')}</span>
-              <div class="sup-chat__who">
-                <strong>Assistente BOLAB</strong>
-                <span>Virtual · responde na hora</span>
-              </div>
-              <button class="btn btn--ghost btn--sm sup-clear" type="button" data-clear aria-label="Limpar conversa" ${hasHistory ? '' : raw('hidden')}>
-                ${icon('trash')}<span class="only-desktop">Limpar conversa</span>
-              </button>
-            </header>
+      <div class="container sup ${talk ? 'is-talk' : ''}">
+        <div class="sup-help">
+          ${pageHead('Atendimento', { back: '/', sub: 'Tire dúvidas na hora ou fale com a equipe.' })} ${shortcuts()}
 
-            <div class="sup-chat__list" data-list role="log" aria-live="polite" aria-label="Mensagens" tabindex="0">${introHtml()}${historyHtml()}</div>
+          <a class="card sup-start" href="#/atendimento?conversa=1">
+            ${botAvatar()}
+            <span class="sup-start__body">
+              <strong>Assistente BOLAB</strong>
+              <span>Virtual · responde na hora</span>
+            </span>
+            <span class="btn btn--sm">${history.length ? 'Continuar' : 'Conversar'}</span>
+          </a>
 
-            <div class="sup-chat__bottom">
-              <div class="sup-quick" role="group" aria-label="Perguntas frequentes">
-                ${hasOrders
-                  ? html`<button class="sup-chip" type="button" data-quick="pedido" data-ask="Como está o meu pedido?"><span class="chip">${icon('package')} Meu pedido</span></button>`
-                  : ''}
-                ${QUICK.map((q) => html`<button class="sup-chip" type="button" data-quick="${q.id}" data-ask="${q.ask}"><span class="chip">${q.label}</span></button>`)}
-              </div>
-              <form class="sup-chat__form" data-chat-form autocomplete="off">
-                <label class="sr-only" for="sup-input">Sua mensagem</label>
-                <input class="input" id="sup-input" name="text" type="text" placeholder="Escreva sua dúvida…" maxlength="400" enterkeyhint="send" autocomplete="off" />
-                <button class="sup-send" type="submit" aria-label="Enviar mensagem">${icon('send')}</button>
-              </form>
+          ${faq()}
+
+          <div class="card sup-list sup-info">
+            <div class="row">
+              <span class="row__icon">${icon('clock')}</span>
+              <span class="row__body"><span class="row__title">Horário de atendimento</span><span class="row__desc">${SITE.hours}</span></span>
             </div>
-          </section>
-
-          ${contactHtml()}
+            <div class="row">
+              <span class="row__icon">${icon('store')}</span>
+              <span class="row__body"><span class="row__title">${SITE.pickup.name}</span><span class="row__desc">${SITE.pickup.address}, ${SITE.city}</span></span>
+            </div>
+          </div>
         </div>
+
+        <section class="card sup-talk" aria-label="Conversa com o Assistente BOLAB">
+          <header class="sup-talk__head">
+            <button class="icon-btn sup-talk__back" type="button" data-back="/atendimento" aria-label="Voltar para a ajuda">${icon('arrow-left')}</button>
+            ${botAvatar()}
+            <div class="sup-talk__who">
+              <strong>Assistente BOLAB</strong>
+              <span>Virtual · responde na hora</span>
+            </div>
+            <button class="icon-btn sup-clear" type="button" data-clear aria-label="Limpar conversa" ${history.length ? '' : raw('hidden')}>${icon('trash')}</button>
+          </header>
+
+          <div class="sup-talk__list" data-list role="log" aria-live="polite" aria-label="Mensagens" tabindex="0">${introHtml()}${historyHtml()}</div>
+
+          <div class="sup-talk__bottom">
+            <div class="sup-quick" role="group" aria-label="Assuntos">
+              ${hasOrders
+                ? html`<button class="sup-chip" type="button" data-quick="pedido" data-ask="Como está o meu pedido?"><span class="chip">${icon('receipt')} Meu pedido</span></button>`
+                : ''}
+              ${TOPICS.slice(0, 5).map((t) => html`<button class="sup-chip" type="button" data-quick="${t.id}" data-ask="${t.ask}"><span class="chip">${t.label}</span></button>`)}
+            </div>
+            <form class="sup-talk__form" data-chat-form autocomplete="off">
+              <label class="sr-only" for="sup-input">Sua mensagem</label>
+              <input class="input" id="sup-input" name="text" type="text" placeholder="Escreva sua dúvida" maxlength="400" enterkeyhint="send" autocomplete="off" />
+              <button class="sup-send" type="submit" aria-label="Enviar mensagem">${icon('send')}</button>
+            </form>
+          </div>
+        </section>
       </div>
     `;
   },
@@ -468,7 +499,7 @@ export default {
     function append(m) {
       const day = isoDate(new Date(m.at));
       const tpl = document.createElement('template');
-      tpl.innerHTML = String(html`${day !== lastDay ? html`<div class="sup-day">${dayLabel(m.at)}</div>` : ''}${messageHtml(m)}`);
+      tpl.innerHTML = String(html`${day !== lastDay ? html`<div class="sup-day">${dayOf(m.at)}</div>` : ''}${messageHtml(m)}`);
       lastDay = day;
       list.insertBefore(tpl.content, typingEl); // a bolinha de "digitando" fica sempre por último
       clearBtn.hidden = false;
@@ -480,7 +511,7 @@ export default {
         const tpl = document.createElement('template');
         tpl.innerHTML = String(html`
           <div class="sup-msg" data-typing>
-            <span class="sup-bot sup-bot--sm" aria-hidden="true">${icon('cake')}</span>
+            ${botAvatar(true)}
             <div class="sup-msg__bubble"><span class="sr-only">O assistente está escrevendo</span><span class="sup-typing" aria-hidden="true"><i></i><i></i><i></i></span></div>
           </div>
         `);
@@ -538,6 +569,13 @@ export default {
       chat.clear();
       list.innerHTML = String(introHtml());
       clearBtn.hidden = true;
+    });
+
+    // No acordeão, abrir uma pergunta fecha as outras.
+    root.querySelectorAll('.sup-faq details').forEach((d) => {
+      d.addEventListener('toggle', () => {
+        if (d.open) root.querySelectorAll('.sup-faq details[open]').forEach((o) => o !== d && (o.open = false));
+      });
     });
 
     toBottom();

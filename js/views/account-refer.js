@@ -3,11 +3,12 @@
 import { html, icon, on, toast, money, copyText } from '../ui.js';
 import { auth } from '../store.js';
 import { SITE } from '../data/site.js';
-import { accountPage, firstName } from './account.js';
+import { accountPage, bindAccount, firstName } from './account.js';
 import { demoNote } from './auth.js';
 
 const REWARD = 20; // crédito para quem indica (R$)
 const FRIEND_PCT = 10; // desconto para quem foi indicado (%)
+const reward = () => money(REWARD).replace(/,00$/, '');
 
 /** Código pessoal e estável: primeiro nome + 4 caracteres do identificador da conta. */
 function referralCode(user) {
@@ -31,9 +32,9 @@ function inviteText(code) {
 }
 
 const STEPS = [
-  { title: 'Envie o seu código', text: 'Mande para as amigas, a família, o grupo do trabalho: quem tiver uma data especial chegando.' },
-  { title: `Sua amiga ganha ${FRIEND_PCT}% OFF`, text: 'O desconto vale no primeiro pedido dela, usando o seu código.' },
-  { title: `Você ganha ${money(REWARD).replace(/,00$/, '')}`, text: 'O crédito entra na sua conta assim que ela receber o bolo.' },
+  { title: 'Envie seu código', text: 'Para quem tem uma festa chegando.' },
+  { title: `Ela ganha ${FRIEND_PCT}% OFF`, text: 'No primeiro pedido, usando o seu código.' },
+  { title: `Você ganha ${reward()}`, text: 'O crédito entra quando ela receber o bolo.' },
 ];
 
 export default {
@@ -50,36 +51,36 @@ export default {
       title: 'Indique e ganhe',
       active: 'indicar',
       body: html`
-        <section class="acc-refer">
-          <span class="eyebrow">${icon('gift')} Bolo bom a gente divide</span>
-          <h2>Indique uma amiga e <em>ganhe ${money(REWARD).replace(/,00$/, '')}.</em></h2>
-          <p>Ela ganha ${FRIEND_PCT}% OFF no primeiro pedido. Você ganha ${money(REWARD).replace(/,00$/, '')} em créditos a cada amiga que receber o bolo.</p>
+        <section class="card acc-refer">
+          <h2>Ganhe ${reward()} a cada indicação</h2>
+          <p>Quem você indicar ganha ${FRIEND_PCT}% OFF no primeiro pedido.</p>
 
-          <div class="acc-refer__code">
+          <div class="acc-code">
             <div>
-              <small>Seu código</small>
+              <span>Seu código</span>
               <strong data-code>${code}</strong>
             </div>
-            <button class="btn btn--sm" type="button" data-copy-code aria-label="Copiar o código ${code}">${icon('copy')} Copiar</button>
+            <button class="btn btn--sm btn--soft" type="button" data-copy-code aria-label="Copiar o código ${code}">${icon('copy')} Copiar</button>
           </div>
 
           <div class="acc-refer__share">
-            <a class="btn btn--wa" href="https://wa.me/?text=${encodeURIComponent(inviteText(code))}" target="_blank" rel="noopener">${icon('whatsapp')} Enviar no WhatsApp</a>
-            ${canShare ? html`<button class="btn btn--glass" type="button" data-share>${icon('share')} Compartilhar</button>` : ''}
-            <button class="btn btn--glass" type="button" data-copy-invite>${icon('copy')} Copiar convite</button>
+            <a class="btn" href="https://wa.me/?text=${encodeURIComponent(inviteText(code))}" target="_blank" rel="noopener">${icon('whatsapp')} Enviar no WhatsApp</a>
+            ${canShare
+              ? html`<button class="btn btn--secondary" type="button" data-share>${icon('share')} Compartilhar</button>`
+              : html`<button class="btn btn--secondary" type="button" data-copy-invite>${icon('copy')} Copiar convite</button>`}
           </div>
         </section>
 
-        <section aria-label="Como funciona">
-          <h2 class="acc-subtitle">Como funciona</h2>
-          <ol class="acc-steps">
+        <section class="acc-group">
+          <h2 class="acc-group__title">Como funciona</h2>
+          <ol class="card acc-steps">
             ${STEPS.map(
               (s, i) => html`
                 <li>
                   <span class="acc-steps__num" aria-hidden="true">${i + 1}</span>
                   <div>
-                    <h3>${s.title}</h3>
-                    <p>${s.text}</p>
+                    <strong>${s.title}</strong>
+                    <span>${s.text}</span>
                   </div>
                 </li>
               `,
@@ -87,22 +88,28 @@ export default {
           </ol>
         </section>
 
-        <section class="card card--pad" aria-label="Suas indicações">
-          <div class="acc-card__head">
-            <h2>Suas indicações</h2>
-            <p>Quando alguém pedir com o seu código, aparece aqui.</p>
+        <section class="acc-group">
+          <h2 class="acc-group__title">Suas indicações</h2>
+          <div class="card acc-list">
+            <div class="row">
+              <span class="row__icon">${icon('users')}</span>
+              <span class="row__body"><span class="row__title">Indicações</span><span class="row__desc">Quem pediu com o seu código</span></span>
+              <strong class="acc-figure">0</strong>
+            </div>
+            <div class="row">
+              <span class="row__icon">${icon('gift')}</span>
+              <span class="row__body"><span class="row__title">Créditos</span><span class="row__desc">Para usar nos próximos pedidos</span></span>
+              <strong class="acc-figure">${money(0)}</strong>
+            </div>
           </div>
-          <div class="acc-refer-stats">
-            <div><strong>0</strong><span>indicações até agora</span></div>
-            <div><strong>${money(0)}</strong><span>em créditos</span></div>
-          </div>
-          ${demoNote('as indicações ainda não são contabilizadas e o código não vale como cupom no carrinho. Quando o programa entrar no ar, tudo aparece nesta tela.')}
+          ${demoNote('as indicações ainda não são contabilizadas e o código não vale como cupom no carrinho.')}
         </section>
       `,
     });
   },
 
   mount(root) {
+    bindAccount(root);
     const user = auth.user();
     if (!user) return;
     const code = referralCode(user);
@@ -114,7 +121,7 @@ export default {
 
     on(root, 'click', '[data-copy-invite]', async () => {
       const ok = await copyText(inviteText(code));
-      toast(ok ? 'Convite copiado. Agora é só colar na conversa.' : `Não deu para copiar. Seu código é ${code}.`, { type: ok ? 'success' : 'info' });
+      toast(ok ? 'Convite copiado. É só colar na conversa.' : `Não deu para copiar. Seu código é ${code}.`, { type: ok ? 'success' : 'info' });
     });
 
     on(root, 'click', '[data-share]', async () => {
@@ -123,7 +130,7 @@ export default {
       } catch (err) {
         if (err?.name === 'AbortError') return; // a pessoa fechou a janela de compartilhar
         const ok = await copyText(inviteText(code));
-        toast(ok ? 'Convite copiado. Agora é só colar na conversa.' : `Seu código é ${code}.`, { type: 'success' });
+        toast(ok ? 'Convite copiado. É só colar na conversa.' : `Seu código é ${code}.`, { type: 'success' });
       }
     });
   },

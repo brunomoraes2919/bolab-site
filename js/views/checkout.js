@@ -19,8 +19,8 @@ import {
   toast,
   openDialog,
 } from '../ui.js';
-import { lineThumb, totalsSummary } from '../components.js';
-import { auth, cart, addresses, cards, orders, schedule, isServedCity } from '../store.js';
+import { lineThumb, totalsSummary, dayLabel, slotLabel } from '../components.js';
+import { auth, cart, addresses, cards, orders, schedule, prefs, isServedCity } from '../store.js';
 import { lookupCep } from '../cep.js';
 import { navigate } from '../router.js';
 import { SITE } from '../data/site.js';
@@ -36,12 +36,12 @@ const WEEKDAYS = [
   ['S', 'Sexta-feira'],
   ['S', 'Sábado'],
 ];
-const STEP_NAMES = ['Entrega', 'Agendamento', 'Pagamento'];
+const STEP_NAMES = ['Entrega', 'Data e horário', 'Pagamento'];
 const MONTH_FMT = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' });
 const MONTH_SHORT = new Intl.DateTimeFormat('pt-BR', { month: 'short' });
 const WEEKDAY_SHORT = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 const CORREIOS_CEP = 'https://buscacepinter.correios.com.br/app/endereco/index.php';
-const STRIP_DAYS = 10; // dias mostrados na faixa do celular
+const STRIP_DAYS = 14; // dias mostrados na faixa de chips
 const PROGRESS_KEY = 'bolab:checkout'; // sessionStorage: andamento do checkout (nunca dados de cartão)
 const TEST_CARD = { number: '4111 1111 1111 1111', expiry: '12/30', cvv: '123', cpf: '529.982.247-25' };
 
@@ -54,6 +54,8 @@ const fresh = () => ({
   step: 1, // etapa aberta
   reached: 1, // etapa mais avançada já liberada
   mode: 'delivery',
+  prefMode: '', // último modo lido do cabeçalho (prefs 'receiveMode')
+  prefAddress: '', // último endereço lido do cabeçalho (prefs 'receiveAddress')
   addressId: 'new', // id de um endereço salvo ou 'new'
   addr: blankAddress(),
   addrOpen: false, // campos de endereço aparecem depois do CEP (ou de "Não sei meu CEP")
@@ -65,7 +67,7 @@ const fresh = () => ({
   date: '',
   slot: '',
   month: '', // 'AAAA-MM' em exibição no calendário
-  fullCal: false, // no celular: calendário do mês aberto no lugar da faixa de dias
+  fullCal: false, // calendário do mês aberto no lugar da faixa de dias
   payment: 'pix',
   cardId: 'new', // id de um cartão salvo ou 'new'
   card: { number: '', holder: '', expiry: '', cvv: '', cpf: '', save: false }, // salvar o cartão é escolha da cliente
@@ -76,7 +78,6 @@ const fresh = () => ({
 
 let S = fresh();
 let leaving = false; // pedido criado: a tela está só esperando a próxima abrir
-let compact = false; // etapa estreita demais para calendário e horários lado a lado (celular)
 
 /** Campo do formulário → onde o valor mora no estado. */
 const BIND = {
@@ -148,13 +149,28 @@ function hourText(hhmm) {
   return `${Number(h)}h${m && m !== '00' ? m : ''}`;
 }
 
-/**
- * A etapa tem menos de 600px de largura útil? (mesma medida da regra @container do CSS.)
- * Nesse caso o calendário do mês dá lugar a uma faixa com os próximos dias.
- */
-function guessCompact() {
-  const w = document.documentElement.clientWidth;
-  return w < 900 ? w < 664 : Math.min(w, 1264) < 1140;
+/** "14:00 – 16:00" → "14h–16h" (o mesmo formato do acompanhamento do pedido: slotLabel). */
+const slotText = slotLabel;
+
+/** Modo escolhido no cabeçalho da loja ("Entregar em" / "Retirar no ateliê"). */
+function headerMode() {
+  return prefs.get('receiveMode', 'delivery') === 'pickup' ? 'pickup' : 'delivery';
+}
+
+/** Troca o modo aqui e deixa o cabeçalho da loja igual. */
+function setMode(mode) {
+  S.mode = mode;
+  S.prefMode = mode;
+  prefs.set('receiveMode', mode);
+}
+
+/** Escolhe um endereço salvo aqui e deixa o cabeçalho da loja igual. */
+function setAddress(id) {
+  S.addressId = id;
+  if (id !== 'new') {
+    S.prefAddress = id;
+    prefs.set('receiveAddress', id);
+  }
 }
 
 /** Valores com a forma de pagamento já considerada a partir da etapa 3. */
@@ -226,7 +242,6 @@ function restore(userId) {
   try {
     const saved = JSON.parse(sessionStorage.getItem(PROGRESS_KEY) || 'null');
     if (!saved || saved.userId !== userId) return;
-    if (saved.mode === 'delivery' || saved.mode === 'pickup') S.mode = saved.mode;
     if (saved.addressId && addresses.get(saved.addressId)) S.addressId = saved.addressId;
     if (/^\d{4}-\d{2}-\d{2}$/.test(saved.date || '')) S.date = saved.date;
     if (typeof saved.slot === 'string') S.slot = saved.slot;
@@ -252,6 +267,18 @@ function sync() {
     S.addressId = preferredAddressId();
     S.cardId = cards.default()?.id || 'new';
     restore(user.id);
+  }
+  // O que a pessoa escolheu no cabeçalho ("Entregar em" / "Retirar no ateliê" e o endereço) vale aqui.
+  const pm = headerMode();
+  if (pm !== S.prefMode) {
+    S.prefMode = pm;
+    S.mode = pm;
+  }
+  const pa = prefs.get('receiveAddress') || '';
+  if (pa !== S.prefAddress) {
+    S.prefAddress = pa;
+    const chosen = addresses.get(pa);
+    if (chosen && isServedCity(chosen.city, chosen.uf)) S.addressId = chosen.id;
   }
   if (S.addressId !== 'new' && !addresses.get(S.addressId)) S.addressId = preferredAddressId();
   if (S.cardId !== 'new' && !cards.get(S.cardId)) S.cardId = cards.default()?.id || 'new';
@@ -296,20 +323,26 @@ function stepperHtml() {
 }
 
 /* ───────── Etapa 1 — Entrega ───────── */
-function modeOption(value, iconName, title, desc, price) {
+function modeTabs() {
+  const tab = (id, label, iconName) => html`
+    <button type="button" role="radio" id="co-mode-${id}" data-co-mode="${id}" aria-checked="${S.mode === id ? 'true' : 'false'}">${icon(iconName)}${label}</button>
+  `;
+  return html`<div class="tabs co-mode" role="radiogroup" aria-label="Como você quer receber">${tab('delivery', 'Entrega', 'truck')} ${tab('pickup', 'Retirada', 'store')}</div>`;
+}
+
+/** Linha de contexto do modo: taxa e primeira data, em chips de informação. */
+function modeFacts() {
+  const pickup = S.mode === 'pickup';
+  const t = cart.totals({ mode: S.mode });
+  const first = dayLabel(schedule.earliest());
   return html`
-    <label class="option co-option">
-      <input type="radio" name="mode" id="co-mode-${value}" value="${value}" ${attr('checked', S.mode === value)} />
-      <span class="option__icon">${icon(iconName)}</span>
-      <span class="option__body co-option__body">
-        <span class="co-option__main">
-          <span class="option__title">${title}</span>
-          <span class="option__desc">${desc}</span>
-        </span>
-        <span class="co-option__price ${price === 'Grátis' ? 'is-free' : ''}">${price}</span>
-      </span>
-      <span class="option__check">${icon('check')}</span>
-    </label>
+    <ul class="co-facts">
+      <li class="chip chip--info ${pickup || t.shipping === 0 ? 'chip--positive' : ''}">
+        ${icon(pickup ? 'store' : 'truck')}
+        <span>${pickup ? 'Retirada grátis' : t.shipping === 0 ? 'Entrega grátis' : html`Entrega <strong>${money(t.shipping)}</strong>`}</span>
+      </li>
+      <li class="chip chip--info">${icon('calendar')}<span>A partir de <strong>${first}</strong></span></li>
+    </ul>
   `;
 }
 
@@ -437,7 +470,7 @@ function addressBlock() {
   const list = addresses.list();
   return html`
     <fieldset class="co-group">
-      <legend>Onde entregamos?</legend>
+      <legend>Entregar em</legend>
       ${list.length
         ? html`
             <div class="co-options">
@@ -457,7 +490,7 @@ function addressBlock() {
               <label class="option co-option co-option--add">
                 <input type="radio" name="addressId" id="co-addr-new" value="new" ${attr('checked', S.addressId === 'new')} />
                 <span class="option__icon">${icon('plus')}</span>
-                <span class="option__body"><span class="option__title">Entregar em outro endereço</span></span>
+                <span class="option__body"><span class="option__title">Novo endereço</span></span>
                 <span class="option__check">${icon('check')}</span>
               </label>
             </div>
@@ -483,14 +516,10 @@ function pickupBlock() {
 }
 
 function deliveryBody() {
-  const t = cart.totals({ mode: 'delivery' });
   const pickup = S.mode === 'pickup';
   return html`
     <form data-co-form="delivery" novalidate>
-      <div class="co-options" role="radiogroup" aria-label="Como você quer receber o pedido">
-        ${modeOption('delivery', 'truck', 'Receber em casa', `Entrega com hora marcada em ${SITE.region}`, t.shipping === 0 ? 'Grátis' : money(t.shipping))}
-        ${modeOption('pickup', 'store', 'Retirar no ateliê', SITE.pickup.address, 'Grátis')}
-      </div>
+      ${modeTabs()} ${modeFacts()}
 
       ${pickup ? pickupBlock() : addressBlock()}
 
@@ -520,7 +549,7 @@ function deliveryBody() {
         </div>
       </fieldset>
 
-      <button class="btn btn--lg btn--block co-next" type="submit" id="co-next-1">Escolher dia e horário ${icon('arrow-right')}</button>
+      <div class="co-cta"><button class="btn btn--lg btn--block co-next" type="submit" id="co-next-1">Escolher data e horário${icon('arrow-right')}</button></div>
     </form>
   `;
 }
@@ -589,9 +618,8 @@ function calendarHtml() {
   `;
 }
 
-/** Celular: faixa com os próximos dias disponíveis, no lugar do calendário do mês. */
+/** Dias em chips roláveis: os próximos dias em que dá para agendar. */
 function dayStripHtml() {
-  const today = isoDate(new Date());
   const days = nextBookableDays(STRIP_DAYS);
   // Um dia escolhido no calendário completo, fora da faixa, continua visível aqui.
   if (S.date && !days.some((d) => isoDate(d) === S.date)) {
@@ -603,9 +631,10 @@ function dayStripHtml() {
       ${days.map((d) => {
         const iso = isoDate(d);
         const selected = S.date === iso;
+        const near = dayLabel(d); // "hoje" | "amanhã" | "seg, 12/10"
         return html`
           <button class="co-day ${selected ? 'is-selected' : ''}" type="button" id="co-day-${iso}" data-co-day="${iso}" aria-label="${dateLong(d)}" aria-pressed="${selected ? 'true' : 'false'}">
-            <span class="co-day__wd">${iso === today ? 'hoje' : WEEKDAY_SHORT[d.getDay()]}</span>
+            <span class="co-day__wd">${near === 'hoje' || near === 'amanhã' ? near : WEEKDAY_SHORT[d.getDay()]}</span>
             <strong class="co-day__num">${d.getDate()}</strong>
             <span class="co-day__mo">${MONTH_SHORT.format(d).replace('.', '')}</span>
           </button>
@@ -616,11 +645,12 @@ function dayStripHtml() {
 }
 
 function slotsHtml() {
+  const pickup = S.mode === 'pickup';
   if (!S.date) {
     return html`
       <div class="co-slots co-slots--empty" data-co-slots>
         ${icon('clock')}
-        <p>Escolha um dia para ver os horários disponíveis.</p>
+        <p>Escolha um dia para ver os horários.</p>
       </div>
     `;
   }
@@ -637,8 +667,8 @@ function slotsHtml() {
   }
   return html`
     <div class="co-slots" data-co-slots>
-      <h3>Horários para <em>${dateLong(S.date).toLowerCase()}</em></h3>
-      <div class="co-slots__list" role="group" aria-label="Horários disponíveis">
+      <h3 class="co-label" id="co-slots-t">Horário de ${pickup ? 'retirada' : 'entrega'} · ${dayLabel(S.date)}</h3>
+      <div class="co-slots__list" role="group" aria-labelledby="co-slots-t">
         ${list.map((x, i) => {
           const sold = x.left === 0;
           const selected = S.slot === x.label;
@@ -651,7 +681,7 @@ function slotsHtml() {
               aria-pressed="${selected ? 'true' : 'false'}"
               ${attr('disabled', sold)}
             >
-              <span class="co-slot__time">${x.label}</span>
+              <span class="co-slot__time">${slotText(x.label)}</span>
               ${sold ? html`<span class="co-slot__tag is-sold">Esgotado</span>` : x.left === 1 ? html`<span class="co-slot__tag is-last">Últimas vagas</span>` : ''}
             </button>
           `;
@@ -665,41 +695,30 @@ function slotsHtml() {
 }
 
 function scheduleBody() {
-  const first = schedule.earliest();
   const pickup = S.mode === 'pickup';
-  const month = !compact || S.fullCal; // calendário do mês (computador, ou celular a pedido)
   const ready = Boolean(S.date && S.slot);
   return html`
     <form data-co-form="schedule" novalidate>
-      <p class="co-lead">
-        ${icon('calendar')}
-        <span>
-          Feito sob encomenda, só para você. Pedindo hoje, a primeira data para ${pickup ? 'retirar' : 'receber'} é
-          <strong>${dateLong(first).toLowerCase()}</strong>.
-        </span>
-      </p>
-      <div class="co-sched ${compact ? 'co-sched--stack' : ''}">
-        <div class="co-daypick">
-          ${month ? calendarHtml() : dayStripHtml()}
-          ${compact
-            ? html`
-                <button class="co-textbtn" type="button" id="co-cal-toggle" data-co-fullcal aria-expanded="${S.fullCal ? 'true' : 'false'}">
-                  ${icon('calendar')}${S.fullCal ? 'Ver só os próximos dias' : 'Ver calendário completo'}
-                </button>
-              `
-            : ''}
-        </div>
-        ${slotsHtml()}
+      <div class="co-daypick">
+        <h3 class="co-label">Dia da ${pickup ? 'retirada' : 'entrega'}</h3>
+        ${S.fullCal ? calendarHtml() : dayStripHtml()}
+        <button class="co-textbtn" type="button" id="co-cal-toggle" data-co-fullcal aria-expanded="${S.fullCal ? 'true' : 'false'}">
+          ${icon('calendar')}${S.fullCal ? 'Ver só os próximos dias' : 'Ver calendário completo'}
+        </button>
       </div>
-      <button class="btn btn--lg btn--block co-next" type="submit" id="co-next-2" ${attr('disabled', !ready)}>
-        ${ready ? html`Ir para o pagamento ${icon('arrow-right')}` : 'Escolha um horário'}
-      </button>
+      ${slotsHtml()}
+      <p class="co-note">${icon('info')}<span>Sob encomenda: pedindo hoje, a primeira data é <strong>${dayLabel(schedule.earliest())}</strong>.</span></p>
+      <div class="co-cta">
+        <button class="btn btn--lg btn--block co-next" type="submit" id="co-next-2" ${attr('disabled', !ready)}>
+          ${ready ? html`Ir para o pagamento${icon('arrow-right')}` : 'Escolha um horário'}
+        </button>
+      </div>
     </form>
   `;
 }
 
 function scheduleSummary() {
-  return html`<strong>${dateLong(S.date)}</strong><span>${S.mode === 'pickup' ? 'Retirada' : 'Entrega'} entre ${S.slot.replace(' – ', ' e ')}</span>`;
+  return html`<strong>${dateLong(S.date)}</strong><span>${S.mode === 'pickup' ? 'Retirada' : 'Entrega'} entre ${slotText(S.slot).replace('–', ' e ')}</span>`;
 }
 
 /* ───────── Etapa 3 — Pagamento ───────── */
@@ -843,7 +862,7 @@ function paymentBody() {
           <span class="option__icon">${icon('pix')}</span>
           <span class="option__body co-option__body">
             <span class="co-option__main">
-              <span class="option__title co-option__name">Pix <span class="badge badge--green">${SITE.pix.discountPct}% OFF</span></span>
+              <span class="option__title co-option__name">Pix <span class="badge badge--green">${SITE.pix.discountPct}% de desconto</span></span>
               <span class="option__desc">Aprovação na hora</span>
             </span>
             <span class="co-option__price">${money(pix.total)}</span>
@@ -880,13 +899,15 @@ function paymentBody() {
           `
         : ''}
 
-      <button class="btn btn--lg btn--block co-pay" type="submit" id="co-pay" data-co-pay>
-        ${icon('lock')}
-        <span data-co-pay-label>${isPix ? `Gerar Pix de ${money(pix.total)}` : `Pagar ${money(card.total)}`}</span>
-      </button>
+      <div class="co-cta">
+        <button class="btn btn--price btn--lg btn--block co-pay" type="submit" id="co-pay" data-co-pay>
+          <span class="btn__label">${icon('lock')}<span data-co-pay-label>${isPix ? 'Pagar com Pix' : 'Pagar'}</span></span>
+          <span class="btn__price">${money(isPix ? pix.total : card.total)}</span>
+        </button>
+      </div>
       <p class="co-legal">
         Ao fazer o pedido, você concorda com a nossa
-        <button class="link" type="button" id="co-policy" data-co-policy>política de cancelamento</button>: grátis enquanto o seu bolo não entrou em produção.
+        <button class="link" type="button" id="co-policy" data-co-policy>política de cancelamento</button>: grátis enquanto o pedido não entrou em produção.
       </p>
     </form>
   `;
@@ -913,20 +934,20 @@ function mainHtml() {
   const pickup = S.mode === 'pickup';
   return html`
     ${stepCard(1, {
-      title: 'Entrega',
-      hint: 'Como você quer receber o seu pedido?',
+      title: 'Entrega ou retirada',
+      hint: 'Como você quer receber?',
       summary: deliverySummary,
       body: deliveryBody,
     })}
     ${stepCard(2, {
-      title: 'Agendamento',
-      hint: pickup ? 'Escolha o dia e o horário da retirada.' : 'Escolha o dia e o horário da entrega.',
+      title: 'Data e horário',
+      hint: pickup ? 'Quando você quer retirar?' : 'Quando você quer receber?',
       summary: scheduleSummary,
       body: scheduleBody,
     })}
     ${stepCard(3, {
       title: 'Pagamento',
-      hint: `Pix com ${SITE.pix.discountPct}% de desconto ou cartão em até ${SITE.card.maxInstallments}x.`,
+      hint: `Pix com ${SITE.pix.discountPct}% de desconto ou cartão em até ${SITE.card.maxInstallments}x sem juros.`,
       summary: () => '',
       body: paymentBody,
     })}
@@ -980,7 +1001,7 @@ function summaryHtml() {
         </ul>
         <div class="co-sum__totals">${totalsSummary(t, { mode: S.mode })}</div>
         ${t.pixDiscount === 0
-          ? html`<p class="co-sum__tip">${icon('pix')}<span>Pagando no Pix você ganha <strong>${SITE.pix.discountPct}% de desconto</strong>.</span></p>`
+          ? html`<p class="notice notice--green co-sum__tip">${icon('pix')}<span><strong>${money(cart.totals({ mode: S.mode, payment: 'pix' }).total)} no Pix</strong> · ${SITE.pix.discountPct}% de desconto</span></p>`
           : ''}
         <a class="co-sum__edit link" href="#/carrinho">Editar carrinho</a>
       </div>
@@ -1047,7 +1068,6 @@ export default {
 
   render() {
     if (cart.isEmpty()) return html`<div class="container co" aria-busy="true"></div>`;
-    compact = guessCompact();
     sync();
     return html`
       <div class="container co">
@@ -1113,15 +1133,6 @@ export default {
       if (!leaving) ctx.rerender();
     });
 
-    // Girou o aparelho ou mudou a largura da janela: troca entre faixa de dias e calendário.
-    const onResize = () => {
-      const next = guessCompact();
-      if (next === compact) return;
-      compact = next;
-      if (S.step === 2 && !S.placing) paint();
-    };
-    window.addEventListener('resize', onResize);
-
     /* ── Navegação entre etapas ── */
     on(page, 'click', '[data-co-edit]', (_ev, btn) => {
       if (S.placing) return;
@@ -1158,11 +1169,8 @@ export default {
     });
 
     on(page, 'change', 'input[type="radio"], input[type="checkbox"], select', (_ev, el) => {
-      if (el.name === 'mode') {
-        S.mode = el.value;
-        paint();
-      } else if (el.name === 'addressId') {
-        S.addressId = el.value;
+      if (el.name === 'addressId') {
+        setAddress(el.value);
         paint();
       } else if (el.name === 'uf') {
         checkServed();
@@ -1234,8 +1242,24 @@ export default {
       btn.closest('.co-unserved').scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
+    on(page, 'click', '[data-co-mode]', (_ev, btn) => {
+      if (S.mode === btn.dataset.coMode) return;
+      setMode(btn.dataset.coMode);
+      paint();
+    });
+
+    // Entrega | Retirada se comporta como um grupo de opções: as setas trocam de uma para a outra.
+    on(page, 'keydown', '[data-co-mode]', (ev, btn) => {
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(ev.key)) return;
+      ev.preventDefault();
+      const other = btn.dataset.coMode === 'delivery' ? 'pickup' : 'delivery';
+      setMode(other);
+      paint();
+      page.querySelector(`#co-mode-${other}`)?.focus({ preventScroll: true });
+    });
+
     on(page, 'click', '[data-co-pickup]', () => {
-      S.mode = 'pickup';
+      setMode('pickup');
       paint({ scrollTo: 1 });
       page.querySelector('#co-mode-pickup')?.focus({ preventScroll: true });
     });
@@ -1330,7 +1354,7 @@ export default {
         // "cuiaba" digitado à mão é salvo com o nome certo da cidade atendida ("Cuiabá").
         clean.city = SITE.deliveryCities.find((c) => plainText(c) === plainText(clean.city)) || clean.city;
         const saved = addresses.save(clean);
-        S.addressId = saved.id;
+        setAddress(saved.id);
         S.addr = blankAddress();
         S.addrOpen = false;
         S.cepUnknown = false;
@@ -1358,8 +1382,8 @@ export default {
       if (!slotFree(S.date, S.slot)) S.slot = '';
       S.month = monthKey(toDate(S.date));
       paint();
-      // Com o calendário do mês aberto no celular, os horários ficam abaixo da dobra: leva até eles.
-      if (compact && S.fullCal) page.querySelector('[data-co-slots]')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      // Com o calendário do mês aberto, os horários podem ficar abaixo da dobra: leva até eles.
+      if (S.fullCal) page.querySelector('[data-co-slots]')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
 
     on(page, 'click', '[data-co-fullcal]', () => {
@@ -1497,7 +1521,6 @@ export default {
     return () => {
       alive = false;
       offCart();
-      window.removeEventListener('resize', onResize);
     };
   },
 };

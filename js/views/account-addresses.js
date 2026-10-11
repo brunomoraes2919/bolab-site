@@ -3,7 +3,7 @@ import { html, raw, icon, on, toast, formData, applyErrors, validators, bindMask
 import { addresses } from '../store.js';
 import { lookupCep } from '../cep.js';
 import { SITE } from '../data/site.js';
-import { accountPage, rerenderOn, withLoading } from './account.js';
+import { accountPage, bindAccount, rerenderOn, withLoading } from './account.js';
 import { clearErrorsOnInput } from './auth.js';
 
 const LABELS = [
@@ -20,18 +20,19 @@ const iconOf = (label) => LABELS.find((l) => l.id === label)?.icon || 'map-pin';
 
 function addressCard(a) {
   return html`
-    <article class="card acc-addr ${a.isDefault ? 'is-default' : ''}">
+    <article class="card acc-addr">
       <div class="acc-addr__head">
         <span class="row__icon">${icon(iconOf(a.label))}</span>
-        <h2>${a.label || 'Endereço'}</h2>
-        ${a.isDefault ? html`<span class="badge badge--solid">${icon('check')} Padrão</span>` : ''}
+        <div class="acc-addr__body">
+          <h2>${a.label || 'Endereço'}${a.isDefault ? html` <span class="badge badge--rose">Padrão</span>` : ''}</h2>
+          <p>${addresses.format(a)}</p>
+          <p class="acc-addr__meta">CEP ${masks.cep(String(a.cep || ''))}${a.reference ? ` · ${a.reference}` : ''}</p>
+        </div>
       </div>
-      <p class="acc-addr__text">${addresses.format(a)}</p>
-      <p class="acc-addr__meta">CEP ${masks.cep(String(a.cep || ''))}${a.reference ? html`<br />Referência: ${a.reference}` : ''}</p>
       <div class="acc-item-actions">
-        <button class="btn btn--sm btn--ghost" type="button" data-edit="${a.id}">${icon('edit')} Editar</button>
+        <button class="btn btn--sm btn--neutral" type="button" data-edit="${a.id}">${icon('edit')} Editar</button>
         ${a.isDefault ? '' : html`<button class="btn btn--sm btn--ghost" type="button" data-default="${a.id}">Tornar padrão</button>`}
-        <button class="btn btn--sm btn--ghost btn--danger" type="button" data-remove="${a.id}">${icon('trash')} Remover</button>
+        <button class="btn btn--sm btn--ghost acc-danger" type="button" data-remove="${a.id}">${icon('trash')} Excluir</button>
       </div>
     </article>
   `;
@@ -129,7 +130,7 @@ function openAddressForm(current = null) {
       </form>
     `,
     footer: html`
-      <button class="btn btn--secondary" type="button" data-dialog-close>Cancelar</button>
+      <button class="btn btn--neutral" type="button" data-dialog-close>Cancelar</button>
       <button class="btn" type="submit" form="acc-addr-form">Salvar endereço</button>
     `,
   });
@@ -237,24 +238,19 @@ export default {
     const list = addresses.list();
     return accountPage({
       title: 'Endereços',
+      sub: `Entregamos em ${SITE.region}.`,
       active: 'enderecos',
       body: list.length
         ? html`
-            <div class="acc-toolbar">
-              <p>Entregamos em ${SITE.region}. O endereço padrão já vem escolhido na hora de fechar o pedido.</p>
-              <button class="btn only-desktop" type="button" data-add>${icon('plus')} Adicionar endereço</button>
-            </div>
-            <div class="acc-list">
-              ${[...list].sort((x, y) => Number(Boolean(y.isDefault)) - Number(Boolean(x.isDefault))).map(addressCard)}
-              <button class="acc-add-tile" type="button" data-add>${icon('plus')} Adicionar outro endereço</button>
-            </div>
+            <div class="acc-cards">${[...list].sort((x, y) => Number(Boolean(y.isDefault)) - Number(Boolean(x.isDefault))).map(addressCard)}</div>
+            <button class="btn btn--secondary acc-add" type="button" data-add>${icon('plus')} Adicionar endereço</button>
           `
         : html`
             <div class="card">
               <div class="empty acc-empty">
                 <div class="empty__art">${icon('map-pin')}</div>
-                <h2>Nenhum endereço por aqui</h2>
-                <p>Salve o endereço de entrega uma vez e feche os próximos pedidos em poucos toques. Atendemos ${SITE.region}.</p>
+                <h2>Nenhum endereço salvo</h2>
+                <p>Salve uma vez e feche os próximos pedidos em poucos toques.</p>
                 <button class="btn" type="button" data-add>${icon('plus')} Adicionar endereço</button>
               </div>
             </div>
@@ -263,6 +259,7 @@ export default {
   },
 
   mount(root, ctx) {
+    bindAccount(root);
     on(root, 'click', '[data-add]', () => openAddressForm());
     on(root, 'click', '[data-edit]', (_ev, btn) => {
       const a = addresses.get(btn.dataset.edit);
@@ -276,15 +273,15 @@ export default {
       const a = addresses.get(btn.dataset.remove);
       if (!a) return;
       const ok = await confirmDialog({
-        title: 'Remover este endereço?',
+        title: 'Excluir este endereço?',
         message: `${a.label}: ${addresses.format(a)}. Pedidos já feitos não mudam.`,
-        confirmLabel: 'Remover',
+        confirmLabel: 'Excluir',
         cancelLabel: 'Manter',
         danger: true,
       });
       if (!ok) return;
       addresses.remove(a.id);
-      toast('Endereço removido.');
+      toast('Endereço excluído.');
     });
     return rerenderOn(ctx, ['addresses']);
   },
