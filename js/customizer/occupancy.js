@@ -522,7 +522,7 @@ const many = (ids) => ids.length > 1 || /^(as|os) /.test(NAMES[ids[0]] || '');
 /* ───────── Distribuidor ───────── */
 
 const MEMO = new Map();
-const MEMO_MAX = 8;
+const MEMO_MAX = 12;
 
 function configKey(config, m) {
   const d = config.decor || {};
@@ -578,7 +578,15 @@ function compute(config, m, base) {
   const stack = m.stack || [m];
   const round = m.shape === 'round';
   const occ = createOcc();
-  const notes = { adapted: false, messages: [], unfit: [], unfitIds: [] };
+  const notes = { adapted: false, messages: [], unfit: [], unfitIds: [], fit: {} };
+  // Onde o distribuidor AVISA que reduziu a quantidade de uma decoração, fica anotado quantas peças ficaram (got)
+  // e quantas a quantidade escolhida pedia (want); p = como a contagem cresce com a quantidade (1 = proporcional;
+  // na coroa as peças só se aproximam: 0,55). É com isto que o preço cobra a quantidade que coube
+  // (pricing.js → billableConfig). Sem aviso não há anotação: o alvo `want` é otimista, e ficar um pouco abaixo
+  // dele é o normal, não uma redução. (As velas clássicas são sempre anotadas: o pedido leva as que couberam.)
+  const counted = (id, got, want, p = 1) => {
+    if (want > 0) notes.fit[id] = { got, want, p };
+  };
   const about = new Map(); // aviso → decorações de que ele fala (se uma delas acabar não cabendo, o aviso sai)
   const say = (msg, ids) => {
     if (!notes.messages.includes(msg)) notes.messages.push(msg);
@@ -976,13 +984,14 @@ function compute(config, m, base) {
     }
     pts.forEach(([x, z]) => reserve(o, volOf(x, z)));
     party.candles = { h, y0, spots: pts.map(([x, z]) => ({ x, z, vol: volOf(x, z) })), center: !groupDiscs.length };
+    counted('velas', pts.length, n);
     if (pts.length < n) {
       notes.unfit.push(
         pts.length
           ? `Só ${pts.length === 1 ? 'coube 1 vela' : `couberam ${pts.length} velas`} das ${n} no topo deste bolo. Tire uma decoração do topo ou escolha um bolo maior.`
           : 'As velas não couberam no topo deste bolo com as outras peças. Tire uma decoração do topo ou escolha um bolo maior.',
       );
-      notes.unfitIds.push('velas');
+      if (!pts.length) notes.unfitIds.push('velas');
     }
   };
   // topo pequeno, sem arranjo no centro: as velas (que não podem faltar) escolhem lugar antes das estrelas e dos balões
@@ -1541,6 +1550,11 @@ function compute(config, m, base) {
     const { s, spots } = pileSpots(g, size, Math.max(1, Math.round(count * k)), rise, sp.minS);
     if (!spots.length) return void (pl.unfit = true);
     pl.want = Math.max(1, Math.round(count * k));
+    // montinho bem menor que o pedido (o centro está apertado): avisa, e o preço cobra a quantidade que ficou
+    if (spots.length <= pl.want * 0.6 && pl.want - spots.length >= 2) {
+      say(`${cap(NAMES[id])} no centro ${many([id]) ? 'ficaram' : 'ficou'} em menor quantidade: é o que cabe ali com as outras peças.`, [id]);
+      counted(id, spots.length, pl.want);
+    }
     pl.scale = s;
     spots.forEach((q, i) => {
       const y = topY + (q.rise || 0);
@@ -2017,7 +2031,10 @@ function compute(config, m, base) {
     pl.lane = pick;
     pl.sideCount = res.side;
     if (!res.got.length) pl.unfit = true;
-    else if (!res.side && sideN > 0) say(`${cap(NAMES[id])} em cascata ${many([id]) ? 'ficaram' : 'ficou'} só no topo: a lateral já está ocupada.`);
+    else if (!res.side && sideN > 0) {
+      say(`${cap(NAMES[id])} em cascata ${many([id]) ? 'ficaram' : 'ficou'} só no topo: a lateral já está ocupada.`);
+      counted(id, res.got.length, n);
+    }
   });
   if (cascades.filter((id) => !P(id).unfit).length > 1) say(`As cascatas de ${listOf(cascades.filter((id) => !P(id).unfit))} descem lado a lado, cada uma na sua faixa.`);
 
@@ -2363,6 +2380,7 @@ function compute(config, m, base) {
     if (id !== 'raspas' && !pl.pieces.length && !pl.regions.length) pl.unfit = true;
     else if (id !== 'raspas' && ringCount[id] && (pl.placedRing || 0) <= ringCount[id] * 0.6 && ringCount[id] - (pl.placedRing || 0) >= 2) {
       say(`Reduzimos a quantidade de ${bare(id)} na borda para não encostar nas outras peças.`);
+      counted(id, pl.placedRing || 0, ringCount[id], 0.55);
     }
     if (id === 'raspas' && !pl.regions.length) pl.unfit = true;
   });
@@ -2513,7 +2531,10 @@ function compute(config, m, base) {
         });
       }
       if (!got) pl.unfit = true;
-      else if (got < want * 0.4 && want - got >= 4) say(`Couberam menos ${bare(id)} que o normal: o topo já está cheio.`);
+      else if (got < want * 0.4 && want - got >= 4) {
+        say(`Couberam menos ${bare(id)} que o normal: o topo já está cheio.`);
+        counted(id, got, want);
+      }
     });
 
   /* guirlanda de margaridas: quem está em coroa ganha algumas flores na lateral, logo abaixo da borda */
@@ -2668,7 +2689,10 @@ function compute(config, m, base) {
     if (id === 'velas' || id === 'topo') return;
     if (id === 'baloes' || id === 'pirulitos') {
       if (!pl || !pl.pieces.length) unfit.push(id);
-      else if (pl.pieces.length < pl.want && pl.want - pl.pieces.length >= 2) say(`Cabem ${pl.pieces.length} ${bare(id)} neste topo (o normal seriam ${pl.want}).`);
+      else if (pl.pieces.length < pl.want && pl.want - pl.pieces.length >= 2) {
+        say(`Cabem ${pl.pieces.length} ${bare(id)} neste topo (o normal seriam ${pl.want}).`);
+        counted(id, pl.pieces.length, pl.want);
+      }
       if (pl && pl.scale < 0.9 && pl.pieces.length) say(`${cap(NAMES[id])} ficaram menores para caber no topo com as outras peças.`);
       return;
     }

@@ -1918,6 +1918,10 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       get pending() {
         return jobs.length;
       },
+      /** A configuração que está desenhada agora (para conferir que a tela mostra o bolo que é cobrado). */
+      get config() {
+        return config;
+      },
       /**
        * Volumes ocupados por cada peça do bolo (para o teste de colisões): [{ id, volumes: [{ x, y, z, r }] }].
        * Usa part.volumes quando a peça declara os seus; senão, deriva dos lotes (posição + raio ocupado de cada

@@ -67,6 +67,9 @@ import {
   prepHoursOf,
   partsOf,
   summaryOf,
+  billableConfig,
+  billPreview,
+  billNotice,
   autoName,
   displayName,
   servesText,
@@ -431,7 +434,7 @@ const ordinal = (n) => `${n}ª`;
 
 /* ───────── Etapas ───────── */
 function stepFormato(c, ui) {
-  const price = priceOf(c);
+  const price = priceOf(billOf(c).config);
   const min = minPrice();
   const tiers = c.tiers || 1;
   const occasions = OCCASIONS.filter((o) => PRESETS.some((p) => p.occasion === o.id));
@@ -790,14 +793,66 @@ function stepAcabamento(c) {
 }
 
 /** O que o distribuidor de decorações adaptou neste bolo (nunca derruba o painel se algo der errado lá). */
+let notesMemo = { key: '', value: null };
 function notesOf(c) {
+  // o painel pergunta várias vezes pelo mesmo bolo a cada escolha: a resposta fica guardada
+  const key = JSON.stringify({ ...c, name: undefined, backdrop: undefined });
+  if (notesMemo.key === key && notesMemo.value) return notesMemo.value;
   try {
     const n = decorNotes(c) || {};
-    return { adapted: Boolean(n.adapted), messages: Array.isArray(n.messages) ? n.messages : [], unfit: Array.isArray(n.unfit) ? n.unfit : [], unfitIds: Array.isArray(n.unfitIds) ? n.unfitIds : [] };
+    const value = { adapted: Boolean(n.adapted), messages: Array.isArray(n.messages) ? n.messages : [], unfit: Array.isArray(n.unfit) ? n.unfit : [], unfitIds: Array.isArray(n.unfitIds) ? n.unfitIds : [], fit: n.fit && typeof n.fit === 'object' ? n.fit : {} };
+    notesMemo = { key, value };
+    return value;
   } catch (err) {
     console.error('[personalizador] avisos das decorações', err);
-    return { adapted: false, messages: [], unfit: [], unfitIds: [] };
+    return { adapted: false, messages: [], unfit: [], unfitIds: [], fit: {} };
   }
+}
+
+/**
+ * O bolo como será feito e cobrado: sem o que o distribuidor não conseguiu pôr no bolo e com a quantidade que
+ * de fato ficou. Tirar uma peça abre espaço para as outras, então sai uma de cada vez — a escolhida por último
+ * primeiro — e a conta se repete até tudo caber: fica no bolo o máximo do que a pessoa escolheu. Só quando as
+ * decorações já cabem é que saem a escrita que não coube e as quantidades que o distribuidor reduziu.
+ * É deste bolo que saem o total, o detalhamento do preço e o resumo, e é ele que vai para o carrinho.
+ * → { config, removed, lowered, candles, changed } (config === c quando tudo coube)
+ */
+let billMemo = { key: '', value: null };
+function billOf(c) {
+  const key = JSON.stringify({ ...c, name: undefined, backdrop: undefined });
+  if (billMemo.key === key) return billMemo.value;
+  let cur = c;
+  const removed = [];
+  const lowered = new Map();
+  let candles = null;
+  try {
+    for (let i = 0; i < 16; i++) {
+      const notes = notesOf(cur);
+      const out = cur.decor.items.filter((id) => notes.unfitIds.includes(id));
+      // na última volta sai de uma vez tudo o que não coube (garante que nada "não coube" vá adiante)
+      const stepBill = billableConfig(cur, i === 15 ? { unfitIds: notes.unfitIds } : out.length ? { unfitIds: [out[out.length - 1]] } : notes);
+      if (!stepBill.changed) break;
+      removed.push(...stepBill.removed);
+      stepBill.lowered.forEach((l) => lowered.set(l.id, { id: l.id, from: lowered.get(l.id)?.from || l.from, to: l.to }));
+      if (stepBill.candles) candles = { from: candles?.from || stepBill.candles.from, to: stepBill.candles.to };
+      cur = stepBill.config;
+    }
+  } catch (err) {
+    console.error('[personalizador] bolo cobrável', err);
+    cur = c;
+  }
+  // na ordem em que a pessoa escolheu (a escrita por último)
+  const order = (id) => (id === 'escrita' ? 99 : c.decor.items.indexOf(id));
+  const gone = [...new Set(removed)].sort((x, y) => order(x) - order(y));
+  const value = {
+    config: cur,
+    removed: gone,
+    lowered: [...lowered.values()].filter((l) => !gone.includes(l.id)),
+    candles: gone.includes('velas') ? null : candles,
+    changed: cur !== c,
+  };
+  billMemo = { key, value };
+  return value;
 }
 
 /** Ajustes de uma decoração escolhida: arranjo, fartura e cor (ou, nas velas, o tipo e o número). */
@@ -849,7 +904,10 @@ function stepDecoracao(c, ui) {
   const open = items.includes(ui.decorOpen) && ui.decorOpen !== 'velas' && adjustable(getDecor(ui.decorOpen)) ? ui.decorOpen : null;
   const bico = c.decor.messageMode === 'bico';
   const room = scriptRoom(c); // a escrita com bico cabe (e aparece) no topo deste bolo?
-  const notes = notesOf(c); // o que foi reorganizado para caber (e o que não coube)
+  const bill = billOf(c); // o que não coube não é cobrado; quantidade cobrada = a que ficou no bolo
+  const notes = notesOf(bill.config); // o que foi reorganizado para caber, no bolo que aparece na tela
+  const billNotes = billPreview(bill); // e o que ficou de fora dele
+  const noScript = bill.removed.includes('escrita');
   return html`
     <section class="cz-sec">
       <div class="cz-sec__head">
@@ -862,18 +920,18 @@ function stepDecoracao(c, ui) {
               const d = getDecor(id);
               const can = adjustable(d);
               // escolhida, mas sem lugar neste bolo: a etiqueta avisa (o motivo e a saída estão no aviso logo abaixo)
-              const out = notes.unfitIds.includes(id);
+              const out = bill.removed.includes(id);
               return html`<span class="cz-pick ${open === id ? 'is-on' : ''} ${out ? 'is-out' : ''}" data-k="pick:${id}">
-                <button type="button" class="cz-pick__main" data-act="adjust" data-value="${id}" ${can ? (id === 'velas' ? '' : raw(`aria-expanded="${open === id ? 'true' : 'false'}"`)) : raw('disabled')} aria-label="${can ? (id === 'velas' ? 'Ajustar as velas: tipo e quantidade' : `Ajustar ${d.name}: arranjo, quantidade e cor`) : d.name}${out ? ' (não coube neste bolo)' : ''}">
-                  ${d.name}${out ? html`<span class="cz-pick__out">não coube</span>` : ''}${can ? icon('sliders') : ''}
+                <button type="button" class="cz-pick__main" data-act="adjust" data-value="${id}" ${can ? (id === 'velas' ? '' : raw(`aria-expanded="${open === id ? 'true' : 'false'}"`)) : raw('disabled')} aria-label="${can ? (id === 'velas' ? 'Ajustar as velas: tipo e quantidade' : `Ajustar ${d.name}: arranjo, quantidade e cor`) : d.name}${out ? ' (não coube neste bolo, não cobrado)' : ''}">
+                  ${d.name}${out ? html`<span class="cz-pick__out">Não coube neste bolo · não cobrado</span>` : ''}${can ? icon('sliders') : ''}
                 </button>
                 <button type="button" class="cz-pick__x" data-act="decor" data-value="${id}" aria-label="Tirar ${d.name}">${icon('x')}</button>
               </span>`;
             })
           : html`<span class="cz-picked__empty" data-k="pick:none">Nenhuma ainda. Toque numa decoração abaixo para colocar no bolo.</span>`}
       </div>
-      ${notes.messages.length
-        ? html`<div class="cz-note cz-note--warn cz-note--list" role="status" data-k="decor:notes">${notes.messages.map((m) => html`<p>${m}</p>`)}</div>`
+      ${notes.messages.length || billNotes.length
+        ? html`<div class="cz-note cz-note--warn cz-note--list" role="status" data-k="decor:notes">${[...notes.messages, ...billNotes].map((m) => html`<p>${m}</p>`)}</div>`
         : ''}
       ${open ? decorAdjust(c, open) : ''}
       <div class="cz-chips cz-chips--scroll cz-tabs" role="radiogroup" aria-label="Tipos de decoração">
@@ -884,14 +942,15 @@ function stepDecoracao(c, ui) {
         (g) => html`<div class="cz-grid cz-grid--2" role="group" aria-label="${g.name}: ${items.length} de ${MAX_DECORS} decorações escolhidas" data-k="group:${g.id}" ${g.id === group ? '' : raw('hidden')}>
           ${DECORS.filter((d) => d.group === g.id).map((d) => {
             const isOn = items.includes(d.id);
-            const q = isOn && d.qty ? QUANTITIES.find((x) => x.id === decorOptions(c, d.id).qty).mult : 1;
+            const free = isOn && bill.removed.includes(d.id); // escolhida, mas não coube: não é cobrada
+            const q = isOn && d.qty ? QUANTITIES.find((x) => x.id === decorOptions(free ? c : bill.config, d.id).qty).mult : 1;
             return optCard({
               act: 'decor',
               value: d.id,
               on: isOn,
               name: d.name,
               desc: d.desc,
-              price: html`<span class="cz-opt__price"><b>+ ${money(deltaOf(c, d.price * q, d.scales))}</b></span>`,
+              price: html`<span class="cz-opt__price"><b>${free ? 'não cobrado' : `+ ${money(deltaOf(c, d.price * q, d.scales))}`}</b></span>`,
               artwork: html`<span class="cz-opt__art">${DECOR_ART[d.id] || DECOR_ART.generic}</span>`,
               role: 'checkbox',
               disabled: full && !isOn,
@@ -906,7 +965,7 @@ function stepDecoracao(c, ui) {
       <div class="cz-field">
         <div class="cz-field__top">
           <label for="cz-message">Mensagem <span class="cz-optional">(opcional)</span></label>
-          <span class="cz-field__price">+ ${money(bico ? SCRIPT_PRICE : MESSAGE_PRICE)}</span>
+          <span class="cz-field__price">${noScript ? 'não cobrado' : `+ ${money(bico ? SCRIPT_PRICE : MESSAGE_PRICE)}`}</span>
         </div>
         <div class="cz-seg" role="radiogroup" aria-label="Onde vai a mensagem">
           <button type="button" role="radio" aria-checked="${bico ? 'false' : 'true'}" data-set="messageMode" data-value="placa" data-k="messageMode:placa">Na plaquinha</button>
@@ -919,6 +978,9 @@ function stepDecoracao(c, ui) {
                 ? `Neste bolo de 3 andares a mensagem vai na plaquinha: o último andar fica alto e tem só ${room.top} cm, e a escrita não apareceria de frente.`
                 : `Escrita no topo: neste bolo cabem até ${room.perLine} letras por linha (o topo tem ${room.top} cm). Encurte a mensagem ou deixe na plaquinha.`}
             </p>`}
+        ${noScript
+          ? html`<p class="cz-note cz-note--warn" data-k="script:out">A escrita não coube no topo com as outras peças · não cobrada. Passe para a plaquinha ou tire uma decoração do topo; do jeito que está, a mensagem sai do bolo ao adicionar ao carrinho.</p>`
+          : ''}
         <input class="input" id="cz-message" type="text" maxlength="${MESSAGE_MAX}" placeholder="Ex.: Parabéns, Ana!" value="${c.decor.message}" data-field="message" autocomplete="off" enterkeyhint="done" aria-describedby="cz-message-count" />
         <div class="cz-field__foot">
           <span>${bico ? 'Escrita com bico de confeitar, direto na cobertura.' : 'A plaquinha aparece no bolo enquanto você escreve.'}</span>
@@ -956,11 +1018,13 @@ function stepDecoracao(c, ui) {
 }
 
 function billLines(c) {
-  const b = breakdownOf(c);
+  const bill = billOf(c);
+  const b = breakdownOf(bill.config);
   return html`
     ${b.lines.map((l) => html`<div class="cz-bill__line"><span>${l.label}${l.detail ? html`<small>${l.detail}</small>` : ''}</span><b>${money(l.value)}</b></div>`)}
     <div class="cz-bill__total"><span>Total</span><strong>${money(b.total)}</strong></div>
     <p class="cz-bill__note">ou ${money(b.total * (1 - SITE.pix.discountPct / 100))} no Pix (${SITE.pix.discountPct}% de desconto)</p>
+    ${billPreview(bill).length ? html`<div class="cz-note cz-note--warn cz-note--list" data-cz-billnote>${billPreview(bill).map((t) => html`<p>${t}</p>`)}</div>` : ''}
   `;
 }
 
@@ -982,7 +1046,10 @@ function payLine(total) {
 }
 
 /** Etapa final: a revelação. Nome, preço e entrega no alto; os detalhes ficam a um toque. */
-function stepResumo(c, ui) {
+function stepResumo(real, ui) {
+  // o resumo descreve e soma o bolo como ele será feito: o que não coube fica de fora (e o aviso diz o quê)
+  const bill = billOf(real);
+  const c = bill.config;
   const parts = partsOf(c);
   const rows = [
     { step: 'formato', iconName: 'cube', label: 'Formato e tamanho', text: parts.formato },
@@ -1004,6 +1071,7 @@ function stepResumo(c, ui) {
       <p class="cz-offer__pay" data-cz-pay>${payLine(total)}</p>
       <p class="cz-offer__ship">${icon('calendar')}<span>Rende ${servesText(c)} · receba a partir de <strong>${firstDate(c)}</strong></span></p>
       <p class="cz-offer__sub">Confira e peça: a gente começa a fazer assim que você fechar o pedido.</p>
+      ${billPreview(bill).length ? html`<div class="cz-note cz-note--warn cz-note--list" role="status" data-k="resumo:bill">${billPreview(bill).map((t) => html`<p>${t}</p>`)}</div>` : ''}
     </header>
 
     <div class="cz-sum">
@@ -1172,7 +1240,7 @@ export default {
       ui.colorChosen = cov.color !== getCovering(cov.type).defaultColor;
       if (!config.decor.items.includes(ui.decorOpen)) ui.decorOpen = null;
       ui.scriptFits = scriptRoom(config).ok;
-      ui.decorAdapted = notesOf(config).adapted; // não avisa de novo ao abrir um bolo que já vinha reorganizado
+      ui.decorAdapted = notesOf(billOf(config).config).adapted; // não avisa de novo ao abrir um bolo que já vinha reorganizado
     }
 
     /** A cobertura que os controles estão editando: a do andar escolhido ou a do bolo inteiro. */
@@ -1297,6 +1365,12 @@ export default {
     /** Espaço que os botões flutuantes ocupam no palco e quanto do resto o bolo pode preencher. */
     const stageInsets = () => (desktop.matches ? { top: 4, bottom: 84, fill: 0.78 } : { top: 14, bottom: 58, fill: 0.9 });
 
+    /**
+     * O bolo que aparece na tela (3D ou desenho 2D): o cobrável — sem o que não coube, com a quantidade que ficou.
+     * Assim o que a pessoa vê é sempre o que está sendo somado e o que será feito.
+     */
+    const shownCake = () => billOf(config).config;
+
     function makeThumb(size = 360) {
       try {
         const url = cake?.snapshot({ size, quality: 0.8, fill: 0.86 });
@@ -1304,7 +1378,7 @@ export default {
       } catch (err) {
         console.error('[personalizador] falha ao fotografar o bolo', err);
       }
-      return thumb2D(config, size);
+      return thumb2D(shownCake(), size);
     }
 
     function useFallback() {
@@ -1320,12 +1394,12 @@ export default {
       el.viewbar.hidden = true;
       setBgBar(false);
       syncBackdrop({ instant: true });
-      drawCake2D(el.fallback.querySelector('canvas'), config, { background: false });
+      drawCake2D(el.fallback.querySelector('canvas'), shownCake(), { background: false });
     }
 
     function sceneUpdate() {
-      if (cake) cake.setConfig(config);
-      else drawCake2D(el.fallback.querySelector('canvas'), config, { background: false });
+      if (cake) cake.setConfig(shownCake());
+      else drawCake2D(el.fallback.querySelector('canvas'), shownCake(), { background: false });
     }
     const sceneUpdateSoon = debounce(() => alive && sceneUpdate(), 130); // digitando: a plaquinha é refeita no máximo a cada ~130 ms
 
@@ -1428,7 +1502,7 @@ export default {
           onContextLost: () => (el.lost.hidden = false),
           onContextRestored: () => {
             el.lost.hidden = true;
-            cake?.setConfig(config, { instant: true });
+            cake?.setConfig(shownCake(), { instant: true });
           },
         });
       } catch (err) {
@@ -1442,7 +1516,7 @@ export default {
         try {
           cake.setBackdrop(stageBackdrop, { instant: true });
           cake.setView(viewFor(step), { animate: false });
-          cake.setConfig(config, { staged: true });
+          cake.setConfig(shownCake(), { staged: true });
           cake.setAutoRotate(rotating);
           cake.setPaused(Boolean(document.querySelector('.overlay')));
           if (AUTO_CUT_STEPS.has(STEPS[step].id) && autoCut) later(() => alive && autoCut && setCutaway(true), 900);
@@ -1616,12 +1690,12 @@ export default {
       el.foot.innerHTML = String(html`
         ${step > 0 ? html`<button type="button" class="cz-prev" data-act="prev" aria-label="Voltar uma etapa" ${last ? raw('data-last') : ''}>${icon('arrow-left')}<span>Voltar</span></button>` : ''}
         <button type="button" class="cz-total" data-act="breakdown" aria-label="Ver detalhes do preço">
-          <small>Total ${icon('chevron-up')}</small><strong data-cz-price>${money(shownPrice ?? priceOf(config))}</strong>
+          <small>Total ${icon('chevron-up')}</small><strong data-cz-price>${money(shownPrice ?? priceOf(billOf(config).config))}</strong>
         </button>
         ${last
           ? html`<button type="button" class="btn btn--price cz-next" data-act="add" aria-label="${editLineId ? 'Salvar alterações' : 'Adicionar ao carrinho'}">
               <span class="btn__label">${icon(editLineId ? 'check' : 'bag')} ${editLineId ? 'Salvar alterações' : 'Adicionar'}</span>
-              <span class="btn__price" data-cz-price>${money(shownPrice ?? priceOf(config))}</span>
+              <span class="btn__price" data-cz-price>${money(shownPrice ?? priceOf(billOf(config).config))}</span>
             </button>`
           : html`<button type="button" class="btn cz-next" data-act="next">${step === STEPS.length - 2 ? 'Ver resumo' : 'Continuar'} ${icon('arrow-right')}</button>`}
       `);
@@ -1629,7 +1703,7 @@ export default {
 
     let metaMarkup = '';
     function renderMeta() {
-      const markup = String(html`<span>${icon('users')} ${servesText(config)}</span><span>${icon('calendar')} Receba a partir de ${firstDate(config)}</span>`);
+      const markup = String(html`<span>${icon('users')} ${servesText(config)}</span><span>${icon('calendar')} Receba a partir de ${firstDate(billOf(config).config)}</span>`);
       if (markup !== metaMarkup) {
         metaMarkup = markup;
         el.meta.innerHTML = markup;
@@ -1643,7 +1717,7 @@ export default {
     }
 
     function updatePrice() {
-      const target = priceOf(config);
+      const target = priceOf(billOf(config).config); // o que não coube no bolo não entra na conta
       if (shownPrice === null || reduceMotion) {
         shownPrice = target;
         setPriceText(target);
@@ -1723,7 +1797,7 @@ export default {
       if (!pending) pending = { body: false, scene: 'none' };
       if (rerender || bumped || fitChanged) pending.body = true;
       // as decorações foram reorganizadas para caber: avisa uma vez (o painel explica o quê)
-      const adapted = notesOf(config).adapted;
+      const adapted = notesOf(billOf(config).config).adapted;
       if (adapted && !ui.decorAdapted) toast('Reorganizamos as decorações para caber no bolo.');
       ui.decorAdapted = adapted;
       if (bumped) {
@@ -1814,6 +1888,20 @@ export default {
     }
 
     /* ── ações finais ── */
+    /**
+     * Antes de gravar (carrinho, favoritos, bolo em edição): o bolo passa a ser o que cabe — sai o que não coube
+     * e a quantidade vira a que ficou —, para o preço, o resumo, a foto e o pedido baterem com o que será feito.
+     * Devolve o aviso curto para mostrar à pessoa ('' quando nada mudou). Dá para desfazer.
+     */
+    function settleCake() {
+      const bill = billOf(config);
+      if (!bill.changed) return '';
+      config = clone(bill.config);
+      syncModes();
+      commit();
+      return billNotice(bill);
+    }
+
     function cakePayload() {
       syncNow();
       return {
@@ -1826,6 +1914,7 @@ export default {
     }
 
     function addToCart() {
+      const note = settleCake();
       const p = cakePayload();
       const extra = { serves: servesOf(config), prepHours: prepHoursOf(config) };
       if (editLineId) {
@@ -1833,7 +1922,8 @@ export default {
         const updated = cart.replaceCustom(editLineId, { ...p, ...extra });
         if (!updated) cart.addCustom({ ...p, ...extra });
         navigate('/carrinho');
-        toast(updated ? 'Bolo atualizado no carrinho' : 'Seu bolo foi para o carrinho', { type: 'success' });
+        const done = updated ? 'Bolo atualizado no carrinho' : 'Seu bolo foi para o carrinho';
+        toast(note ? `${done}. ${note}` : done, note ? { type: 'success', duration: 6000 } : { type: 'success' });
         return;
       }
       cart.addCustom({ ...p, ...extra });
@@ -1848,7 +1938,8 @@ export default {
             <p>Receba a partir de ${firstDate(config)}</p>
             <div class="price">${money(p.price)}</div>
           </div>
-        </div>`,
+        </div>
+        ${note ? html`<p class="cz-note cz-note--warn" data-cz-settled>${note}</p>` : ''}`,
         footer: html`
           <button type="button" class="btn btn--secondary cz-fit" data-go="/cardapio">Continuar comprando</button>
           <button type="button" class="btn cz-fit" data-go="/carrinho">Ver carrinho</button>
@@ -1867,10 +1958,11 @@ export default {
         ui.savedId = null;
         toast('Removido dos seus favoritos');
       } else {
+        const note = settleCake();
         const item = savedCakes.add({ ...cakePayload(), serves: servesOf(config), prepHours: prepHoursOf(config) });
         ui.savedId = item.id;
         ui.savedKey = configKey();
-        toast('Bolo salvo nos seus favoritos', { type: 'success', action: { label: 'Ver', href: '#/favoritos' } });
+        toast(note ? `Bolo salvo nos seus favoritos. ${note}` : 'Bolo salvo nos seus favoritos', { type: 'success', action: { label: 'Ver', href: '#/favoritos' }, ...(note ? { duration: 6000 } : {}) });
       }
       if (STEPS[step].id === 'resumo') renderBody({ still: true });
     }
@@ -1902,7 +1994,7 @@ export default {
       else {
         const flat = document.createElement('canvas');
         flat.width = flat.height = W;
-        drawCake2D(flat, config);
+        drawCake2D(flat, shownCake());
         g.fillStyle = '#fdeef2';
         g.fillRect(0, 0, W, H);
         g.drawImage(flat, 0, (H - W) / 2 - 60);
@@ -2333,7 +2425,8 @@ export default {
         btn.setAttribute('aria-expanded', String(ui.tipOpen));
       },
       surprise() {
-        replaceConfig(randomConfig(config), { keepSize: true, undo: true, message: 'Bolo surpresa montado. Gostou?' });
+        // o bolo surpresa já nasce só com o que cabe nele (nada "não coube", nenhuma quantidade reduzida)
+        replaceConfig(billOf(normalizeConfig({ ...randomConfig(config), size: config.size })).config, { keepSize: true, undo: true, message: 'Bolo surpresa montado. Gostou?' });
         el.live.textContent = `Bolo surpresa: ${summaryOf(config).join('. ')}`;
       },
       preset(v) {
@@ -2539,7 +2632,8 @@ export default {
     // ganchos de teste: só existem com ?czdebug no endereço (antes do #)
     if (new URLSearchParams(location.search).has('czdebug')) {
       // quality() é só leitura: nível, proporção de pixels em uso e o estado do regulador de resolução
-      window.__cz = { cake: () => cake, config: () => config, set: (next) => replaceConfig(next), goto, quality: () => cake?.quality() ?? null };
+      // bill() = o bolo como será cobrado e gravado (sem o que não coube): usado por tools/cz_bill.mjs
+      window.__cz = { cake: () => cake, config: () => config, set: (next) => replaceConfig(next), goto, quality: () => cake?.quality() ?? null, bill: (other) => billOf(other ? normalizeConfig(other) : config) };
     }
 
     /* ── primeira pintura ── */

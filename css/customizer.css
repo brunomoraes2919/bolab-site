@@ -3007,7 +3007,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   color: var(--action);
 }
 
-/* decoração escolhida que não coube neste bolo: etiqueta apagada, com o aviso "não coube" */
+/* decoração escolhida que não coube neste bolo: etiqueta apagada, com o aviso "Não coube neste bolo · não cobrado" */
 .cz-pick.is-out {
   background: var(--fill);
   color: var(--text-2);

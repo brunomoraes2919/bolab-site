@@ -832,7 +832,9 @@ PIPE.vintage = PIPE.conchas; // o conjunto vintage usa conchas no topo e na base
  * O que o distribuidor de decorações precisou adaptar neste bolo, em frases prontas para o painel.
  * adapted = alguma peça mudou de lugar, de quantidade ou de tamanho para caber · messages = o que dizer à pessoa
  * (ex.: "Reorganizamos para caber: macarons e brigadeiros dividem a coroa") · unfit = o que não coube de jeito
- * nenhum, com a sugestão (essas frases também vêm em messages, que é o que o painel mostra).
+ * nenhum, com a sugestão (essas frases também vêm em messages, que é o que o painel mostra) · unfitIds = quem
+ * não coube ('velas', 'topo', 'escrita' ou o id da decoração) · fit = { id: { got, want, p } }, quantas peças
+ * ficaram e quantas a quantidade escolhida pedia (o preço cobra o que coube: pricing.js → billableConfig).
  * É barato: reaproveita o plano já calculado para o bolo que está na tela.
  */
 export function decorNotes(config) {
@@ -840,7 +842,7 @@ export function decorNotes(config) {
     const found = plannedFor(config);
     if (!found?.m) return { adapted: false, messages: [], unfit: [] };
     const notes = (found.plan || decorLayout(config, found.m)).notes;
-    return { adapted: Boolean(notes.adapted), messages: notes.messages.slice(), unfit: notes.unfit.slice(), unfitIds: (notes.unfitIds || []).slice() };
+    return { adapted: Boolean(notes.adapted), messages: notes.messages.slice(), unfit: notes.unfit.slice(), unfitIds: (notes.unfitIds || []).slice(), fit: { ...(notes.fit || {}) } };
   } catch (err) {
     console.error('[personalizador] avisos das decorações', err);
     return { adapted: false, messages: [], unfit: [] };
@@ -862,7 +864,7 @@ const NO_PLAN = () => ({
   zones: {},
   plan: {},
   party: { plaque: null, topper: null, stars: [], candles: null, numbers: null, sparkler: null, text: null },
-  notes: { adapted: false, messages: [], unfit: [], unfitIds: [] },
+  notes: { adapted: false, messages: [], unfit: [], unfitIds: [], fit: {} },
   occ: null,
   edge: 0.03,
   necklace: 0,

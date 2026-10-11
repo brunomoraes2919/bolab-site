@@ -242,7 +242,7 @@ PRESETS.push(
       fillings: ['docedeleite', 'ninho'],
       covering: { type: 'buttercream', color: '#ffffff', style: 'rustico' },
       piping: { style: 'folhas', where: 'top', color: '#2d8b4a' },
-      decor: { items: ['cerejas', 'ouro'], opts: { cerejas: { arr: 'centro', qty: 'farto' }, ouro: { arr: 'espalhado' } } },
+      decor: { items: ['cerejas', 'ouro'], opts: { cerejas: { arr: 'centro', qty: 'farto' }, ouro: { arr: 'espalhado', qty: 'pouco' } } },
     }),
   },
   {
@@ -258,7 +258,7 @@ PRESETS.push(
       fillings: ['maracuja', 'ninho'],
       covering: { type: 'buttercream', color: '#ffffff', style: 'respingo' },
       piping: { style: 'corda', where: 'base', color: '#ffffff' },
-      decor: { items: ['macarons', 'ouro'], opts: { macarons: { arr: 'meialua', color: '#ffffff' }, ouro: { arr: 'coroa' } }, topper: { text: 'Amor', color: '#dcae52' } },
+      decor: { items: ['macarons', 'ouro'], opts: { macarons: { arr: 'meialua', qty: 'pouco', color: '#ffffff' }, ouro: { arr: 'coroa' } }, topper: { text: 'Amor', color: '#dcae52' } },
     }),
   },
   {
@@ -273,7 +273,7 @@ PRESETS.push(
       covering: { type: 'buttercream', color: '#a8f0c6' },
       drip: { on: true, color: '#ffffff' },
       piping: { style: 'liso', where: 'top', color: '#ffffff' },
-      decor: { items: ['macarons', 'margaridas'], opts: { macarons: { arr: 'coroa', color: '#f7b7c8' }, margaridas: { arr: 'espalhado' } } },
+      decor: { items: ['macarons', 'margaridas'], opts: { macarons: { arr: 'coroa', color: '#f7b7c8' }, margaridas: { arr: 'espalhado', qty: 'pouco' } } },
     }),
   },
 );

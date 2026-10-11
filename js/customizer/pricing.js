@@ -383,6 +383,90 @@ export function priceOf(config) {
   return breakdownOf(config).total;
 }
 
+/* ───────── O que não coube não é cobrado ─────────
+   O distribuidor de decorações (occupancy.js, que precisa do 3D) diz o que coube no bolo; aqui, sem 3D nenhum,
+   esse resultado vira uma configuração "cobrável": sai o que não coube e a quantidade passa a ser a que ficou.
+   É essa configuração que o painel soma e que vai para o carrinho, os favoritos e o pedido — então carrinho,
+   pedidos e o desenho 2D continuam calculando o preço só com priceOf(configuração guardada). */
+
+/** A quantidade (pouco · médio · farto) mais próxima do que de fato ficou no bolo — nunca acima da escolhida. */
+function fittedQty(wantedId, f) {
+  const wanted = getQuantity(wantedId) || getQuantity('medio');
+  if (!f || !(f.want > 0) || f.got >= f.want) return wanted.id;
+  let best = wanted;
+  let gap = Infinity;
+  // do mais barato para o mais caro: no empate, fica o mais barato
+  QUANTITIES.filter((q) => q.k <= wanted.k).forEach((q) => {
+    const d = Math.abs(f.got - f.want * Math.pow(q.k / wanted.k, f.p ?? 1));
+    if (d < gap - 1e-9) {
+      best = q;
+      gap = d;
+    }
+  });
+  return best.id;
+}
+
+/**
+ * O bolo como ele será feito e cobrado, dado o que o distribuidor informou (decorNotes: { unfitIds, fit }).
+ * → { config, removed: [id…], lowered: [{ id, from, to }], candles: { from, to } | null, changed }
+ *   removed traz ids de decoração e também 'escrita' (mensagem com bico que não coube no topo).
+ * Função pura: não chama o distribuidor. Quem tem o 3D carregado repete a conta até nada mais mudar.
+ */
+export function billableConfig(config, fit) {
+  const out = normalizeConfig(config);
+  const unfit = new Set(Array.isArray(fit?.unfitIds) ? fit.unfitIds : []);
+  const counts = fit?.fit && typeof fit.fit === 'object' ? fit.fit : {};
+  const removed = out.decor.items.filter((id) => unfit.has(id));
+  const lowered = [];
+  let candles = null;
+  out.decor.items = out.decor.items.filter((id) => !unfit.has(id));
+  removed.forEach((id) => delete out.decor.opts[id]);
+  out.decor.items.forEach((id) => {
+    const d = getDecor(id);
+    if (d.qty && out.decor.opts[id]) {
+      const from = out.decor.opts[id].qty;
+      const to = fittedQty(from, counts[id]);
+      if (to !== from) {
+        out.decor.opts[id].qty = to;
+        lowered.push({ id, from, to });
+      }
+    }
+    // velas clássicas: o pedido leva as que couberam (o preço das velas não muda com a quantidade)
+    if (id === 'velas' && out.decor.candleStyle === 'classica' && counts.velas && counts.velas.got >= 1 && counts.velas.got < out.decor.candles) {
+      candles = { from: out.decor.candles, to: Math.round(counts.velas.got) };
+      out.decor.candles = candles.to;
+    }
+  });
+  if (unfit.has('escrita') && out.decor.message && out.decor.messageMode === 'bico') {
+    out.decor.message = '';
+    removed.push('escrita');
+  }
+  return { config: out, removed, lowered, candles, changed: Boolean(removed.length || lowered.length || candles) };
+}
+
+const BILL_NAME = (id) => (id === 'escrita' ? 'mensagem escrita no topo' : low(getDecor(id)?.name || id));
+
+/** Antes de gravar: o que o painel explica, uma frase por linha ([] quando tudo coube). */
+export function billPreview(bill) {
+  const out = [];
+  if (bill?.removed?.length) {
+    const many = bill.removed.length > 1;
+    out.push(`Não coube neste bolo · não cobrado: ${joinPt(bill.removed.map(BILL_NAME))}. Para ${many ? 'caberem' : 'caber'}, tire outra decoração do topo ou escolha um bolo maior; ao adicionar ao carrinho, ${many ? 'esses itens saem' : 'esse item sai'} do bolo.`);
+  }
+  (bill?.lowered || []).forEach((l) => out.push(`${getDecor(l.id).name}: coube a quantidade “${low(getQuantity(l.to).name)}”, e é ela que entra no preço.`));
+  if (bill?.candles) out.push(`Velas: couberam ${bill.candles.to} das ${bill.candles.from}; o pedido vai com ${bill.candles.to}.`);
+  return out;
+}
+
+/** Aviso curto do que mudou ao gravar o bolo ('' quando nada mudou). bill = resultado de billableConfig. */
+export function billNotice(bill) {
+  const out = [];
+  if (bill?.removed?.length) out.push(`Tiramos o que não coube no bolo: ${joinPt(bill.removed.map(BILL_NAME))}.`);
+  if (bill?.lowered?.length) out.push(`Cobramos a quantidade que coube: ${joinPt(bill.lowered.map((l) => `${BILL_NAME(l.id)} (${low(getQuantity(l.to).name)})`))}.`);
+  if (bill?.candles) out.push(`Couberam ${bill.candles.to} das ${bill.candles.from} velas.`);
+  return out.join(' ');
+}
+
 /** O menor preço possível no personalizador (bolo P mais simples) — calculado, nunca fixo. */
 export function minPrice() {
   const cheapest = (list) => list.reduce((a, b) => (b.price < a.price ? b : a));
