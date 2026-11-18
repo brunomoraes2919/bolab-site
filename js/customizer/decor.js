@@ -740,7 +740,7 @@ function calyxGeometry(D = 1) {
 function blueberryGeometry(D = 1) {
   const body = new THREE.SphereGeometry(0.062, segs(18, D, 10), segs(14, D, 7));
   body.scale(1, 0.9, 1);
-  const crown = new THREE.TorusGeometry(0.018, 0.007, D < 1 ? 4 : 6, D < 1 ? 8 : 12);
+  const crown = new THREE.TorusGeometry(0.018, 0.007, D < 0.75 ? 4 : 6, D < 0.75 ? 8 : 12); // r6-luz: coroa redonda no celular de hoje
   crown.rotateX(Math.PI / 2);
   crown.translate(0, 0.052, 0);
   return mergeGeometries([paint(plain(body), 1, 1, 1), paint(plain(crown), 0.35, 0.35, 0.45)]);

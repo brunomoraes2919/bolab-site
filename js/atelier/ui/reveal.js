@@ -83,7 +83,7 @@ export function startReveal(host, { scene, later, haptics, onClose }) {
   host.stage.append(shade);
   const panel = host.root.querySelector('.cz-panel');
   // o resto da tela sai do caminho do teclado e do leitor de tela enquanto a revelação está aberta
-  const hidden = [...panel.children, ...host.stage.querySelectorAll('.cz-top, .cz-tools, .at-hud'), host.layer].filter((n) => n && !n.hasAttribute('inert'));
+  const hidden = [...panel.children, ...host.stage.querySelectorAll('.cz-top, .cz-tools, .st-lane'), host.layer].filter((n) => n && !n.hasAttribute('inert'));
   hidden.forEach((n) => n.setAttribute('inert', ''));
   panel.append(el);
   void shade.offsetWidth;
@@ -373,10 +373,8 @@ export async function recordVideo(host, { scene, later }) {
   const sc = scene();
   host.cz.classList.add('is-recording');
   host.say(sc ? 'Gravando o vídeo da montagem do bolo. Leva uns dez segundos.' : 'Gravando o vídeo do bolo. Leva uns cinco segundos.');
-  const note = document.createElement('p');
-  note.className = 'at-rec';
-  note.innerHTML = String(html`<i aria-hidden="true"></i><span>Gravando…</span>`);
-  host.fx.append(note);
+  // "Gravando…": um controle da faixa de avisos do palco (fica até a gravação terminar)
+  const note = host.notes.control({ className: 'at-rec', label: 'Gravando o vídeo', title: html`<i class="at-rec__dot" aria-hidden="true"></i>Gravando…`, text: sc ? 'Uns dez segundos' : 'Uns cinco segundos' });
   let blob = null;
   try {
     if (sc?.capture?.supported && typeof sc.capture.video === 'function') {
@@ -388,7 +386,7 @@ export async function recordVideo(host, { scene, later }) {
     }
     if (!blob) blob = await recordSpin(host, later, await workingMime());
   } finally {
-    note.remove();
+    note?.close();
     host.cz.classList.remove('is-recording');
   }
   if (!blob) {

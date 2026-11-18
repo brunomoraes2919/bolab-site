@@ -7,6 +7,35 @@ body[data-layout="immersive"] {
   overscroll-behavior: none;
 }
 
+/* No computador, os avisos da loja (desfazer, regra de confeiteiro…) aparecem sobre o painel de opções, acima da
+   barra do botão — como no celular. O palco fica para o bolo e para os avisos do palco. */
+@media (min-width: 900px) {
+  body[data-layout="immersive"] .toast-host {
+    right: 14px;
+    bottom: 104px;
+    left: auto;
+    width: 412px;
+    transform: none;
+  }
+}
+
+@media (min-width: 1280px) {
+  body[data-layout="immersive"] .toast-host {
+    right: 28px;
+  }
+}
+
+/* Celular deitado: o mesmo — os avisos da loja ficam do lado do painel de opções, não sobre o bolo. */
+@media (max-height: 520px) and (min-width: 560px) and (max-width: 899px) {
+  body[data-layout="immersive"] .toast-host {
+    right: 12px;
+    bottom: calc(var(--safe-bottom) + 76px);
+    left: auto;
+    width: min(46vw - 24px, 420px);
+    transform: none;
+  }
+}
+
 /* Com um diálogo aberto, os avisos sobem para o topo e não cobrem os botões do diálogo. */
 body[data-layout="immersive"]:has(.overlay) .toast-host {
   top: calc(env(safe-area-inset-top, 0px) + 12px);
@@ -23,9 +52,22 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 .cz {
   --cz-bar: 56px;
   --cz-lap: 22px; /* quanto o painel sobe sobre o palco no celular */
+  /* r6-tela: a régua do palco (ver "Palco: a grade") e a do painel (ver "Painel: o ritmo") */
+  --st-gutter: 12px;
+  --st-gap: 8px;
+  --st-hit: 44px;
+  --st-r: var(--r-md);
+  --st-r-card: var(--r-lg);
+  --st-lane: 68px;
+  --st-bo: 64px;
+  --st-ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --st-float: 0 0 0 1px rgba(17, 17, 20, 0.07), 0 2px 8px rgba(17, 17, 20, 0.12);
+  --st-pop: 0 0 0 1px rgba(17, 17, 20, 0.05), var(--shadow-2);
+  --st-focus: 0 0 0 2px var(--white), 0 0 0 4.5px var(--focus);
+  --pn-gutter: 16px;
   /* --cz-stage-to é o destino; --cz-stage vai até ele com transição. A tela 3D usa o destino direto:
      assim ela muda de tamanho uma vez só, e não a cada quadro da transição. */
-  --cz-stage-to: clamp(250px, 45vh, 470px);
+  --cz-stage-to: clamp(264px, 48vh, 500px);
   --cz-stage: var(--cz-stage-to);
   position: relative;
   display: grid;
@@ -40,19 +82,26 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   transition: --cz-stage 520ms var(--ease);
 }
 
+/* Fundo claro (creme, rosa): botão branco sobre parede clara pede um contorno e uma sombra um pouco mais firmes
+   para não se dissolver no cenário. O tom vem da tela (data-tone), não de uma cor fixa. */
+.cz[data-tone="light"] {
+  --st-float: 0 0 0 1px rgba(17, 17, 20, 0.11), 0 2px 8px rgba(17, 17, 20, 0.16);
+  --st-pop: 0 0 0 1px rgba(17, 17, 20, 0.08), var(--shadow-2);
+}
+
 /* No resumo, o bolo ganha o palco: é o momento da revelação. */
 .cz[data-step="resumo"] {
-  --cz-stage-to: clamp(250px, min(54vh, 100vh - 392px), 520px);
+  --cz-stage-to: clamp(264px, max(48vh, min(56vh, 100vh - 350px)), 540px);
 }
 
 @supports (height: 100dvh) {
   .cz {
-    --cz-stage-to: clamp(250px, 45dvh, 470px);
+    --cz-stage-to: clamp(264px, 48dvh, 500px);
     height: 100dvh;
   }
 
   .cz[data-step="resumo"] {
-    --cz-stage-to: clamp(250px, min(54dvh, 100dvh - 392px), 520px);
+    --cz-stage-to: clamp(264px, max(48dvh, min(56dvh, 100dvh - 350px)), 540px);
   }
 }
 
@@ -67,11 +116,25 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 .cz.is-typing .cz-steps,
 .cz.is-typing .cz-foot,
 .cz.is-typing .cz-tools,
-.cz.is-typing .cz-bgbar {
+.cz.is-typing .st-lane,
+.cz.is-typing .st-sheet {
   display: none;
 }
 
-/* ───────── Palco ───────── */
+/* ───────── Palco: a grade ─────────
+   Tudo o que flutua sobre o bolo obedece às mesmas medidas — uma régua só, definida em .cz:
+     --st-gutter  margem do palco (12 celular · 20 computador): vale para o cabeçalho, a coluna e a faixa
+     --st-gap     8 px entre controles vizinhos
+     --st-hit     44 px: todo botão do palco (alvo de toque e caixa visível)
+     --st-r       12 px: raio de todo botão do palco  ·  --st-r-card 16 px: raio de aviso e de cartão
+     --st-float   a única sombra dos controles fixos do palco (fio + sombra curta: aparece em fundo claro e escuro)
+     --st-pop     a única sombra do que aparece e some (avisos; igual à do balão da Bô)
+     --st-lane    altura da faixa de baixo (a Bô, o balão dela e os avisos)
+     --st-bo      largura reservada à Bô na faixa
+   Zonas:  cabeçalho em cima  ·  UMA coluna de ferramentas no canto de cima, à direita  ·  comanda do jogo no
+   canto de cima, à esquerda  ·  faixa de baixo: a Bô à esquerda, o balão ou o aviso ao lado dela.
+   O bolo fica com todo o resto (stageInsets, em js/views/customizer.js, usa as mesmas medidas).
+   O que é secundário (jogo, som, modo, vistas, giro, medidas, fundo, cenário) mora na folha "Ateliê" (.st-sheet). */
 .cz-stage {
   position: relative;
   min-height: 0;
@@ -98,13 +161,15 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   opacity: 1;
 }
 
+/* A tela 3D ocupa o palco inteiro, inclusive por baixo do cabeçalho: o cenário (parede do estúdio, luzes da festa)
+   não é cortado por uma faixa de cor chapada. O bolo continua abaixo do cabeçalho (stageInsets soma a altura dele). */
 .cz-canvas {
   position: absolute;
-  top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) - 8px);
+  top: 0;
   left: 0;
   z-index: 1;
   width: 100%;
-  height: calc(var(--cz-stage-to) - var(--cz-bar) - env(safe-area-inset-top, 0px) + 8px - var(--cz-lap));
+  height: calc(var(--cz-stage-to) - var(--cz-lap));
   max-width: none;
   outline: 0;
   cursor: grab;
@@ -121,16 +186,13 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   opacity: 1;
 }
 
-/* r5-qa: enquanto o bolo não está na tela (aviso "Untando a fôrma…"), o palco não mostra botões do bolo nem do
-   ateliê: ferramentas (corte, giro, vistas, fundo), som, modo e jogo entram junto com o bolo. A barra de cima
-   (voltar) fica. */
-.cz .cz-tools,
-.cz .at-hud {
+/* Enquanto o bolo não está na tela (aviso "Untando a fôrma…"), o palco não mostra as ferramentas do bolo:
+   elas entram junto com ele. A barra de cima (voltar) fica. */
+.cz .cz-tools {
   transition: opacity 300ms var(--ease), visibility 0s;
 }
 
-.cz:not(.is-ready) .cz-tools,
-.cz:not(.is-ready) .at-hud {
+.cz:not(.is-ready) .cz-tools {
   opacity: 0;
   visibility: hidden;
 }
@@ -140,16 +202,35 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   outline-offset: -4px;
 }
 
-/* Barra superior (flutua sobre o palco) */
+/* ── Cabeçalho do palco: voltar · título · desfazer, refazer, recomeçar. Os ícones (22 px dentro de um alvo de
+   44 px) ficam com o traço na margem do palco: por isso a barra recua 11 px a menos que a margem. ── */
 .cz-top {
   position: absolute;
   inset: 0 0 auto 0;
   z-index: 3;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 0;
   height: calc(var(--cz-bar) + env(safe-area-inset-top, 0px));
-  padding: env(safe-area-inset-top, 0px) 10px 0 6px;
+  padding: env(safe-area-inset-top, 0px) calc(var(--st-gutter) - 11px) 0;
+}
+
+/* Leitura do cabeçalho sobre qualquer cenário: um véu do tom do fundo (--st-wall, informado pela tela a cada troca
+   de fundo: o tom mais claro do fundo nos fundos claros, o mais escuro nos escuros), mais forte no alto e sumindo
+   logo abaixo da barra — sem emenda, e o título nunca fica sobre um ponto de luz do cenário. O texto e os ícones
+   seguem o tom claro/escuro (data-tone). Contraste medido em todos os cenários e tons: tools/r6t_contraste.py. */
+.cz-top::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 -18px;
+  z-index: -1;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--st-wall, transparent) var(--st-veil, 72%), transparent) 0%,
+    color-mix(in srgb, var(--st-wall, transparent) var(--st-veil-2, 46%), transparent) 62%,
+    color-mix(in srgb, var(--st-wall, transparent) 0%, transparent) 100%
+  );
+  pointer-events: none;
 }
 
 .cz-round,
@@ -157,28 +238,27 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   display: grid;
   place-items: center;
   flex: none;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
+  width: var(--st-hit);
+  height: var(--st-hit);
+  border-radius: var(--st-r);
   color: var(--text);
-  transition: background var(--t-fast), color var(--t-fast), transform var(--t-fast), box-shadow var(--t-fast);
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background-color var(--t-fast), color var(--t-fast), transform var(--t-fast) var(--st-ease), opacity var(--t-fast);
 }
 
-.cz-round svg {
+.cz-round svg,
+.cz-restart svg {
   width: 22px;
   height: 22px;
-}
-
-.cz-restart svg {
-  width: 20px;
-  height: 20px;
 }
 
 .cz-restart span {
   display: none;
 }
 
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   .cz-round:hover,
   .cz-restart:hover {
     background: color-mix(in srgb, var(--surface) 80%, transparent);
@@ -191,12 +271,25 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   transform: scale(0.94);
 }
 
+.cz-round:focus-visible,
+.cz-restart:focus-visible,
+.cz-price:focus-visible {
+  outline: 0;
+  box-shadow: var(--st-focus);
+}
+
+.cz-hist:disabled {
+  opacity: 0.32;
+  pointer-events: none;
+}
+
 .cz-brand {
   display: flex;
   flex: 1 1 0;
   align-items: center;
   gap: 10px;
   min-width: 0;
+  padding: 0 8px 0 4px;
 }
 
 .cz-brand__mark {
@@ -214,8 +307,8 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
+  gap: 1px;
   min-width: 0;
-  line-height: 1.15;
 }
 
 /* o título nunca passa por baixo dos botões: se faltar espaço, encurta com reticências */
@@ -234,7 +327,8 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   overflow: hidden;
   color: var(--text-2);
   font-size: var(--fs-xs);
-  font-weight: 700;
+  font-weight: 600;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -251,7 +345,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   color: var(--white);
 }
 
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   .cz[data-tone="dark"] .cz-round:hover,
   .cz[data-tone="dark"] .cz-restart:hover {
     background: color-mix(in srgb, var(--surface) 18%, transparent);
@@ -264,7 +358,13 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 }
 
 .cz[data-tone="dark"] .cz-brand__text span {
-  color: color-mix(in srgb, var(--white) 88%, transparent);
+  color: var(--white);
+}
+
+/* fundo escuro: o véu é mais firme (texto branco sobre rosé médio fica no limite sem ele) */
+.cz[data-tone="dark"] {
+  --st-veil: 88%;
+  --st-veil-2: 76%;
 }
 
 .cz[data-tone="dark"] .cz-brand img {
@@ -275,7 +375,6 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   color: color-mix(in srgb, var(--white) 92%, transparent);
 }
 
-.cz[data-tone="dark"] .cz-hint,
 .cz[data-tone="dark"] .cz-lost span {
   background: color-mix(in srgb, var(--surface) 95%, transparent);
   color: var(--text);
@@ -285,24 +384,21 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   outline-color: var(--white);
 }
 
-/* Preço (pílula na barra superior — só no computador) */
+/* Preço (na barra superior — só no computador) */
 .cz-price {
   display: none;
   align-items: center;
   gap: 10px;
-  height: 46px;
-  padding: 0 10px 0 18px;
-  border-radius: var(--r-md);
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
-  box-shadow: var(--shadow-1);
-  transition: box-shadow var(--t-fast), transform var(--t-fast);
+  height: var(--st-hit);
+  padding: 0 8px 0 16px;
+  border-radius: var(--st-r);
+  background: var(--surface);
+  box-shadow: var(--st-float);
+  transition: transform var(--t-fast) var(--st-ease);
 }
 
-@media (hover: hover) {
-  .cz-price:hover {
-    box-shadow: var(--shadow-2);
-    transform: translateY(-1px);
-  }
+.cz-price:active {
+  transform: scale(0.97);
 }
 
 .cz-price small {
@@ -325,14 +421,18 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   contain: layout style;
 }
 
+.cz-price strong {
+  font-size: 1.25rem;
+}
+
 .cz-price__more {
   display: grid;
   place-items: center;
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: var(--brand-soft);
-  color: var(--action-hover);
+  background: var(--fill);
+  color: var(--text);
 }
 
 .cz-price__more svg {
@@ -351,93 +451,40 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   }
 }
 
-/* Dica "Arraste para girar": some no primeiro toque. No celular fica no canto livre do palco,
-   ao lado dos botões; no computador, no alto do palco — nunca sobre o bolo ou o prato. */
-.cz-hint {
-  position: absolute;
-  left: 12px;
-  bottom: calc(var(--cz-lap) + 62px);
-  z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 6px 12px 6px 10px;
-  border-radius: var(--r-pill);
-  white-space: nowrap;
-  background: color-mix(in srgb, var(--text) 82%, transparent);
-  color: var(--white);
-  font-size: var(--fs-xs);
-  font-weight: 800;
-  line-height: 1.15;
-  pointer-events: none;
-  opacity: 0;
-  transform: translateY(6px);
-  transition: opacity 400ms var(--ease), transform 400ms var(--ease);
-}
-
-.cz-hint.is-on {
-  opacity: 1;
-  transform: none;
-}
-
-.cz-hint svg {
-  width: 16px;
-  height: 16px;
-}
-
-.cz-hint.is-on svg {
-  animation: cz-swipe 1.8s ease-in-out infinite;
-}
-
-@keyframes cz-swipe {
-  0%,
-  100% {
-    transform: translateX(-3px);
-  }
-
-  50% {
-    transform: translateX(3px);
-  }
-}
-
-/* Controles do palco */
-.cz-tools {
-  position: absolute;
-  right: 12px;
-  bottom: calc(var(--cz-lap) + 10px);
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
+/* ── Botão do palco: UM estilo. 44 × 44, raio 12, branco, a sombra do palco, ícone de 20 px, sem rótulo à vista
+   (o nome vai no aria-label e no title). Ligado = rosa-claro com contorno da cor de ação — nunca um bloco de cor
+   chamando mais atenção que o bolo. ── */
 .cz-tool {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-width: 44px;
-  height: 44px;
-  padding: 0 12px;
-  border-radius: var(--r-md);
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--st-hit);
+  height: var(--st-hit);
+  padding: 0;
+  border-radius: var(--st-r);
   background: color-mix(in srgb, var(--surface) 96%, transparent);
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--st-float);
   color: var(--text);
-  font-size: var(--fs-sm);
-  font-weight: 800;
-  white-space: nowrap;
-  transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast);
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: background-color var(--t-fast), color var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast) var(--st-ease);
+}
+
+.cz-tool[hidden] {
+  display: none;
 }
 
 .cz-tool svg {
-  width: 19px;
-  height: 19px;
+  width: 20px;
+  height: 20px;
 }
 
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   .cz-tool:hover {
-    box-shadow: var(--shadow-2);
+    background: var(--surface);
     color: var(--action-hover);
   }
 }
@@ -446,145 +493,329 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   transform: scale(0.96);
 }
 
-.cz-tool--label {
-  padding: 0 16px 0 13px;
+.cz-tool:focus-visible {
+  outline: 0;
+  box-shadow: var(--st-focus);
 }
 
-.cz-tool[aria-pressed="true"] {
-  background: var(--action);
-  color: var(--white);
-}
-
-.cz-tool--icon[aria-pressed="true"] {
-  background: var(--action);
-}
-
-/* (o ícone do giro não fica mais rodando sem parar: o botão aceso já diz que o giro está ligado) */
-
-/* "Fundo": escolha do fundo do palco (automático ou um dos prontos) */
-.cz-tool--bg {
-  width: 44px;
-  padding: 0;
-}
-
-.cz-tool--bg span {
-  display: none;
-}
-
+.cz-tool[aria-pressed="true"],
 .cz-tool[aria-expanded="true"] {
   background: var(--action-soft);
-  box-shadow: inset 0 0 0 1.5px var(--action);
+  box-shadow: inset 0 0 0 1.5px var(--action), var(--st-float);
   color: var(--action-hover);
 }
 
-.cz-bgbar {
-  position: absolute;
-  right: 12px;
-  bottom: calc(var(--cz-lap) + 62px);
-  z-index: 3;
-  max-width: calc(100% - 24px);
-  padding: 10px 10px 8px;
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow-2);
-  animation: cz-bgbar-in 180ms var(--ease);
+.cz-tool[aria-pressed="true"]:focus-visible,
+.cz-tool[aria-expanded="true"]:focus-visible {
+  box-shadow: inset 0 0 0 1.5px var(--action), var(--st-focus);
 }
 
-.cz-bgbar[hidden] {
+/* ── A coluna de ferramentas: uma só, sempre, no canto de cima à direita. De cima para baixo: ver por dentro,
+   revelar (só no chá revelação), a ferramenta da etapa (velas), o jogo e "…" (a folha "Ateliê").
+   Cinco botões cabem em 390 × 844. Em palco baixo, o que não cabe acima da faixa da Bô vira linha da folha
+   "Ateliê" (fitTools, em js/views/customizer.js, marca em .cz[data-collapsed]) — nunca uma segunda coluna. ── */
+.cz-tools {
+  position: absolute;
+  top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) + 4px);
+  right: var(--st-gutter);
+  z-index: 2;
+  display: flex;
+  flex-flow: column nowrap;
+  gap: var(--st-gap);
+  max-height: calc(100% - var(--cz-bar) - env(safe-area-inset-top, 0px) - var(--cz-lap) - 72px);
+}
+
+.cz[data-collapsed~="reveal"] .cz-tools [data-act="reveal"],
+.cz[data-collapsed~="game"] .cz-tools [data-act="game"],
+.cz[data-mode="rapido"] .cz-tool--game {
   display: none;
 }
 
-@keyframes cz-bgbar-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
+/* novidade no jogo (figurinha nova, encomenda do dia ainda não vista): um ponto discreto no botão */
+.cz.has-game-news .cz-tool--game::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--action);
 }
 
-.cz-bgbar__name {
+.cz-tools__slot {
+  display: contents;
+}
+
+/* o convite do som ficou sem resposta — ou o jogo tem novidade e o botão dele está recolhido aqui dentro (palco
+   baixo): um ponto no "…" (sem insistir) */
+.cz.wants-sound .cz-tool--more::after,
+.cz.has-game-news[data-collapsed~="game"] .cz-tool--more::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--action);
+}
+
+/* ── A faixa de avisos (js/atelier/ui/notices.js): embaixo do palco, ao lado da Bô. Um aviso por vez. ── */
+.st-lane {
+  position: absolute;
+  right: var(--st-gutter);
+  bottom: calc(var(--cz-lap) + 8px);
+  left: var(--st-gutter);
+  z-index: 3;
+  display: grid;
+  align-items: end;
+  justify-items: center;
+  pointer-events: none;
+}
+
+/* com a Bô no palco, o aviso começa ao lado dela (onde o balão abre) */
+.cz.has-bo .st-lane {
+  left: calc(var(--st-gutter) + var(--st-bo) + var(--st-gap));
+  justify-items: start;
+}
+
+.st-note {
+  position: relative;
+  grid-area: 1 / 1;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 0 4px 4px;
-  color: var(--text-2);
-  font-size: var(--fs-xs);
-  font-weight: 800;
-  white-space: nowrap;
+  flex-wrap: wrap; /* com o texto do aparelho ampliado, os botões descem para a linha de baixo em vez de sair da tela */
+  align-items: center;
+  gap: 6px 10px;
+  box-sizing: border-box;
+  max-width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: 6px 6px 6px 12px;
+  border-radius: var(--st-r-card);
+  background: var(--surface);
+  box-shadow: var(--st-pop);
+  color: var(--text);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity 140ms ease-out, transform 140ms ease-out, visibility 0s linear 140ms;
 }
 
-.cz-bgbar__name strong {
+.st-note[data-show="true"] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition: opacity 200ms var(--st-ease), transform 200ms var(--st-ease), visibility 0s;
+}
+
+.st-note__icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--rose-100);
+  color: var(--action-hover);
+}
+
+.st-note__icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.st-note__text {
+  display: grid;
+  flex: 1 1 6em;
+  gap: 1px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+.st-note__text strong {
   color: var(--text);
   font-size: var(--fs-sm);
+  font-weight: 800;
+  line-height: 1.25;
 }
 
-.cz-bgbar__row {
+.st-note__text span strong {
+  font-size: inherit;
+}
+
+/* a faixa tem a altura de três linhas: o texto do aviso nunca passa disso (não sobe sobre o bolo) */
+.st-note__text > [data-note-text] {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.st-note__acts {
   display: flex;
-  gap: 2px;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-left: auto;
 }
 
-.cz-bgsw {
+.st-note__btn,
+.st-note__x {
   position: relative;
-  display: grid;
-  place-items: center;
   flex: none;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
+  min-height: 36px;
+  border-radius: 10px;
+  font-size: var(--fs-meta);
+  font-weight: 800;
+  white-space: nowrap;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform var(--t-fast) var(--st-ease), background-color var(--t-fast);
 }
 
-.cz-bgsw::before {
+/* alvo de toque de 44 px, com o botão visível de 36 */
+.st-note__btn::after,
+.st-note__x::after {
   content: "";
   position: absolute;
-  inset: 6px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 36%, var(--sw) 0%, var(--sw2) 100%);
-  box-shadow: inset 0 0 0 1.5px rgba(42, 18, 16, 0.18);
-  transition: transform var(--t-fast);
+  inset: -4px 0;
 }
 
-.cz-bgsw--auto::before {
-  background: linear-gradient(135deg, #fdeef2 0 50%, #864962 50% 100%);
+.st-note__btn {
+  padding: 0 12px;
+  background: var(--fill);
+  color: var(--text);
 }
 
-.cz-bgsw b {
-  position: relative;
+.st-note__btn--go {
+  background: var(--action);
   color: var(--white);
-  font-size: var(--fs-sm);
-  font-weight: 800;
-  text-shadow: 0 0 3px rgba(42, 18, 16, 0.95), 0 0 2px rgba(42, 18, 16, 0.95);
 }
 
-@media (hover: hover) {
-  .cz-bgsw:hover::before {
-    transform: scale(1.06);
+.st-note__btn--quiet {
+  padding: 0 8px;
+  background: none;
+  color: var(--text-2);
+  font-weight: 700;
+}
+
+.st-note__x {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  color: var(--text-2);
+}
+
+.st-note__x::after {
+  inset: -4px;
+}
+
+.st-note__x svg {
+  width: 18px;
+  height: 18px;
+}
+
+.st-note__btn:active,
+.st-note__x:active {
+  transform: scale(0.96);
+}
+
+.st-note__btn:focus-visible,
+.st-note__x:focus-visible {
+  outline: 2.5px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .st-note__btn--quiet:hover,
+  .st-note__x:hover {
+    background: var(--fill);
+    color: var(--text);
   }
 }
 
-.cz-bgsw.is-on::after {
-  content: "";
+/* recado curto: só o texto */
+.st-note--info {
+  min-height: 40px;
+  padding: 8px 14px;
+  font-weight: 700;
+}
+
+.st-note--info .st-note__text {
+  color: var(--text);
+}
+
+/* dica sem ação: o texto pode ocupar duas linhas; com ✕ */
+.st-note--tip {
+  padding-left: 8px;
+}
+
+/* quanto do gesto já foi feito: um fio na base do aviso */
+.st-note__bar {
   position: absolute;
-  inset: 1px;
-  border: 2.5px solid var(--action);
-  border-radius: 50%;
+  right: 14px;
+  bottom: 4px;
+  left: 14px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--fill);
+}
+
+.st-note__bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--action);
+  transform: scaleX(0.04);
+  transform-origin: 0 50%;
+}
+
+/* celular estreito (até 379 px): o ícone do aviso sai, e o convite fica só com a pergunta — o texto cabe em duas
+   linhas ao lado dos botões e o aviso não sobe sobre o bolo */
+@media (max-width: 379px) {
+  .st-note .st-note__icon,
+  .at-invite [data-note-text] {
+    display: none;
+  }
+
+  .st-note--tip {
+    padding-left: 12px;
+  }
 }
 
 /* Rendimento e entrega (só em telas largas) */
 .cz-meta {
   position: absolute;
-  left: 20px;
-  bottom: 20px;
+  left: var(--st-gutter);
+  bottom: var(--st-gutter);
   z-index: 2;
   display: none;
   align-items: center;
   gap: 14px;
-  height: 44px;
-  padding: 0 18px;
-  border-radius: var(--r-pill);
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  box-shadow: var(--shadow-1);
+  height: var(--st-hit);
+  padding: 0 16px;
+  border-radius: var(--st-r);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  box-shadow: var(--st-float);
   color: var(--text-2);
-  font-size: var(--fs-sm);
-  font-weight: 700;
+  font-size: var(--fs-meta);
+  font-weight: 600;
 }
 
 .cz-meta span {
@@ -597,7 +828,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 .cz-meta svg {
   width: 17px;
   height: 17px;
-  color: var(--action);
+  color: var(--text);
 }
 
 /* Carregando / sem 3D */
@@ -674,7 +905,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 .cz-lost {
   position: absolute;
-  inset: auto 0 calc(var(--cz-lap) + 64px) 0;
+  inset: auto 0 calc(var(--cz-lap) + var(--st-lane) + 16px) 0;
   z-index: 2;
   display: flex;
   justify-content: center;
@@ -683,14 +914,24 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 .cz-lost span {
   padding: 8px 16px;
-  border-radius: var(--r-pill);
+  border-radius: var(--st-r);
   background: color-mix(in srgb, var(--text) 82%, transparent);
   color: var(--white);
   font-size: var(--fs-xs);
   font-weight: 800;
 }
 
-/* ───────── Painel ───────── */
+/* ───────── Painel: o ritmo ─────────
+   Uma régua vertical só, de cima para baixo:
+     fichas de etapa   40 px de altura, 8 px entre elas, margem --pn-gutter (16 celular · 28 computador);
+                       a faixa tem 56 px no celular (10 + 40 + 6): o palco cresceu e a primeira tela das opções
+                       continua mostrando o Formato inteiro em 390 × 844 e 360 × 640
+     título da etapa   só no computador (no celular a ficha acesa é o título: não se repete)
+     seção             16 px acima (20 no computador) · cabeçalho de 28 px · 8 px até o conteúdo
+     fichas            de filtro (ocasião, grupos) 36 px · de escolha 40 px · 8 px entre elas
+     grade de opções   8 px entre os cartões
+     faixas que rolam  começam na margem (scroll-padding) e sangram até a borda da tela
+     barra de total    10 px acima e abaixo, botão de 48 px, a mesma margem */
 .cz-panel {
   position: relative;
   z-index: 4;
@@ -709,11 +950,11 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 .cz-steps {
   grid-row: 1;
   display: flex;
-  gap: 6px;
-  padding: 12px 16px 10px;
+  gap: 8px;
+  padding: 10px var(--pn-gutter) 6px;
   overflow-x: auto;
   scrollbar-width: none;
-  scroll-padding-inline: 16px;
+  scroll-padding-inline: var(--pn-gutter);
   mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 26px), transparent 100%);
 }
 
@@ -785,11 +1026,25 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   opacity: 0.55;
 }
 
+/* Alvo de toque de 44 px nas fichas: a caixa visível tem 40 px (etapas e escolhas) ou 36 px (filtros); o que falta
+   é uma área invisível acima e abaixo. As faixas que rolam de lado guardam 4 px de folga para ela caber. */
+.cz-step,
+.cz-chip {
+  position: relative;
+}
+
+.cz-step::after,
+.cz-chip::after {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
+}
+
 /* Corpo (rola por dentro) */
 .cz-body {
   grid-row: 2;
   min-height: 0;
-  padding: 4px 16px 22px;
+  padding: 4px var(--pn-gutter) 24px;
   overflow-y: auto;
   overscroll-behavior: contain;
   outline: 0;
@@ -831,7 +1086,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 /* Âncora de preço (etapa 1) */
 .cz-anchor {
-  margin: 2px 0 8px;
+  margin: 0 0 6px;
   color: var(--text-2);
   font-size: var(--fs-meta);
   line-height: 1.35;
@@ -845,13 +1100,13 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 /* Dica da chef: no celular, uma linha que abre ao toque; no computador, sempre aberta */
 .cz-tip {
-  margin-top: 2px;
+  margin-top: 0;
   border-radius: var(--r-md);
   background: var(--fill);
 }
 
 .cz-sec + .cz-tip {
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .cz-tip__btn {
@@ -941,19 +1196,20 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 /* Seções */
 .cz-sec {
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .cz-sec__head {
   display: flex;
-  align-items: center;
+  align-items: baseline; /* nota comprida quebra em duas linhas: a primeira fica na linha do título */
   justify-content: space-between;
   gap: 12px;
   min-height: 28px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .cz-sec__head h3 {
+  flex: none;
   font-family: var(--font-body);
   font-size: var(--fs-md);
   font-weight: 800;
@@ -961,10 +1217,13 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 }
 
 .cz-sec__note {
+  min-width: 0;
   color: var(--text-2);
   font-size: var(--fs-sm);
   font-weight: 700;
+  line-height: 1.3;
   text-align: right;
+  text-wrap: balance;
 }
 
 /* "(opcional)": sempre em peso normal, logo depois do rótulo */
@@ -1515,6 +1774,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   overflow-x: auto;
   scrollbar-width: none;
   scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--pn-gutter); /* a primeira miniatura para na margem, não colada na borda da tela */
 }
 
 .cz-presets::-webkit-scrollbar {
@@ -2039,13 +2299,381 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   color: var(--positive);
 }
 
+/* ───────── Folha "Ateliê": o que é secundário no palco ─────────
+   Cobre o painel de opções (como a aba do jogo): o bolo continua inteiro à vista enquanto a pessoa troca o fundo,
+   a vista ou liga as medidas. Linhas de lista, no padrão da loja: caixinha de ícone, título, apoio e o controle. */
+.st-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  border-radius: inherit;
+  background: var(--surface);
+  color: var(--text);
+  outline: 0;
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 140ms ease-out, transform 140ms ease-out;
+}
+
+.st-sheet[hidden] {
+  display: none;
+}
+
+.st-sheet.is-open {
+  opacity: 1;
+  transform: none;
+  transition: opacity 200ms var(--st-ease), transform 240ms var(--st-ease);
+}
+
+.st-sheet__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 56px;
+  padding: 8px 6px 0 var(--pn-gutter);
+}
+
+.st-sheet__head h2 {
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.st-sheet__x {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-md);
+  color: var(--text);
+  touch-action: manipulation;
+  transition: background-color var(--t-fast), transform var(--t-fast) var(--st-ease);
+}
+
+.st-sheet__x svg {
+  width: 22px;
+  height: 22px;
+}
+
+.st-sheet__x:active {
+  transform: scale(0.94);
+}
+
+.st-sheet__x:focus-visible,
+.st-row:focus-visible {
+  outline: 2.5px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.st-sheet__body {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  min-height: 0;
+  padding: 4px var(--pn-gutter) calc(24px + var(--safe-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.st-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.st-group[hidden],
+.st-group:has(> .cz-bgbar:empty) {
+  display: none;
+}
+
+.st-group__title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 10px;
+  font-size: var(--fs-md);
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.st-group__title small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.st-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--text);
+  text-align: left;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.st-row[hidden] {
+  display: none;
+}
+
+.st-group > .st-row:last-child {
+  border-bottom: 0;
+}
+
+.st-row__icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-md);
+  background: var(--fill);
+  color: var(--text);
+}
+
+.st-row__icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.st-row__text {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.st-row__text strong {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.st-row__text small {
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  line-height: 1.3;
+  text-wrap: pretty;
+}
+
+.st-row__trail {
+  display: grid;
+  flex: none;
+  place-items: center;
+  min-width: 24px;
+  color: var(--text-3);
+}
+
+.st-row__trail > svg {
+  width: 20px;
+  height: 20px;
+}
+
+button.st-row:active .st-row__icon {
+  background: var(--brand-soft);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button.st-row:hover .st-row__text strong {
+    color: var(--action-hover);
+  }
+}
+
+/* interruptor (o mesmo desenho do interruptor das opções) */
+.st-switch {
+  position: relative;
+  display: block;
+  width: 46px;
+  height: 28px;
+  border-radius: var(--r-pill);
+  background: var(--border-strong);
+  transition: background-color var(--t-med) var(--ease);
+}
+
+.st-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(17, 17, 20, 0.3);
+  transition: transform var(--t-med) var(--ease);
+}
+
+.st-row[aria-checked="true"] .st-switch {
+  background: var(--action);
+}
+
+.st-row[aria-checked="true"] .st-switch::after {
+  transform: translateX(18px);
+}
+
+/* o jogo e o som só existem no modo Ateliê; o som, depois que o controle dele chegou */
+.cz[data-mode="rapido"] .st-row--game,
+.cz[data-mode="rapido"] .st-row--sound,
+.st-row--sound:has([data-at-sound]:empty) {
+  display: none;
+}
+
+/* o controle de som (js/atelier/audio-ui.js) dentro da linha: o mesmo botão de 44 px, com contorno — é ele que
+   se toca (a caixinha cinza da esquerda é só o ícone da linha) */
+.st-row--sound .aa-btn {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.st-row--sound .at-wants .aa-btn {
+  position: relative;
+}
+
+/* a ferramenta da etapa (velas) quando mora na folha: o mesmo botão de 44 px, com contorno em vez da sombra do palco */
+.st-row .cz-tool {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.st-row .cz-tool.is-held {
+  box-shadow: inset 0 0 0 1.5px var(--action);
+}
+
+.st-row--sound .at-wants .aa-btn::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--action);
+}
+
+/* vistas: fichas; fundo: amostras; cenário: fichas */
+.cz-viewbar__row,
+.at-scenes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cz-viewbar {
+  margin-bottom: 6px;
+}
+
+.cz-viewbar .cz-chip {
+  min-height: 44px;
+}
+
+.cz-bgbar__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: -4px 0 0 -6px;
+}
+
+.cz-bgsw {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  touch-action: manipulation;
+}
+
+.cz-bgsw::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 36%, var(--sw) 0%, var(--sw2) 100%);
+  box-shadow: inset 0 0 0 1.5px rgba(17, 17, 20, 0.18);
+  transition: transform var(--t-fast) var(--st-ease);
+}
+
+.cz-bgsw--auto::before {
+  background: linear-gradient(135deg, #fdeef2 0 50%, #864962 50% 100%);
+}
+
+.cz-bgsw b {
+  position: relative;
+  color: var(--white);
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  text-shadow: 0 0 3px rgba(17, 17, 20, 0.95), 0 0 2px rgba(17, 17, 20, 0.95);
+}
+
+.cz-bgsw:active::before {
+  transform: scale(0.94);
+}
+
+.cz-bgsw:focus-visible {
+  outline: 2.5px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.cz-bgsw.is-on::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border: 2.5px solid var(--action);
+  border-radius: 50%;
+}
+
+.at-scenes__name {
+  margin-top: 18px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .st-sheet,
+  .st-sheet.is-open {
+    transform: none;
+    transition: opacity 150ms linear;
+  }
+
+  .st-note,
+  .st-note[data-show="true"] {
+    transform: none;
+    transition: opacity 150ms linear, visibility 0s;
+  }
+
+  .st-switch,
+  .st-switch::after,
+  .cz-tool {
+    transition: none;
+  }
+}
+
 /* ───────── Barra inferior ───────── */
 .cz-foot {
   grid-row: 3;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 16px calc(10px + var(--safe-bottom));
+  padding: 10px var(--pn-gutter) calc(10px + var(--safe-bottom));
   border-top: 1px solid var(--border);
   background: var(--surface);
   box-shadow: var(--shadow-up);
@@ -2202,6 +2830,26 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   background: var(--action-soft);
 }
 
+/* ───────── Tablet em pé (640 a 899 px de largura): a Bô usa a caixa maior (72 px) e fica a 20 px das bordas;
+   a margem do palco e a faixa de avisos acompanham ───────── */
+@media (min-width: 640px) and (max-width: 899px) and (min-height: 521px) {
+  .cz {
+    --st-gutter: 20px;
+    --st-bo: 76px;
+  }
+
+  .st-lane {
+    bottom: calc(var(--cz-lap) + 20px);
+  }
+}
+
+/* ───────── Celular muito baixo (até 620 px de altura, em pé): a barra do título encolhe 8 px — tudo vai para o bolo ───────── */
+@media (max-height: 620px) and (max-width: 559px) {
+  .cz {
+    --cz-bar: 48px;
+  }
+}
+
 /* ───────── Celular baixo: miniaturas menores, para o Formato caber na primeira tela ───────── */
 @media (max-height: 720px) and (max-width: 899px) {
   .cz-preset {
@@ -2234,17 +2882,13 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   }
 
   .cz-canvas {
-    height: calc(100% - var(--cz-bar) - env(safe-area-inset-top, 0px) + 8px - var(--cz-lap));
+    height: calc(100% - var(--cz-lap));
   }
 
   .cz-panel {
     margin-top: 0;
     border-radius: 0;
     box-shadow: -1px 0 0 var(--border);
-  }
-
-  .cz-tool--label span {
-    display: none;
   }
 }
 
@@ -2254,17 +2898,26 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   .cz[data-step="resumo"] {
     --cz-bar: 76px;
     --cz-lap: 0px;
+    --st-gutter: 20px;
+    --st-lane: 84px;
+    --st-bo: 76px;
+    --pn-gutter: 28px;
     grid-template-columns: minmax(0, 1fr) 440px;
     grid-template-rows: minmax(0, 1fr);
   }
 
   .cz-canvas {
-    height: calc(100% - var(--cz-bar) - env(safe-area-inset-top, 0px) + 8px - var(--cz-lap));
+    height: calc(100% - var(--cz-lap));
   }
 
+  /* a barra de cima no computador: os mesmos botões do palco (44 px, raio 12, a sombra do palco), agora com fundo */
   .cz-top {
-    gap: 10px;
-    padding-inline: 16px 20px;
+    gap: var(--st-gap);
+    padding-inline: calc(var(--st-gutter) - 11px) var(--st-gutter);
+  }
+
+  .cz-brand {
+    padding-left: 0;
   }
 
   .cz-brand img {
@@ -2284,59 +2937,63 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
     display: inline-flex;
   }
 
+  .cz-hist,
+  .cz-restart {
+    background: var(--surface);
+    box-shadow: var(--st-float);
+    color: var(--text);
+  }
+
+  .cz-hist svg,
+  .cz-restart svg {
+    width: 20px;
+    height: 20px;
+  }
+
   /* "Recomeçar" com ícone e nome: não se confunde com desfazer */
   .cz-restart {
     display: inline-flex;
     align-items: center;
     gap: 8px;
     width: auto;
-    height: 46px;
-    padding: 0 16px 0 13px;
-    border-radius: var(--r-md);
-    background: color-mix(in srgb, var(--surface) 96%, transparent);
-    box-shadow: var(--shadow-1);
+    padding: 0 14px 0 12px;
     font-size: var(--fs-sm);
-    font-weight: 800;
+    font-weight: 700;
   }
 
   .cz-restart span {
     display: inline;
   }
 
-  .cz-restart:hover {
-    background: var(--surface);
-    box-shadow: var(--shadow-2);
-  }
-
-  /* no computador o "Recomeçar" é uma pílula branca: o texto continua escuro em qualquer fundo */
+  /* com fundo branco, o ícone continua escuro em qualquer tom de palco */
+  .cz[data-tone="dark"] .cz-hist,
   .cz[data-tone="dark"] .cz-restart,
+  .cz[data-tone="dark"] .cz-hist:hover,
   .cz[data-tone="dark"] .cz-restart:hover {
     background: var(--surface);
     color: var(--text);
   }
 
-  .cz-tools {
-    right: 20px;
-    bottom: 20px;
+  /* a etiqueta de fatias e prazo mora no canto de baixo à direita (o da esquerda é da Bô e dos avisos) */
+  .cz-meta {
+    right: var(--st-gutter);
+    left: auto;
   }
 
-  .cz-bgbar {
-    right: 20px;
-    bottom: 76px;
+  /* no computador o aviso fica sempre encostado à esquerda (ao lado da Bô, ou na margem sem ela) e não passa de
+     384 px: o canto de baixo à direita é da etiqueta de fatias e prazo */
+  .st-lane {
+    bottom: var(--st-gutter);
+    justify-items: start;
   }
 
-  .cz-hint {
-    top: calc(var(--cz-bar) + 6px);
-    bottom: auto;
-    left: 50%;
-    min-height: 0;
-    padding: 10px 18px;
-    font-size: var(--fs-sm);
-    transform: translate(-50%, -6px);
+  .st-note {
+    max-width: min(100%, 384px);
   }
 
-  .cz-hint.is-on {
-    transform: translate(-50%, 0);
+  /* o convite cabe em uma linha de título: o texto de apoio não disputa largura com os botões */
+  .st-note--ask .st-note__text {
+    flex-basis: 11em;
   }
 
   .cz-panel {
@@ -2544,20 +3201,14 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 /* Palco estreito (computador pequeno, tablet deitado): a barra superior enxuga para o título caber */
 @media (min-width: 900px) and (max-width: 1099px) {
-  .cz-top {
-    gap: 8px;
-    padding-inline: 10px 14px;
-  }
-
   .cz-brand__text h1 {
     font-size: 1.125rem;
   }
 
   .cz-restart {
     display: grid;
-    width: 46px;
+    width: var(--st-hit);
     padding: 0;
-    border-radius: 50%;
   }
 
   .cz-restart span {
@@ -2578,37 +3229,21 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   }
 }
 
-/* Rendimento e entrega só aparecem quando cabem ao lado dos botões do palco (nunca por baixo deles) */
+/* Rendimento e entrega só aparecem quando sobra largura ao lado da faixa de avisos (nunca por baixo dela) */
 @media (min-width: 1340px) {
   .cz-meta {
     display: inline-flex;
-    max-width: calc(100% - 350px);
+    max-width: calc(100% - 2 * var(--st-gutter) - var(--st-bo) - 24px);
     overflow: hidden;
   }
-}
 
-@media (min-width: 1480px) {
-  .cz-tool--bg {
-    width: auto;
-    padding: 0 16px 0 13px;
-  }
-
-  .cz-tool--bg span {
-    display: inline;
-  }
-
-  .cz-meta {
-    max-width: calc(100% - 400px);
+  /* com um aviso (ou a figurinha nova) na faixa, a etiqueta encolhe e o prazo termina em reticências */
+  .cz-stage:has(.st-note[data-show="true"], .ag-toast.is-on) .cz-meta {
+    max-width: calc(100% - 524px);
   }
 }
 
-/* r5-qa: com o chá revelação ligado entra o botão "Revelar" e a fileira de ferramentas cresce ~125 px: a etiqueta de
-   fatias e prazo ficava POR BAIXO dela ("19 de no…" coberto). Ela encolhe mais e o prazo termina em reticências. */
 @media (min-width: 1340px) {
-  .cz-stage:has(.cz-tools.has-reveal) .cz-meta {
-    max-width: calc(100% - 478px);
-  }
-
   .cz-meta span:last-child {
     display: block;
     min-width: 0;
@@ -2620,12 +3255,6 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
     display: inline-block;
     margin-right: 7px;
     vertical-align: -3px;
-  }
-}
-
-@media (min-width: 1480px) {
-  .cz-stage:has(.cz-tools.has-reveal) .cz-meta {
-    max-width: calc(100% - 528px);
   }
 }
 
@@ -2663,10 +3292,6 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 }
 
 @media (max-width: 360px) {
-  .cz-tool--label span {
-    display: none;
-  }
-
   .cz-anchor {
     font-size: var(--fs-xs);
   }
@@ -2677,7 +3302,6 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
     transition: none;
   }
 
-  .cz-hint svg,
   .cz-loading img {
     animation: none;
   }
@@ -2690,13 +3314,13 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 .cz-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .cz-chips--scroll {
   flex-wrap: nowrap;
-  margin-inline: -16px;
-  padding: 2px 16px;
+  margin: -2px -16px;
+  padding: 4px 16px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -2764,11 +3388,11 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 /* Ocasiões das inspirações */
 .cz-occ {
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .cz-occ .cz-chip {
-  min-height: 34px;
+  min-height: 36px;
   padding: 0 12px;
   font-size: var(--fs-meta);
 }
@@ -2886,7 +3510,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 /* Paletas prontas */
 .cz-pals {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   margin-inline: -16px;
   padding: 2px 16px;
   overflow-x: auto;
@@ -3018,7 +3642,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 /* Formatos e tamanhos: uma fileira que desliza no celular (tudo numa linha só, sem empurrar o resto para baixo) */
 .cz-rail {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   margin-inline: -16px;
   padding: 6px 16px 2px;
   overflow-x: auto;
@@ -3366,13 +3990,6 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   font-weight: 600;
 }
 
-/* com o botão "Revelar" à vista, no celular o "Ver por dentro" fica só com o ícone (os cinco botões cabem) */
-@media (max-width: 479px) {
-  .cz-tools.has-reveal [data-act="cutaway"] span {
-    display: none;
-  }
-}
-
 /* "Como será feito": a ficha de produção */
 .cz-ficha {
   display: grid;
@@ -3709,66 +4326,6 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   margin-bottom: -6px;
 }
 
-/* Desfazer / refazer */
-.cz-hist {
-  width: 40px;
-}
-
-.cz-hist:disabled {
-  opacity: 0.32;
-  pointer-events: none;
-}
-
-/* Vistas rápidas e medidas */
-.cz-viewbar__row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.cz-viewbar {
-  padding: 8px;
-}
-
-.cz-viewbar .cz-chip {
-  gap: 5px;
-  padding: 0 11px;
-  font-size: var(--fs-meta);
-}
-
-.cz-tool--view {
-  width: 44px;
-  padding: 0;
-}
-
-.cz-tool--view.is-active {
-  box-shadow: inset 0 0 0 1.5px var(--action), var(--shadow-1);
-  color: var(--action);
-}
-
-.cz-flash {
-  position: absolute;
-  top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) + 4px);
-  left: 50%;
-  z-index: 3;
-  padding: 7px 14px;
-  border-radius: var(--r-pill);
-  background: var(--text);
-  color: var(--surface);
-  font-size: var(--fs-xs);
-  font-weight: 800;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transform: translate(-50%, -6px);
-  transition: opacity var(--t-med) var(--ease), transform var(--t-med) var(--ease);
-}
-
-.cz-flash.is-on {
-  opacity: 1;
-  transform: translate(-50%, 0);
-}
-
 .cz-measure {
   position: absolute;
   z-index: 2;
@@ -3817,7 +4374,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 .cz-measure__info {
   position: absolute;
-  top: 4px;
+  top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) - 4px);
   left: 50%;
   display: inline-flex;
   align-items: center;
@@ -3839,8 +4396,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   color: var(--action);
 }
 
-.cz.is-typing .cz-measure,
-.cz.is-typing .cz-viewbar {
+.cz.is-typing .cz-measure {
   display: none;
 }
 
@@ -3848,14 +4404,6 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 @media (max-width: 420px) {
   .cz-brand__mark {
     display: none;
-  }
-
-  .cz-top {
-    gap: 2px;
-  }
-
-  .cz-brand {
-    padding-left: 4px;
   }
 }
 
@@ -3901,26 +4449,8 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
     height: 48px;
   }
 
-  .cz-hist {
-    width: 44px;
-    height: 46px;
-    background: color-mix(in srgb, var(--surface) 96%, transparent);
-    box-shadow: var(--shadow-1);
-  }
-
-  .cz[data-tone="dark"] .cz-hist,
-  .cz[data-tone="dark"] .cz-hist:hover {
-    background: var(--surface);
-    color: var(--text);
-  }
-
-  .cz-flash {
-    top: calc(var(--cz-bar) + 54px);
-    font-size: var(--fs-sm);
-  }
-
   .cz-measure__info {
-    top: 10px;
+    top: calc(var(--cz-bar) + 2px);
     font-size: var(--fs-sm);
   }
 
@@ -3930,7 +4460,6 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cz-flash,
   .cz-more > svg {
     transition: none;
   }
@@ -3987,10 +4516,11 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 /* temas prontos: fileira que desliza (não alarga o painel) */
 .cz-themes {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   overflow-x: auto;
   contain: inline-size;
   scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--pn-gutter);
   scrollbar-width: none;
   margin: 0 calc(-1 * var(--s-4, 16px));
   padding: 2px var(--s-4, 16px) 4px;

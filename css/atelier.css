@@ -1,19 +1,20 @@
 /* BOLAB — Ateliê (frente Tela): a camada de imersão do personalizador.
-   Carregada com a rota #/monte-seu-bolo, depois de css/customizer.css. Só tokens de css/tokens.css.
+   Carregada com a rota #/monte-seu-bolo, depois de css/customizer.css. Só tokens de css/tokens.css e a régua do
+   palco definida em css/customizer.css (--st-gutter, --st-gap, --st-hit, --st-r, --st-lane, --st-bo, --st-float…).
    Prefixos: .at-… (o que é do ateliê) e .cz… (ajustes do personalizador que dependem do modo).
 
-   Composição do palco:
-     canto de cima à esquerda   .at-hud     som + "Modo rápido" (+ encomendas, quando o jogo existir)
-     canto de cima à direita    .cz-tools   ferramentas do palco, em coluna no celular em pé (modo Ateliê)
-     faixa de baixo             .at-layer   a Bô e o balão dela, o convite de som e as dicas — nunca sobre o bolo:
-                                            a tela 3D guarda essa faixa (stageInsets em js/views/customizer.js)
-     sobre o bolo               .at-fx      prévia da peça, avisos do gesto, gravação
+   Quem mora onde (r6-tela — "Palco: a grade", em css/customizer.css):
+     canto de cima à direita    .cz-tools   a única coluna de ferramentas (ver por dentro · revelar · velas · "…")
+     canto de cima à esquerda   .ag-hud     a comanda do jogo, só com uma encomenda em curso
+     faixa de baixo             .at-layer   a Bô (caixa quadrada + etiqueta "assistente") à esquerda; ao lado, UMA coisa por vez:
+                                            aviso do palco (.st-note) › figurinha nova (.ag-toast) › balão da Bô
+     sobre o bolo               .at-fx      só a prévia da peça sob o dedo
+     por cima do painel         .st-sheet   a folha "Ateliê" (jogo, som, modo, vistas, giro, medidas, fundo, cenário)
+   O bolo nunca fica atrás de nada: a tela 3D guarda a faixa de baixo e o canto da coluna (stageInsets).
    Movimento: só transform e opacity, 120–260 ms, curva de saída forte; a revelação é o único momento longo. */
 
 .cz {
-  --at-ease: cubic-bezier(0.23, 1, 0.32, 1);
-  --at-lane: 84px; /* altura da faixa da Bô no celular (a mesma de stageInsets) */
-  --at-side: 62px; /* coluna das ferramentas no celular */
+  --at-ease: var(--st-ease);
 }
 
 /* ───────── Grade: a camada do ateliê ocupa a mesma célula do palco ───────── */
@@ -47,520 +48,275 @@
 }
 
 /* com o teclado do celular aberto, o palco fica só com o bolo e o campo */
-.cz.is-typing .at-hud,
 .cz.is-typing .at-fx {
   display: none;
 }
 
-.at-keepout {
-  position: absolute;
-  left: 20px;
-  bottom: 20px;
-  display: none;
-  width: min(560px, 62%);
-  height: 46px;
-}
-
-/* a etiqueta de fatias e prazo mora no canto de baixo do palco: a Bô fica acima dela */
-@media (min-width: 1340px) {
-  .at-keepout {
-    display: block;
-  }
-}
-
-/* ───────── HUD: som e modo ───────── */
-.at-hud {
-  position: absolute;
-  top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) + 2px);
-  left: 10px;
-  z-index: 3;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  transition: opacity var(--t-med) var(--at-ease);
-}
-
-.at-hud__sound:empty {
-  display: none;
-}
-
-.cz[data-mode="rapido"] .at-hud__sound,
-.cz[data-mode="rapido"] .at-mode--game {
-  display: none;
-}
-
-.at-mode {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 44px;
-  padding: 0 12px 0 10px;
-  border-radius: var(--r-md);
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
-  box-shadow: var(--shadow-1);
-  color: var(--text);
-  font-size: var(--fs-xs);
-  font-weight: 800;
-  white-space: nowrap;
-  touch-action: manipulation;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: transform var(--t-fast) var(--at-ease), box-shadow var(--t-fast), color var(--t-fast);
-}
-
-.at-mode[hidden] {
-  display: none;
-}
-
-.at-mode:active {
-  transform: scale(0.96);
-}
-
-.at-mode:focus-visible {
-  outline: 2.5px solid var(--focus);
-  outline-offset: 2px;
-}
-
-.at-mode__icon {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  color: var(--action);
-}
-
-.at-mode__icon svg {
-  width: 18px;
-  height: 18px;
-}
-
-.at-mode__short {
-  display: none;
-}
-
-/* celular: o botão do modo cabe na coluna do canto (ícone com a palavra embaixo), sem avançar sobre o bolo */
-@media (max-width: 899px) {
-  .at-mode {
-    flex-direction: column;
-    justify-content: center;
-    gap: 1px;
-    min-width: 48px;
-    height: auto;
-    min-height: 52px; /* cresce com o texto ampliado, em vez de cortar */
-    padding: 4px 5px;
-    font-size: var(--fs-2xs);
-    line-height: 1.1;
-  }
-
-  .at-mode__pre {
-    display: none;
-  }
-
-  .at-mode__short {
-    display: inline;
-  }
-
-  .at-hud {
-    left: 8px;
-  }
-
-  .at-hud .aa-btn {
-    width: 48px;
-  }
-}
-
-/* no modo rápido o convite de volta é discreto: só o ícone até a pessoa olhar para ele */
-.cz[data-mode="rapido"] .at-mode:not(.at-mode--game) {
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  color: var(--text-2);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .at-mode:hover {
-    box-shadow: var(--shadow-2);
-    color: var(--action-hover);
-  }
-}
-
-@media (min-width: 900px) {
-  .at-hud {
-    top: calc(var(--cz-bar) + 4px);
-    left: 20px;
-    gap: 8px;
-  }
-
-  .at-mode {
-    font-size: var(--fs-sm);
-    padding: 0 14px 0 12px;
-  }
-}
-
-/* ───────── Jogo (js/atelier/game): a comanda da encomenda fica ao lado da coluna do ateliê, nunca por cima ───────── */
+/* ───────── Jogo (js/atelier/game): só posição e tamanho externos ─────────
+   A comanda fica no canto de cima à esquerda, na mesma grade dos botões do palco (margem, 44 px, raio, sombra).
+   O aviso de figurinha nova ocupa a faixa de avisos (ao lado da Bô), no lugar do balão — um por vez. */
 .cz .ag {
-  --ag-x: 64px;
+  --ag-x: var(--st-gutter);
+}
+
+.cz .ag-hud {
+  top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) + 4px);
+  height: var(--st-hit);
+  border-radius: var(--st-r);
+  box-shadow: var(--st-float);
+}
+
+.cz .ag-tick {
+  top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) + 4px + var(--st-hit) + var(--st-gap));
+}
+
+.cz .ag-toast {
+  top: auto;
+  right: var(--st-gutter);
+  bottom: calc(var(--cz-lap) + 8px);
+  left: var(--st-gutter);
+  width: fit-content;
+  max-width: calc(100% - 2 * var(--st-gutter));
+  min-height: 56px;
+  margin: 0;
+  border-radius: var(--st-r-card);
+  box-shadow: var(--st-pop);
+  transform: translateY(6px);
+}
+
+.cz .ag-toast.is-on {
+  transform: none;
+}
+
+.cz.has-bo .ag-toast {
+  left: calc(var(--st-gutter) + var(--st-bo) + var(--st-gap));
+  max-width: calc(100% - 2 * var(--st-gutter) - var(--st-bo) - var(--st-gap));
+}
+
+/* a comanda não precisa mais dar licença ao aviso de figurinha (cada um tem o seu lugar) */
+.cz .ag:has(.ag-toast.is-on) .ag-hud {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* figurinha nova em cartaz: os avisos do palco esperam */
+.cz:has(.ag-toast.is-on) .st-lane {
+  opacity: 0;
+  pointer-events: none;
 }
 
 @media (min-width: 900px) {
-  .cz .ag {
-    --ag-x: 176px;
+  .cz .ag-toast {
+    right: auto;
+    bottom: var(--st-gutter);
+    max-width: 360px;
   }
 }
 
-/* ───────── Cenário em volta do bolo (dentro do painel "Fundo") ───────── */
-.at-scenes__name {
-  margin-top: 10px;
-}
-
-.at-scenes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
+/* ───────── Cenário em volta do bolo (dentro da folha "Ateliê") ───────── */
 .at-scenes .cz-chip {
-  min-height: 40px;
+  min-height: 44px;
 }
 
-/* telas baixas (celular pequeno em pé): os três botões do canto encolhem um pouco para caber acima da Bô */
-@media (max-width: 899px) and (max-height: 700px) and (min-height: 521px) {
-  .at-hud {
-    gap: 4px;
-  }
-
-  .at-hud .aa-btn {
-    height: 40px;
-  }
-
-  .at-mode {
-    min-height: 40px;
-    padding: 2px 5px;
-  }
-
-  .at-mode__icon,
-  .at-mode__icon svg {
-    width: 16px;
-    height: 16px;
-  }
-}
-
-/* r5-qa: celular muito baixo (320 × 568): três botões em coluna não cabem acima da Bô — ela ficava por cima do
-   "jogo". O terceiro botão passa para uma segunda coluna (como as ferramentas do outro lado já fazem). */
-@media (max-width: 899px) and (max-height: 600px) and (min-height: 521px) {
-  .at-hud {
-    flex-flow: column wrap;
-    align-content: flex-start;
-    max-height: 88px;
-    column-gap: 4px;
-  }
-
-  .cz .ag {
-    --ag-x: 112px;
-  }
-}
-
-/* o que está sendo apontado por uma dica */
+/* o que está sendo apontado por uma dica: um anel que aparece em fundo claro e escuro */
 .cz .at-spot {
-  outline: 3px solid var(--action);
-  outline-offset: 4px;
-  border-radius: var(--r-md);
+  box-shadow: 0 0 0 2.5px var(--white), 0 0 0 5.5px var(--action), var(--st-float);
 }
 
-/* ───────── Celular (em pé ou deitado), modo Ateliê: ferramentas em coluna, faixa de baixo livre para a Bô ───────── */
+/* ───────── A Bô: lugar fixo na faixa de baixo do palco ─────────
+   A âncora dela é a caixa quadrada da mascote (52 px no celular) mais a etiqueta "assistente" logo abaixo (17 px).
+   Celular (em pé ou deitado): a âncora fica no canto de baixo à esquerda, centrada na reserva --st-bo, com a
+   etiqueta 8 px acima da borda do painel. O balão e os atalhos abrem ao lado dela, com a largura inteira que sobra
+   até a margem. O desenho dela e a pele do balão são de css/atelier-bo.css; aqui fica só onde e quanto espaço.
+
+   O balão nunca cobre o bolo nem as fichas de etapa:
+     · só texto        começa 12 px abaixo do alto da mascote (a ponta, 11 px abaixo do alto do balão, cai no meio do
+                       rosto dela) e tem no máximo 73 px — três linhas; o que passar disso rola por dentro (a última
+                       linha esmaece: css/atelier-bo.css). Termina 2 px acima das fichas de etapa.
+     · com botão/nota  prende-se pela base (8 px para dentro da borda do painel, acima das fichas) e cresce para
+                       cima, até 190 px: pode passar sobre o pé do prato enquanto a sugestão está aberta, nunca
+                       sobre o bolo. */
 @media (max-width: 899px) {
-  .cz[data-mode="atelie"] .cz-tools {
-    top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) + 2px);
-    right: 10px;
-    bottom: auto;
-    flex-flow: column wrap-reverse;
-    gap: 6px;
-    max-height: calc(100% - var(--cz-bar) - env(safe-area-inset-top, 0px) - var(--cz-lap) - 6px);
-  }
-
-  .cz[data-mode="atelie"] .cz-tool--label {
-    width: 44px;
-    padding: 0;
-  }
-
-  .cz[data-mode="atelie"] .cz-tool--label span {
-    display: none;
-  }
-
-  .cz[data-mode="atelie"] .cz-bgbar {
-    top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) + 2px);
-    right: calc(var(--at-side) + 2px);
-    bottom: auto;
-    max-width: calc(100% - var(--at-side) - 14px);
-  }
-
-  .cz[data-mode="atelie"] .cz-hint {
-    display: none;
-  }
-
-  /* a Bô: canto de baixo à esquerda, no pé do palco; o balão abre ao lado dela e cresce para baixo */
   .cz .at-layer .bo {
     overflow: visible;
   }
 
   .cz .at-layer .bo[data-size="s"] .bo-anchor {
     top: auto;
-    bottom: calc(var(--cz-lap) + 6px);
-    left: 8px;
-    transform: none;
+    bottom: calc(var(--cz-lap) + 8px);
+    left: calc(var(--st-gutter) + var(--st-bo) / 2);
+    transform: translateX(-50%);
   }
 
   .cz .at-layer .bo[data-size="s"] .bo-bubble,
   .cz .at-layer .bo[data-size="s"] .bo-panel {
-    top: -8px;
+    top: 12px;
     right: auto;
     bottom: auto;
-    left: calc(100% + 8px);
-    width: calc(100vw - 68px - var(--at-side) - 8px);
-    width: calc(100cqw - 68px - var(--at-side) - 8px);
-    max-width: 340px;
+    left: calc(50% + var(--st-bo) / 2 + var(--st-gap));
+    width: calc(100vw - 2 * var(--st-gutter) - var(--st-bo) - var(--st-gap));
+    width: calc(100cqw - 2 * var(--st-gutter) - var(--st-bo) - var(--st-gap));
+    max-width: 380px;
     transform-origin: 0% 20%;
   }
 
-  /* com um aviso de gesto na faixa (peça na mão, velas, prato), o balão abre logo abaixo dele, sobre a borda do
-     painel: os dois ficam à vista e o botão do aviso continua tocável */
-  .cz.has-lane .at-layer .bo[data-size="s"] .bo-bubble {
-    top: 66px;
+  .cz .at-layer .bo[data-size="s"] .bo-bubble[data-plain="true"] {
+    max-height: 73px;
   }
 
-  .cz.has-lane .at-layer .bo[data-size="s"] .bo-bubble::after {
-    display: none;
+  .cz .at-layer .bo[data-size="s"] .bo-bubble[data-plain="false"] {
+    top: auto;
+    bottom: -16px;
+    max-height: 190px;
+    transform-origin: 0% 80%;
   }
 
+  /* a ponta do balão: no meio do rosto dela (18 px abaixo do alto do balão = o meio de um balão de uma linha) */
   .cz .at-layer .bo[data-size="s"] .bo-bubble::after {
-    top: 22px;
+    top: 11px;
     right: auto;
     bottom: auto;
-    left: -5px;
+    left: -6px;
   }
 
-  .cz .at-layer .bo[data-size="s"] .bo-bubble {
-    padding: 9px 12px;
+  .cz .at-layer .bo[data-size="s"] .bo-bubble[data-plain="false"]::after {
+    top: auto;
+    bottom: 47px;
   }
 
-  /* a etiqueta começa na borda da mascote (com texto ampliado ela não sai da tela) */
-  .cz .at-layer .bo[data-size="s"] .bo-anchor::after {
-    left: -2px;
-    transform: none;
+  /* um aviso do palco (ou a figurinha nova) em cartaz: o balão espera — a voz e o leitor de tela seguem */
+  .cz.has-note .at-layer .bo .bo-bubble,
+  .cz:has(.ag-toast.is-on) .at-layer .bo .bo-bubble {
+    opacity: 0;
+    pointer-events: none;
   }
 }
 
-/* Celular em pé: no resumo e na revelação o palco cresce (é o momento do bolo). */
-@media (max-width: 559px), (max-width: 899px) and (min-height: 521px) {
-  .cz[data-mode="atelie"][data-step="resumo"] {
-    --cz-stage-to: clamp(250px, min(54vh, 100vh - 330px), 520px);
+/* Palco estreito (celular de até ~380 px): ao lado da Bô não cabem as duas colunas dos atalhos "Pergunte à Bô".
+   O painel abre logo abaixo dela, de margem a margem, sobre o painel de opções — nunca sobre o bolo. */
+@container (max-width: 383px) {
+  .cz .at-layer .bo[data-size="s"] .bo-panel {
+    top: calc(100% + 6px);
+    left: calc(50% - var(--st-bo) / 2);
+    width: calc(100cqw - 2 * var(--st-gutter));
+    transform-origin: 10% 0%;
+  }
+}
+
+/* Celular deitado: o palco vai até a base da tela (o painel de opções fica ao lado), então não há borda de painel
+   para o balão descer por cima. O balão se prende pela base, na altura da etiqueta, e cresce para cima: só texto
+   continua com três linhas no máximo (cabe na faixa); com botão ou nota, até 190 px. Os atalhos "Pergunte à Bô",
+   que a pessoa abriu de propósito, abrem do lado do painel de opções — o bolo continua inteiro à vista. */
+@media (max-height: 520px) and (min-width: 560px) and (max-width: 899px) {
+  .cz .at-layer .bo[data-size="s"] .bo-bubble,
+  .cz .at-layer .bo[data-size="s"] .bo-bubble[data-plain="false"] {
+    top: auto;
+    bottom: 0;
+    transform-origin: 0% 90%;
   }
 
+  .cz .at-layer .bo[data-size="s"] .bo-bubble::after,
+  .cz .at-layer .bo[data-size="s"] .bo-bubble[data-plain="false"]::after {
+    top: auto;
+    bottom: 31px;
+  }
+
+  .cz .at-layer .bo[data-size="s"] .bo-panel {
+    top: auto;
+    bottom: 0;
+    left: calc(100cqw - var(--st-gutter) - (var(--st-bo) - 100%) / 2 + 8px);
+    width: min(320px, 46vw - 16px);
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
+    transform-origin: 0% 90%;
+  }
+}
+
+/* Computador: os atalhos sobem pela faixa livre à esquerda do bolo, em cima da Bô. Quando essa faixa é mais
+   estreita que as duas colunas de fichas (palco com menos de ~1150 px de largura), o painel fica com a largura da
+   faixa e as fichas em uma coluna: mais alto, mas sem passar por cima do bolo nem do prato. O seletor "quanto a Bô
+   fala" pode quebrar o rótulo em duas linhas para caber nessa largura. Em palco ainda mais estreito (a Bô passaria
+   a abrir o painel AO LADO dela, por cima do bolo) vale a mesma regra: em cima dela, uma coluna. */
+@container (min-width: 640px) and (max-width: 1150px) {
+  .cz .at-layer .bo[data-size="l"] .bo-panel {
+    width: max(26cqw - 12px, 164px);
+    max-width: max(26cqw - 12px, 164px);
+    max-height: calc(100vh - var(--cz-bar) - 132px);
+    overflow-y: auto;
+  }
+
+  .cz .at-layer .bo[data-size="l"][data-layout="side"] .bo-panel {
+    top: auto;
+    right: auto;
+    bottom: calc(100% + 12px);
+    left: 0;
+    transform-origin: 20% 100%;
+  }
+
+  .cz .at-layer .bo[data-size="l"] .bo-chips {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cz .at-layer .bo[data-size="l"] .bo-seg button {
+    min-width: min-content; /* quebra entre palavras ("Só o que / importa"), nunca no meio de uma */
+    padding-inline: 6px;
+    line-height: 1.2;
+    overflow-wrap: normal;
+    white-space: normal;
+  }
+}
+
+/* Celular em pé: na revelação o palco cresce (é o momento do bolo). */
+@media (max-width: 559px), (max-width: 899px) and (min-height: 521px) {
   .cz.is-revealing,
   .cz.is-revealing[data-step="resumo"] {
-    --cz-stage-to: clamp(250px, 100vh - 318px, 560px);
+    --cz-stage-to: clamp(264px, 100vh - 318px, 560px);
   }
 
   @supports (height: 100dvh) {
-    .cz[data-mode="atelie"][data-step="resumo"] {
-      --cz-stage-to: clamp(250px, min(54dvh, 100dvh - 330px), 520px);
-    }
-
     .cz.is-revealing,
     .cz.is-revealing[data-step="resumo"] {
-      --cz-stage-to: clamp(250px, 100dvh - 318px, 560px);
+      --cz-stage-to: clamp(264px, 100dvh - 318px, 560px);
     }
   }
 }
 
-/* com altura sobrando, os atalhos "Pergunte à Bô" usam a largura toda (as ferramentas ficam acima da faixa) */
-@media (max-width: 559px) and (min-height: 700px) {
-  .cz .at-layer .bo[data-size="s"] .bo-panel {
-    width: calc(100vw - 76px);
-    width: calc(100cqw - 76px);
-    max-width: none;
+/* ───────── Avisos do palco: o que é só do ateliê ───────── */
+/* "Gravando…": o ponto vermelho ao lado do texto */
+.at-rec__dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  animation: at-blink 900ms steps(2, jump-none) infinite;
+}
+
+@keyframes at-blink {
+  to {
+    opacity: 0.25;
   }
 }
 
-/* "assistente": a Bô se apresenta pelo que é (regras de confeitaria e voz gravada), sempre à vista */
-.cz .at-layer .bo-anchor::after {
-  content: "assistente";
-  position: absolute;
-  bottom: -5px;
-  left: 50%;
-  padding: 1px 6px 2px;
-  border-radius: var(--r-pill);
-  background: var(--surface);
-  box-shadow: var(--shadow-1);
-  color: var(--text-2);
-  font-size: 0.625rem;
-  font-weight: 800;
-  line-height: 1.3;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-  pointer-events: none;
-  transform: translateX(-50%);
-}
-
-.cz .at-layer .bo[data-size="l"] .bo-anchor::after {
-  bottom: -9px;
-  font-size: var(--fs-2xs);
-}
-
-/* enquanto as dicas estão na tela, o balão espera (a voz e o leitor de tela seguem) */
-.cz .at-layer[data-busy] .bo-bubble {
-  opacity: 0;
+.cz.is-recording .cz-top,
+.cz.is-recording .cz-tools {
+  opacity: 0.35;
   pointer-events: none;
 }
 
-/* ───────── Cartões da faixa: convite de som e dicas ───────── */
-.at-card {
-  position: absolute;
-  top: calc(100% - var(--cz-lap) - var(--at-lane) + 2px);
-  left: 8px;
-  right: calc(var(--at-side) + 2px);
-  z-index: 6;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 4px 10px;
-  max-width: 400px;
-  padding: 12px 12px 10px;
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow-2);
-  color: var(--text);
-  pointer-events: auto;
-  animation: at-card-in 240ms var(--at-ease) both;
-}
-
-.at-tips {
-  left: 68px;
-}
-
-@keyframes at-card-in {
+@keyframes at-fade-in {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.98);
   }
 }
 
-.at-card__icon {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--rose-100);
-  color: var(--action);
-}
-
-.at-card__text {
-  display: grid;
-  gap: 1px;
-  margin: 0;
-  font-size: var(--fs-meta);
-  line-height: 1.35;
-  color: var(--text-2);
-}
-
-.at-card__text strong {
-  color: var(--text);
-  font-size: var(--fs-sm);
-  font-weight: 800;
-}
-
-.at-card__acts {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.at-card__acts .btn {
-  min-height: 44px;
-  padding-inline: 16px;
-}
-
-.at-card__quiet {
-  min-height: 44px;
-  padding: 0 12px;
-  border-radius: var(--r-md);
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  font-weight: 700;
-  touch-action: manipulation;
-}
-
-.at-card__quiet:active {
-  background: var(--fill);
-}
-
-.at-card__quiet:focus-visible {
-  outline: 2.5px solid var(--focus);
-  outline-offset: 2px;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .at-card__quiet:hover {
-    background: var(--fill);
-    color: var(--text);
-  }
-}
-
-/* computador: na faixa livre à esquerda do bolo, logo acima da Bô (onde o balão dela abre) */
-@media (min-width: 900px) {
-  .at-card,
-  .at-tips {
-    top: auto;
-    right: auto;
-    bottom: 152px;
-    left: 20px;
-    width: clamp(200px, calc(26cqw - 20px), 300px);
-  }
-}
-
-@media (min-width: 1340px) {
-  .at-card,
-  .at-tips {
-    bottom: 206px;
-  }
-}
-
-/* celular deitado: a faixa de baixo é a do palco (o painel fica ao lado) */
-@media (max-height: 520px) and (min-width: 560px) and (max-width: 899px) {
-  .at-card,
-  .at-tips {
-    top: auto;
-    right: auto;
-    bottom: 8px;
-    left: 68px;
-    width: min(320px, calc(100% - 76px));
-  }
-
-  .at-invite {
-    left: 8px;
-  }
-
-  .cz .at-layer .bo {
-    overflow: visible;
-  }
-
-  .cz .at-layer .bo[data-size="s"] .bo-bubble,
-  .cz .at-layer .bo[data-size="s"] .bo-panel {
-    max-width: calc(100cqw - 76px);
-  }
-}
-
-/* ───────── Sobre o bolo: prévia da peça, avisos de gesto ───────── */
+/* ───────── Sobre o bolo: a prévia da peça ───────── */
 .at-fx {
   position: absolute;
   inset: 0;
   z-index: 2;
   pointer-events: none;
-}
-
-.at-fx > * {
-  pointer-events: auto;
 }
 
 .at-ghost {
@@ -602,9 +358,8 @@
   transform: rotate(-45deg);
 }
 
-/* "aqui não cabe": o aviso balança de leve, uma vez (translate à parte: não desfaz o transform de cada um) */
-.at-fx.is-nofit ~ .cz-flash,
-.at-fx.is-nofit .at-banner {
+/* "aqui não cabe": o aviso balança de leve, uma vez (translate à parte: não desfaz o transform dele) */
+.cz-stage:has(.at-fx.is-nofit) .st-note[data-show="true"] {
   animation: at-shake 320ms var(--at-ease);
 }
 
@@ -622,253 +377,8 @@
   }
 }
 
-/* Avisos e controles de gesto. No celular moram na faixa de baixo do palco (a mesma da Bô, que cede a vez):
-   o bolo fica inteiro à vista enquanto a pessoa escolhe o lugar da peça. No computador, no alto do palco. */
-.at-banner,
-.at-note,
-.at-spread,
-.at-rec {
-  position: absolute;
-  bottom: calc(var(--cz-lap) + 14px);
-  left: 68px;
-  right: calc(var(--at-side) + 2px);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 0;
-  padding: 6px 6px 6px 14px;
-  border-radius: var(--r-lg);
-  background: var(--text);
-  box-shadow: var(--shadow-2);
-  color: var(--surface);
-  font-size: var(--fs-meta);
-  font-weight: 700;
-  line-height: 1.3;
-  animation: at-rise-in 220ms var(--at-ease) both;
-}
-
-@keyframes at-rise-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-}
-
-@keyframes at-drop-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -8px);
-  }
-}
-
-@keyframes at-fade-in {
-  from {
-    opacity: 0;
-  }
-}
-
-/* gravando: no alto, ao centro (o resto do palco esmaece) */
-.at-rec {
-  top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) + 2px);
-  right: auto;
-  bottom: auto;
-  left: 50%;
-  transform: translateX(-50%);
-  animation-name: at-drop-in;
-}
-
-/* modo rápido no celular: sem a Bô, o aviso usa a faixa inteira (as ferramentas voltam quando a peça é solta) */
-.cz[data-mode="rapido"] .at-banner {
-  bottom: calc(var(--cz-lap) + 10px);
-  left: 10px;
-  right: 10px;
-}
-
-@media (max-width: 899px) {
-  .cz[data-mode="rapido"].is-placing .cz-tools {
-    opacity: 0;
-    pointer-events: none;
-  }
-}
-
-/* o convite de som ficou sem resposta: o alto-falante pede atenção, sem insistir */
-.at-wants .aa-btn::after {
-  content: "";
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 9px;
-  height: 9px;
-  border: 2px solid var(--surface);
-  border-radius: 50%;
-  background: var(--action);
-}
-
-.at-wants .aa-btn {
-  position: relative;
-}
-
-.at-banner__text {
-  min-width: 0;
-}
-
-.at-banner__btn,
-.at-spread__btn {
-  flex: none;
-  min-height: 36px;
-  padding: 0 14px;
-  border-radius: var(--r-md);
-  background: var(--surface);
-  color: var(--text);
-  font-size: var(--fs-meta);
-  font-weight: 800;
-  touch-action: manipulation;
-}
-
-/* alvo de toque de 44 px, mesmo com o botão baixo */
-.at-banner__btn,
-.at-spread__btn {
-  position: relative;
-}
-
-.at-banner__btn::after,
-.at-spread__btn::after {
-  content: "";
-  position: absolute;
-  inset: -4px;
-}
-
-.at-banner__btn:active,
-.at-spread__btn:active {
-  transform: scale(0.96);
-}
-
-.at-banner__btn:focus-visible,
-.at-spread__btn:focus-visible,
-.at-note--btn:focus-visible {
-  outline: 2.5px solid var(--surface);
-  outline-offset: 2px;
-}
-
-/* modo rápido no celular, com uma peça na mão: o canto do modo sai da frente do bolo visto de cima */
-@media (max-width: 899px) {
-  .cz[data-mode="rapido"].is-placing .at-hud {
-    opacity: 0;
-    pointer-events: none;
-  }
-}
-
 .cz.is-placing .cz-canvas {
   cursor: crosshair;
-}
-
-.at-note {
-  padding: 8px 14px 8px 10px;
-}
-
-.at-note svg,
-.at-rec i {
-  flex: none;
-}
-
-.at-note--btn {
-  justify-content: flex-start;
-  min-height: 44px;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-
-.at-note--btn:active {
-  transform: scale(0.97);
-}
-
-.at-spread {
-  padding: 6px 6px 6px 10px;
-}
-
-.at-spread__text {
-  flex: 1;
-  min-width: 0;
-}
-
-/* o quanto já foi alisado: um fio que cresce na base do aviso */
-.at-spread__ring {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-}
-
-.at-spread__ring i {
-  position: absolute;
-  right: 12px;
-  bottom: 3px;
-  left: 12px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--rose-300, var(--action));
-  transform: scaleX(0.04);
-  transform-origin: 0 50%;
-}
-
-.at-rec {
-  padding: 8px 14px 8px 12px;
-}
-
-.at-rec i {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--red);
-  animation: at-blink 900ms steps(2, jump-none) infinite;
-}
-
-@keyframes at-blink {
-  to {
-    opacity: 0.25;
-  }
-}
-
-.cz.is-recording .cz-top,
-.cz.is-recording .cz-tools,
-.cz.is-recording .at-hud {
-  opacity: 0.35;
-  pointer-events: none;
-}
-
-@media (min-width: 900px) {
-  .at-banner,
-  .at-note,
-  .at-spread,
-  .at-rec,
-  .cz[data-mode="rapido"] .at-banner {
-    top: calc(var(--cz-bar) + 6px);
-    right: auto;
-    bottom: auto;
-    left: 50%;
-    max-width: calc(100% - 560px);
-    font-size: var(--fs-sm);
-    transform: translateX(-50%);
-    animation-name: at-drop-in;
-  }
-
-  .at-note--btn:active {
-    transform: translateX(-50%) scale(0.97);
-  }
-}
-
-/* celular deitado: o canto de baixo do palco */
-@media (max-height: 520px) and (min-width: 560px) and (max-width: 899px) {
-  .at-banner,
-  .at-note,
-  .at-spread,
-  .cz[data-mode="rapido"] .at-banner {
-    right: 8px;
-    bottom: 60px;
-    left: 68px;
-  }
 }
 
 /* ───────── Soprar as velas ───────── */
@@ -948,49 +458,64 @@
   outline-offset: 4px;
 }
 
-/* versão pequena, no palco (etapa Decoração): na faixa de baixo no celular, no alto no computador */
-.at-blow--chip {
+/* No palco (etapa Decoração) soprar e acender são ferramentas da coluna: o mesmo botão de 44 px dos outros.
+   O fôlego enche o próprio botão enquanto a pessoa segura. */
+.cz-tool.at-blow--chip {
+  display: grid;
+  place-items: center;
+  gap: 0;
+  overflow: hidden;
+  color: var(--text);
+}
+
+.cz-tool.at-blow--chip .at-blow__ring {
   position: absolute;
-  bottom: calc(var(--cz-lap) + 14px);
-  left: 68px;
-  grid-auto-flow: column;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 0 14px 0 6px;
-  border-radius: var(--r-lg);
-  background: var(--text);
-  box-shadow: var(--shadow-2);
-  color: var(--surface);
-  font-size: var(--fs-meta);
+  inset: 0;
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  transform: none;
 }
 
-@media (min-width: 900px) {
-  .at-blow--chip {
-    top: calc(var(--cz-bar) + 6px);
-    bottom: auto;
-    left: 50%;
-    transform: translateX(-50%);
-  }
+.cz-tool.at-blow--chip .at-blow__ring i {
+  inset: -30%;
+  background: color-mix(in srgb, var(--action) 26%, transparent);
 }
 
-.at-blow--chip .at-blow__ring {
-  width: 32px;
-  height: 32px;
-}
-
-.at-blow--chip .at-blow__icon {
-  position: absolute;
-  top: 50%;
-  left: 22px;
+.cz-tool.at-blow--chip .at-blow__icon {
+  position: relative;
+  top: auto;
+  left: auto;
+  grid-area: 1 / 1;
   width: 20px;
   height: 20px;
-  transform: translate(-50%, -50%);
+  color: inherit;
+  transform: none;
 }
 
-.at-blow--chip .at-blow__icon svg {
-  width: 18px;
-  height: 18px;
+.cz-tool.at-blow--chip .at-blow__icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.cz-tool.at-blow--chip .at-blow__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.cz-tool.at-blow--chip:focus-visible .at-blow__ring {
+  outline: 0;
+}
+
+.cz-tool.at-blow--chip.is-held {
+  box-shadow: inset 0 0 0 1.5px var(--action), var(--st-float);
+  color: var(--action-hover);
 }
 
 /* ───────── Revelação ───────── */
@@ -1049,9 +574,7 @@
 .cz.is-revealing .cz-top,
 .cz.is-revealing .cz-tools,
 .cz.is-revealing .cz-meta,
-.cz.is-revealing .cz-bgbar,
-.cz.is-revealing .cz-hint,
-.cz.is-revealing .at-hud,
+.cz.is-revealing .st-lane,
 .cz.is-revealing .at-layer,
 .cz.is-revealing .at-fx {
   opacity: 0;
@@ -1438,25 +961,19 @@
 
 /* ───────── Reduzir movimento ───────── */
 @media (prefers-reduced-motion: reduce) {
-  .at-card,
-  .at-banner,
-  .at-note,
-  .at-spread,
   .at-reveal,
   .cz[data-mode="atelie"][data-dir] .cz-body:not(.is-still) > * {
     animation: at-fade-in 150ms linear both;
     animation-delay: 0ms;
   }
 
-  .at-fx.is-nofit ~ .cz-flash,
-  .at-fx.is-nofit .at-banner,
-  .at-rec i {
+  .cz-stage:has(.at-fx.is-nofit) .st-note[data-show="true"],
+  .at-rec__dot {
     animation: none;
   }
 
   .at-blow__ring,
   .at-blow__ring i,
-  .at-mode,
   .at-revealbtn {
     transition: none;
   }

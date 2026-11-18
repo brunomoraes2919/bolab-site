@@ -1,108 +1,146 @@
 // BOLAB — Ateliê: a Bô em pessoa. Desenho vetorial próprio (nenhuma imagem externa), nascido da marca:
-// a bolinha da logo virou a cabeça, o "B" virou o corpo, e a cobertura que escorre por dentro do B continua lá.
-// Estilo "figurinha": cada parte tem contorno branco, então ela se destaca em qualquer fundo do palco.
+// ela é um pingo de cobertura — a mesma cobertura rosa que escorre dentro do "B" da logo. A bolinha da logo é a
+// cabeça, as três gotas da logo são a franja, e no alto fica o biquinho que o saco de confeitar deixa.
+// Quatro tons: rosa da marca, branco, vinho (olhos e boca) e um rosa claro de sombra. Um recorte branco em volta
+// (como figurinha) separa a Bô de qualquer fundo do palco.
 //
 //   const av = createAvatar();
 //   mount.append(av.el);
 //   av.set('falando', { mood: 'feliz' });   // parada | ouvindo | pensando | falando | feliz | comemorando | surpresa | preocupada | dormindo
 //   av.mouth(0.7);                           // abertura da boca enquanto fala (0 a 1)
 //   av.look(1, -0.3);                        // para onde ela olha (-1 a 1 em cada eixo)
+//   av.gesture('pop');                       // entrada ('pop'), saída ('out') e os gestos de cada estado
 //
-// Só transform e opacity são animados; fora da tela (ou com a aba escondida) as animações param (.is-away).
-// As cores vêm de css/tokens.css (ver css/atelier-bo.css).
+// O desenho é montado nó a nó (createElementNS + atributos): nenhum HTML em texto, nenhum estilo embutido — a
+// política de segurança da loja não aceita estilo criado por código. As cores e as animações são classes de
+// css/atelier-bo.css (tokens de css/tokens.css). Só transform e opacity são animados; fora da tela (ou com a aba
+// escondida) as animações param (.is-away). A caixa é quadrada (viewBox 120 × 120).
 
 export const AVATAR_STATES = ['parada', 'ouvindo', 'pensando', 'falando', 'feliz', 'comemorando', 'surpresa', 'preocupada', 'dormindo'];
 
-// O "B" do corpo: haste à esquerda, duas barrigas à direita (a de baixo maior), como na logo.
-const BODY = 'M46,95 H64 C74,95 80,100 80,106 C80,111 77,115 73,116.5 C81,118.5 87,124 87,131 C87,140 80,146 70,146 H46 Q40,146 40,140 V101 Q40,95 46,95 Z';
-// A cobertura escorrendo dentro da barriga de baixo (três gotas, a do meio mais comprida).
-const DRIP = 'M50,121 H72 Q77,121 77,126 V128.5 Q77,132.5 73.6,132.5 Q70.2,132.5 70.2,128.8 Q70.2,126.4 67.9,126.4 Q65.6,126.4 65.6,129 V133 Q65.6,137.4 62.1,137.4 Q58.6,137.4 58.6,133 V128.6 Q58.6,126.4 56.4,126.4 Q54.2,126.4 54.2,128.4 Q54.2,130.6 52.1,130.6 Q50,130.6 50,128.4 Z';
-// O chapéu de confeiteira: uma nuvem sobre uma faixa.
-const HAT_PUFF = 'M45,23 C35,21 33,8 44,7 C47,-2 62,-3 66,5 C76,0 90,8 81,19 C83,22 80,25 76,23 Z';
+const NS = 'http://www.w3.org/2000/svg';
 
-const SVG = `
-<svg class="bo-svg" viewBox="0 0 120 158" aria-hidden="true" focusable="false">
-  <g transform="translate(0 7)">
-    <ellipse class="bo-ground" cx="62" cy="147" rx="27" ry="4"/>
-    <g class="bo-body-all">
-      <g class="bo-arm bo-arm--l"><circle class="bo-s bo-c-skin" cx="36" cy="123" r="6.2"/></g>
-      <g class="bo-arm bo-arm--r"><circle class="bo-s bo-c-skin" cx="90" cy="122" r="6.2"/></g>
-      <path class="bo-s bo-c-skin" d="${BODY}"/>
-      <rect class="bo-c-white" x="50" y="102.5" width="19.5" height="7.5" rx="3.75"/>
-      <path class="bo-c-white" d="${DRIP}"/>
-    </g>
-    <g class="bo-head">
-      <circle class="bo-s bo-c-skin" cx="60" cy="62" r="36"/>
-      <path class="bo-shine" d="M33,50 Q37,37 49,31"/>
-      <g class="bo-hat">
-        <g transform="rotate(-11 60 26) translate(-3 -1) scale(1.06)" style="transform-origin:60px 26px">
-          <path class="bo-s bo-c-white" d="${HAT_PUFF}"/>
-          <rect class="bo-s bo-c-white" x="44" y="20" width="32" height="10.5" rx="4.5"/>
-          <path class="bo-hat-line" d="M46.5,22.2 H73.5"/>
-          <path class="bo-hat-line" d="M52,11 Q54,15 52.5,18.5 M66,9 Q65,14 67,18"/>
-        </g>
-      </g>
-      <g class="bo-face">
-        <ellipse class="bo-cheek" cx="35.5" cy="77" rx="5.6" ry="3.6"/>
-        <ellipse class="bo-cheek" cx="84.5" cy="77" rx="5.6" ry="3.6"/>
-        <g class="bo-brows">
-          <path class="bo-l-ink bo-brow bo-brow--l" d="M40.5,53 Q45.5,50.5 51,52"/>
-          <path class="bo-l-ink bo-brow bo-brow--r" d="M69,52 Q74.5,50.5 79.5,53"/>
-        </g>
-        <g class="bo-eyes">
-          <g class="bo-eye bo-eye--open">
-            <g class="bo-pupils">
-              <ellipse class="bo-c-ink" cx="46.5" cy="66" rx="5" ry="6.7"/>
-              <ellipse class="bo-c-ink" cx="73.5" cy="66" rx="5" ry="6.7"/>
-              <circle class="bo-c-white" cx="48.3" cy="63.3" r="1.9"/>
-              <circle class="bo-c-white" cx="75.3" cy="63.3" r="1.9"/>
-            </g>
-          </g>
-          <g class="bo-eye bo-eye--arc">
-            <path class="bo-l-ink" d="M41,68.5 Q46.5,60.5 52,68.5"/>
-            <path class="bo-l-ink" d="M68,68.5 Q73.5,60.5 79,68.5"/>
-          </g>
-          <g class="bo-eye bo-eye--shut">
-            <path class="bo-l-ink" d="M41.5,66 Q46.5,70.8 51.5,66"/>
-            <path class="bo-l-ink" d="M68.5,66 Q73.5,70.8 78.5,66"/>
-          </g>
-        </g>
-        <g class="bo-mouths">
-          <path class="bo-l-ink bo-mouth bo-mouth--smile" d="M52.5,78.5 Q60,85.8 67.5,78.5"/>
-          <g class="bo-mouth bo-mouth--grin">
-            <path class="bo-c-mouth" d="M50.5,77.5 Q60,75.5 69.5,77.5 Q69,89.5 60,89.5 Q51,89.5 50.5,77.5 Z"/>
-            <ellipse class="bo-c-tongue" cx="60" cy="86.4" rx="4.6" ry="2.4"/>
-          </g>
-          <g class="bo-mouth bo-mouth--open">
-            <g class="bo-jaw">
-              <path class="bo-c-mouth" d="M52,78 Q60,76.4 68,78 Q68,89.5 60,89.5 Q52,89.5 52,78 Z"/>
-              <ellipse class="bo-c-tongue" cx="60" cy="86.6" rx="4" ry="2.1"/>
-            </g>
-          </g>
-          <ellipse class="bo-c-mouth bo-mouth bo-mouth--o" cx="60" cy="82.5" rx="4" ry="4.8"/>
-          <path class="bo-l-ink bo-mouth bo-mouth--wavy" d="M52.5,83 Q56.2,79 60,82.5 T67.5,82"/>
-          <path class="bo-l-ink bo-mouth bo-mouth--flat" d="M56,82.5 Q60,84 65,81.5"/>
-          <ellipse class="bo-c-mouth bo-mouth bo-mouth--zz" cx="60" cy="82.5" rx="2.6" ry="3"/>
-        </g>
-      </g>
-      <path class="bo-extra bo-sweat" d="M93,36 Q99,45 93,49 Q87,45 93,36 Z"/>
-    </g>
-    <g class="bo-extra bo-dots">
-      <circle cx="97" cy="30" r="3"/><circle cx="106" cy="22" r="3.6"/><circle cx="114.5" cy="12" r="4.2"/>
-    </g>
-    <g class="bo-extra bo-zz">
-      <path class="bo-zz__o" d="M94,34 h7 l-7,8 h7"/><path d="M94,34 h7 l-7,8 h7"/>
-      <path class="bo-zz__o" d="M104,18 h9 l-9,10.5 h9"/><path d="M104,18 h9 l-9,10.5 h9"/>
-    </g>
-    <g class="bo-extra bo-sparks">
-      <path d="M12,40 l2.2,5.2 5.2,2.2 -5.2,2.2 -2.2,5.2 -2.2,-5.2 -5.2,-2.2 5.2,-2.2 Z"/>
-      <path d="M106,26 l2.6,6 6,2.6 -6,2.6 -2.6,6 -2.6,-6 -6,-2.6 6,-2.6 Z"/>
-      <path d="M108,74 l1.7,4 4,1.7 -4,1.7 -1.7,4 -1.7,-4 -4,-1.7 4,-1.7 Z"/>
-    </g>
-  </g>
-</svg>`;
+/** Nó SVG: s('path', { class: 'bo-c-skin', d: '…' }, [filhos]). */
+function s(tag, attrs = {}, kids = []) {
+  const n = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
+  for (const kid of kids) n.append(kid);
+  return n;
+}
 
-/** Rosto de cada estado: olhos · boca · sobrancelhas · extra · gesto (animação de uma vez). */
+/* ───────── geometria ───────── */
+// Cabeça: círculo de centro (60, 71) e raio 43.
+const HEAD = { cx: 60, cy: 71, r: 43 };
+// Biquinho: nasce tangente ao círculo (em 232° e 300°), sobe e vira a ponta para a direita. A base fecha por dentro
+// da cabeça, para ele poder balançar sem abrir fresta.
+const TIP = 'M33.52,37.12 C41.4,30.96 50.5,28 54.5,19 C57,13.4 61,7.5 68,7.6 C71,7.6 74.6,9 75.4,11.7 C75.9,13.5 74.4,15.1 72.6,14.9 C70,14.7 67.2,16.2 66.6,19.5 C65.8,24 73.7,29.26 81.5,33.76 L80,50 L36,50 Z';
+
+// Rosto: a parte de baixo de um círculo branco (centro (60, 73), raio 36,5); em cima, a cobertura desce em três
+// gotas de larguras e comprimentos diferentes, com os vãos arredondados — a mesma construção da logo.
+const FACE_R = 36.5;
+const DRIPS = [
+  { x0: 34, x1: 45.5, y: 62.5 },
+  { x0: 53.5, x1: 67, y: 68.5 },
+  { x0: 75, x1: 87, y: 64 },
+];
+const n2 = (v) => Number(v.toFixed(2));
+function facePath(base, drop = 0) {
+  const dx = Math.sqrt(FACE_R * FACE_R - (base - 73) * (base - 73));
+  const xl = n2(60 - dx);
+  const xr = n2(60 + dx);
+  let d = `M${xl},${base}`;
+  let x = xl;
+  for (const g of DRIPS) {
+    const gap = n2((g.x0 - x) / 2);
+    const r = n2((g.x1 - g.x0) / 2);
+    d += ` A${gap},${gap} 0 0 1 ${g.x0},${base} V${g.y + drop} A${r},${r} 0 0 0 ${g.x1},${g.y + drop} V${base}`;
+    x = g.x1;
+  }
+  const gap = n2((xr - x) / 2);
+  return `${d} A${gap},${gap} 0 0 1 ${xr},${base} A${FACE_R},${FACE_R} 0 1 1 ${xl},${base} Z`;
+}
+
+const EYE = { y: 85, xl: 44.5, xr: 75.5, rx: 4.9, ry: 6.4 };
+const star4 = (cx, cy, r) => {
+  const k = r * 0.3;
+  return `M${cx},${cy - r} L${cx + k},${cy - k} L${cx + r},${cy} L${cx + k},${cy + k} L${cx},${cy + r} L${cx - k},${cy + k} L${cx - r},${cy} L${cx - k},${cy - k} Z`;
+};
+const zed = (x, y, w, h) => `M${x},${y} h${w} l${-w},${h} h${w}`;
+
+function draw() {
+  const eyesOpen = s('g', { class: 'bo-eye bo-eye--open' }, [
+    s('g', { class: 'bo-pupils' }, [
+      s('ellipse', { class: 'bo-c-ink', cx: EYE.xl, cy: EYE.y, rx: EYE.rx, ry: EYE.ry }),
+      s('ellipse', { class: 'bo-c-ink', cx: EYE.xr, cy: EYE.y, rx: EYE.rx, ry: EYE.ry }),
+    ]),
+  ]);
+  const eyesArc = s('g', { class: 'bo-eye bo-eye--arc' }, [
+    s('path', { class: 'bo-l-ink', d: 'M38.8,87.6 Q44.5,78.6 50.2,87.6' }),
+    s('path', { class: 'bo-l-ink', d: 'M69.8,87.6 Q75.5,78.6 81.2,87.6' }),
+  ]);
+  const eyesShut = s('g', { class: 'bo-eye bo-eye--shut' }, [
+    s('path', { class: 'bo-l-ink', d: 'M39.3,85.4 Q44.5,90.6 49.7,85.4' }),
+    s('path', { class: 'bo-l-ink', d: 'M70.3,85.4 Q75.5,90.6 80.7,85.4' }),
+  ]);
+  const mouths = s('g', { class: 'bo-mouths', transform: 'translate(0 -0.8)' }, [
+    s('path', { class: 'bo-l-ink bo-mouth bo-mouth--smile', d: 'M53.6,93.6 Q60,100 66.4,93.6' }),
+    s('g', { class: 'bo-mouth bo-mouth--grin' }, [
+      s('path', { class: 'bo-c-ink', d: 'M51.2,92.4 Q60,90.8 68.8,92.4 Q69,103.4 60,103.4 Q51,103.4 51.2,92.4 Z' }),
+      s('ellipse', { class: 'bo-c-tongue', cx: 60, cy: 100.5, rx: 4.6, ry: 2.4 }),
+    ]),
+    s('g', { class: 'bo-mouth bo-mouth--open' }, [
+      s('g', { class: 'bo-jaw' }, [
+        s('path', { class: 'bo-c-ink', d: 'M53,93 Q60,91.6 67,93 Q67.4,103.6 60,103.6 Q52.6,103.6 53,93 Z' }),
+        s('ellipse', { class: 'bo-c-tongue', cx: 60, cy: 100.8, rx: 3.9, ry: 2.1 }),
+      ]),
+    ]),
+    s('ellipse', { class: 'bo-c-ink bo-mouth bo-mouth--o', cx: 60, cy: 97.4, rx: 3.9, ry: 4.7 }),
+    s('path', { class: 'bo-l-ink bo-mouth bo-mouth--wavy', d: 'M53,97.6 Q56.5,94 60,97.2 T67,96.8' }),
+    s('path', { class: 'bo-l-ink bo-mouth bo-mouth--flat', d: 'M57.5,96.8 Q62,98.2 67,95.8' }),
+    s('ellipse', { class: 'bo-c-ink bo-mouth bo-mouth--zz', cx: 60, cy: 97, rx: 2.5, ry: 2.9 }),
+  ]);
+  const face = s('g', { class: 'bo-face' }, [
+    s('ellipse', { class: 'bo-cheek', cx: 34.6, cy: 95.2, rx: 5.2, ry: 3.3 }),
+    s('ellipse', { class: 'bo-cheek', cx: 85.4, cy: 95.2, rx: 5.2, ry: 3.3 }),
+    s('g', { class: 'bo-eyes' }, [eyesOpen, eyesArc, eyesShut]),
+    // pálpebras (da cor do rosto): caídas para fora na preocupação; uma só, reta, no "hum…" de quem pensa.
+    // Fazem o papel das sobrancelhas sem disputar espaço com a franja — e leem bem em 48 px.
+    s('polygon', { class: 'bo-c-face bo-lid bo-lid--sad', points: '37,74 52.5,74 52.5,78.4 37,85.4' }),
+    s('polygon', { class: 'bo-c-face bo-lid bo-lid--sad', points: '83,74 67.5,74 67.5,78.4 83,85.4' }),
+    s('rect', { class: 'bo-c-face bo-lid bo-lid--half', x: 37, y: 72, width: 18, height: 8.4 }),
+    mouths,
+  ]);
+  const tip = (cls) => s('path', { class: cls, d: TIP });
+  const head = (cls) => s('circle', { class: cls, cx: HEAD.cx, cy: HEAD.cy, r: HEAD.r });
+  return s('svg', { class: 'bo-svg', viewBox: '0 0 120 120', 'aria-hidden': 'true', focusable: 'false' }, [
+    s('g', { class: 'bo-all' }, [
+      // recorte branco (por baixo de tudo), biquinho, cabeça, rosto
+      head('bo-key'),
+      // três camadas de movimento: o humor (gira em volta do centro da cabeça, então a base nunca descola do
+      // círculo), o balanço ocioso e o comprimento (estica no susto, encolhe no cochilo)
+      s('g', { class: 'bo-tip' }, [s('g', { class: 'bo-tip__sway' }, [s('g', { class: 'bo-tip__len' }, [tip('bo-key'), tip('bo-c-skin')])])]),
+      head('bo-c-skin'),
+      s('path', { class: 'bo-c-shade', d: facePath(61) }),
+      s('path', { class: 'bo-c-face', d: facePath(63.4, 2.4) }),
+      face,
+      s('path', { class: 'bo-extra bo-sweat', d: 'M99.5,33 Q105,42 99.5,46 Q94,42 99.5,33 Z' }),
+    ]),
+    s('g', { class: 'bo-extra bo-dots' }, [s('circle', { cx: 91, cy: 25, r: 2.7 }), s('circle', { cx: 100, cy: 16.5, r: 3.4 }), s('circle', { cx: 110, cy: 7.5, r: 4.1 })]),
+    s('g', { class: 'bo-extra bo-zz' }, [
+      s('path', { class: 'bo-zz__o', d: zed(22, 20, 7, 8) }),
+      s('path', { d: zed(22, 20, 7, 8) }),
+      s('path', { class: 'bo-zz__o', d: zed(7, 5, 9.5, 11) }),
+      s('path', { d: zed(7, 5, 9.5, 11) }),
+    ]),
+    s('g', { class: 'bo-extra bo-sparks' }, [s('path', { d: star4(12, 28, 9) }), s('path', { d: star4(104, 19, 10.5) }), s('path', { d: star4(111, 58, 6.5) })]),
+  ]);
+}
+
+/**
+ * Rosto de cada estado: olhos · boca · sobrancelhas · extra · gesto (animação de uma vez).
+ * "Sobrancelhas" (brows) é o nome de sempre do atributo; no desenho, quem responde são as pálpebras:
+ * worried = caídas, one = uma só meio fechada, up/none = olho inteiro.
+ */
 const FACE = {
   parada: { eyes: 'open', mouth: 'smile', brows: 'none', extra: '', anim: '' },
   ouvindo: { eyes: 'wide', mouth: 'smile', brows: 'up', extra: '', anim: 'nod' },
@@ -128,9 +166,10 @@ const TALK = {
 export function createAvatar() {
   const el = document.createElement('span');
   el.className = 'bo-av';
-  // Desenho fixo, escrito neste arquivo: não há dado de fora neste HTML.
-  el.innerHTML = `<span class="bo-av__fig">${SVG}</span>`;
-  const fig = el.firstElementChild;
+  const fig = document.createElement('span');
+  fig.className = 'bo-av__fig';
+  fig.append(draw());
+  el.append(fig);
   let state = '';
   let animTimer = 0;
 
@@ -151,7 +190,7 @@ export function createAvatar() {
     delete fig.dataset.anim;
     void fig.offsetWidth;
     fig.dataset.anim = name;
-    animTimer = setTimeout(() => delete fig.dataset.anim, 1400);
+    if (name !== 'out') animTimer = setTimeout(() => delete fig.dataset.anim, 1400); // a saída fica no último quadro
   }
 
   function set(next, { mood = 'neutra', quiet = false } = {}) {
@@ -160,8 +199,13 @@ export function createAvatar() {
     const changed = name !== state || name === 'falando';
     state = name;
     el.dataset.state = name;
-    if (name === 'falando') apply({ ...face, ...(TALK[mood] || TALK.neutra) });
-    else apply(face);
+    if (name === 'falando') {
+      el.dataset.mood = TALK[mood] ? mood : 'neutra';
+      apply({ ...face, ...(TALK[mood] || TALK.neutra) });
+    } else {
+      delete el.dataset.mood;
+      apply(face);
+    }
     if (changed && !quiet) gesture(face.anim);
     if (name !== 'falando') mouth(0);
   }
@@ -171,8 +215,8 @@ export function createAvatar() {
   }
 
   function look(x = 0, y = 0) {
-    el.style.setProperty('--bo-lx', `${(Math.max(-1, Math.min(1, x)) * 2.4).toFixed(2)}px`);
-    el.style.setProperty('--bo-ly', `${(Math.max(-1, Math.min(1, y)) * 1.8).toFixed(2)}px`);
+    el.style.setProperty('--bo-lx', `${(Math.max(-1, Math.min(1, x)) * 2.8).toFixed(2)}px`);
+    el.style.setProperty('--bo-ly', `${(Math.max(-1, Math.min(1, y)) * 2).toFixed(2)}px`);
   }
 
   set('parada', { quiet: true });

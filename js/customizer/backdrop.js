@@ -176,22 +176,53 @@ export function resolveBackdrop(config, prevAutoId = null) {
   return byId(config?.backdrop) || byId(autoBackdrop(config, prevAutoId));
 }
 
-/** O mesmo fundo em CSS (camada do palco). */
-export function backdropCss(b) {
+/**
+ * Grão fino (48 × 48, preto e branco quase transparentes) posto por cima dos degradês: sem ele, um degradê
+ * largo em tom escuro aparece em degraus (banding), porque a tela só tem 256 níveis por cor.
+ */
+const GRAIN = 'data:image/png;base64,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';
+
+/** Paradas do degradê de estúdio: a luz cai macia do centro para as bordas (mesmos tons, mais paradas). */
+function studioStops(b) {
   return [
-    `linear-gradient(180deg, transparent 66%, ${b.floor} 100%)`,
+    [0, b.c[0]],
+    [0.22, mixHex(b.c[0], b.c[1], 0.52)],
+    [0.46, b.c[1]],
+    [0.64, mixHex(b.c[1], b.c[2], 0.52)],
+    [0.82, b.c[2]],
+    [1, b.c[3]],
+  ];
+}
+function rgbaOf(hex, a) {
+  const [r, g, bl] = rgbOf(hex);
+  return `rgba(${r}, ${g}, ${bl}, ${a})`;
+}
+
+/**
+ * O mesmo fundo em CSS (camada do palco): fundo infinito de estúdio — a luz abre atrás do bolo e cai macia
+ * para as bordas, o chão recebe um clarão discreto, os cantos fecham um nada (vinheta) e um grão fino
+ * desfaz os degraus do degradê. O tom atrás do contorno do bolo continua sendo `ref`.
+ */
+export function backdropCss(b) {
+  const dark = b.tone === 'dark';
+  return [
+    `url(${GRAIN})`,
+    `radial-gradient(135% 120% at 50% 46%, transparent 58%, ${rgbaOf(b.shadow.color, dark ? 0.3 : 0.07)} 100%)`,
+    `radial-gradient(64% 15% at 50% 79%, ${dark ? 'rgba(255, 236, 240, 0.05)' : 'rgba(255, 255, 255, 0.5)'} 0%, transparent 72%)`,
+    `linear-gradient(180deg, transparent 62%, ${b.floor} 100%)`,
     `radial-gradient(60% 46% at 50% 44%, ${b.glow} 0%, transparent 70%)`,
-    `radial-gradient(120% 90% at 50% 30%, ${b.c[0]} 0%, ${b.c[1]} 48%, ${b.c[2]} 82%, ${b.c[3]} 100%)`,
+    `radial-gradient(120% 90% at 50% 30%, ${studioStops(b)
+      .map(([at, hex]) => `${hex} ${Math.round(at * 100)}%`)
+      .join(', ')})`,
   ].join(', ');
 }
 
-/** O mesmo fundo pintado num <canvas> 2D (miniaturas e foto para compartilhar). */
+let grainTile = null;
+/** O mesmo fundo pintado num <canvas> 2D (miniaturas, foto e vídeo para compartilhar). */
 export function paintBackdrop(ctx, w, h, b) {
+  const dark = b.tone === 'dark';
   const g = ctx.createRadialGradient(w * 0.5, h * 0.42, 0, w * 0.5, h * 0.5, Math.max(w, h) * 0.75);
-  g.addColorStop(0, b.c[0]);
-  g.addColorStop(0.5, b.c[1]);
-  g.addColorStop(0.85, b.c[2]);
-  g.addColorStop(1, b.c[3]);
+  studioStops(b).forEach(([at, hex]) => g.addColorStop(at, hex));
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
   const glow = ctx.createRadialGradient(w * 0.5, h * 0.46, 0, w * 0.5, h * 0.46, Math.max(w, h) * 0.42);
@@ -199,4 +230,33 @@ export function paintBackdrop(ctx, w, h, b) {
   glow.addColorStop(1, 'rgba(255, 255, 255, 0)');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, w, h);
+  // vinheta: os cantos fecham um nada
+  const vig = ctx.createRadialGradient(w * 0.5, h * 0.46, Math.min(w, h) * 0.42, w * 0.5, h * 0.46, Math.hypot(w, h) * 0.62);
+  vig.addColorStop(0, rgbaOf(b.shadow.color, 0));
+  vig.addColorStop(1, rgbaOf(b.shadow.color, dark ? 0.3 : 0.07));
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, w, h);
+  // grão fino por cima (só no navegador): desfaz os degraus do degradê na foto e no vídeo
+  if (typeof document === 'undefined' || typeof ctx.createPattern !== 'function') return;
+  try {
+    if (!grainTile) {
+      const S = 64;
+      grainTile = document.createElement('canvas');
+      grainTile.width = grainTile.height = S;
+      const q = grainTile.getContext('2d');
+      const img = q.createImageData(S, S);
+      let seed = 7;
+      for (let i = 0; i < S * S; i++) {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        const v = seed >>> 31 ? 255 : 0;
+        img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+        img.data[i * 4 + 3] = ((seed >>> 8) & 7) % 5;
+      }
+      q.putImageData(img, 0, 0);
+    }
+    ctx.fillStyle = ctx.createPattern(grainTile, 'repeat');
+    ctx.fillRect(0, 0, w, h);
+  } catch {
+    // sem grão: o fundo fica como sempre foi
+  }
 }

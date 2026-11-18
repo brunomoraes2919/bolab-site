@@ -10,9 +10,14 @@
 //   cake.setPaused(bool) · cake.quiet(ms)   para de desenhar (diálogo aberto) / segura o giro (painel rolando)
 //   cake.resize() · cake.dispose()
 //
-// Fluidez: o nível de qualidade vem de js/customizer/quality.js (celular × computador). O laço só desenha
+// Fluidez: o nível de qualidade vem de js/customizer/quality.js (celular × computador × leve). O laço só desenha
 // quando algo muda; o giro automático roda a ~30 quadros/s no celular; a resolução desce sozinha se os
-// quadros atrasarem e volta ao máximo quando o bolo para. Peças novas são construídas uma por quadro.
+// quadros atrasarem e volta ao máximo quando o bolo para; se nem a menor resolução bastar, o nível cai para
+// o leve (uma vez, sem volta na mesma visita). Peças novas são construídas uma por quadro.
+//
+// Luz e materiais (r6-luz): estúdio próprio refletido (caixas de luz, preso à câmera: o bolo gira como num prato
+// giratório), curva de tom neutra, sombra macia, oclusão no pé de cada andar e acabamento dos materiais das
+// peças — ver prepareShaders(), studioScene() e looks.js → MATERIAL_LOOK.
 //
 // createCakeScene lança erro se o aparelho não tiver WebGL: a tela trata e segue sem o 3D.
 //
@@ -63,15 +68,14 @@
 //      'surprise' | 'auto'… usam a transição curta). Tudo o que este arquivo ganhou para isso está marcado "r5-cena".
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createTextureKit, paintFinish, makeCanvas, texture, heightToNormal, normalFromHeight, paintHeight } from './textures.js';
-import { strandCanvases, meringueHeight, meringueToastCanvas, COVER_TILE, STYLE_HEIGHT, paintTileStyle, paintWrapStyle, paintMarbleTop } from './looks.js';
+import { strandCanvases, meringueHeight, meringueToastCanvas, COVER_TILE, STYLE_HEIGHT, paintTileStyle, paintWrapStyle, paintMarbleTop, materialLook } from './looks.js';
 import { cakeMetrics, buildFrosting, buildSponge, buildFillingBand, buildJamThread, buildTopCream, buildScrapeCoat, buildDrip, buildCutFaces, buildStand, faultMid, rosetteCoatGeometry, rosetteSpots, buildBundt, buildVolcanoCream, buildVolcanoCut } from './geometry.js';
 import { createDecorLibrary, decorLayout, buildPiping, buildDecor, decorHeight, inWedge, newPart, Batch } from './decor.js';
 import { EXTRA_DECOR, extraDecorHeight } from './decor2.js';
 import { PARTY_DECOR, partyHeight } from './party.js';
 import { getFlavor, getFilling, getRevealColor, getTrim, TRIMS, PIPINGS, DECORS } from '../data/customizer.js';
-import { detectTier, createResolutionGovernor } from './quality.js';
+import { detectTier, createResolutionGovernor, TIERS, rememberLite } from './quality.js';
 import { getBackdrop, resolveBackdrop, paintBackdrop } from './backdrop.js';
 // r5-decor: chave do bico, aviso de módulo de peças carregado e ids das peças colocadas à mão
 import { pipingKey, onDecorReady } from './decor.js';
@@ -81,6 +85,10 @@ const TAU = Math.PI * 2;
 const DEG = Math.PI / 180;
 const WEDGE_A = 22 * DEG; // a fatia retirada fica de frente para a câmera padrão
 const WEDGE_SPAN = 86 * DEG;
+// Direção da luz principal — ÚNICO lugar (r6-luz). az = quanto ela fica do azimute da câmera (negativo = à esquerda
+// de quem olha) · elev = altura. O cenário do ateliê (js/atelier/stage/sets.js) lê estes números pelo contexto
+// da cena (ctx.keyLight): a luz pintada no tampo e a sombra real apontam sempre para o mesmo lado.
+const KEY_LIGHT = { az: -48 * DEG, elev: 52 * DEG };
 const VIEW = {
   default: { az: 26 * DEG, polar: 67 * DEG },
   top: { az: 26 * DEG, polar: 52 * DEG },
@@ -97,6 +105,99 @@ const HEART_VIEW = {
   above: { az: 0, polar: 16 * DEG },
 };
 
+/* ───────── r6-luz: fotografia de produto ─────────
+   Dois ajustes nos trechos de shader do Three.js (feitos uma vez; valem para tudo o que este motor desenha):
+
+   1. Tom "neutro" (a curva PBR Neutral do Khronos, feita para vitrine de loja): até ~76% de brilho a cor sai
+      na tela exatamente como a luz a deixou — o rosa do seletor é o rosa do bolo, o branco é branco — e só os
+      brilhos fortes são comprimidos, sem acinzentar. O ACES que havia aqui escurecia e lavava as cores claras.
+   2. Estúdio preso à câmera: o bolo gira como num prato giratório, e as caixas de luz (o ambiente refletido)
+      ficam paradas em relação a quem olha, junto com a luz principal. O Three.js r160 não gira o ambiente;
+      aqui a direção consultada no mapa é girada pelo azimute da câmera, lido da própria matriz de visão.
+   3. Metal de confeitaria: as cores de ouro, prata e rosé do cardápio são cores de tinta (o dourado "chapado"
+      de um seletor). Um metal de verdade reflete bem mais do que isso em todos os canais — por isso o ouro saía
+      laranja-escuro. A refletância do metal passa a ser a raiz da cor escolhida (o dourado #dcae52 vira o
+      ouro 0,85 · 0,65 · 0,29; branco continua branco). Só vale para a parte metálica do material. */
+let shadersReady = false;
+function prepareShaders() {
+  if (shadersReady) return;
+  shadersReady = true;
+  const chunk = THREE.ShaderChunk;
+  chunk.tonemapping_pars_fragment = chunk.tonemapping_pars_fragment.replace(
+    'vec3 CustomToneMapping( vec3 color ) { return color; }',
+    `vec3 CustomToneMapping( vec3 color ) {
+	const float startCompression = 0.8 - 0.04;
+	const float desaturation = 0.15;
+	color *= toneMappingExposure;
+	float x = min( color.r, min( color.g, color.b ) );
+	float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
+	color -= offset;
+	float peak = max( color.r, max( color.g, color.b ) );
+	if ( peak < startCompression ) return color;
+	float d = 1. - startCompression;
+	float newPeak = 1. - d * d / ( peak + d - startCompression );
+	color *= newPeak / peak;
+	float g = 1. - 1. / ( desaturation * ( peak - newPeak ) + 1. );
+	return mix( color, vec3( newPeak ), g );
+}`,
+  );
+  chunk.lights_physical_fragment = chunk.lights_physical_fragment.split('diffuseColor.rgb, metalnessFactor )').join('sqrt( diffuseColor.rgb ), metalnessFactor )');
+  chunk.envmap_physical_pars_fragment =
+    `#ifdef USE_ENVMAP
+	vec3 bolabStudio( const in vec3 w ) {
+		vec2 r = vec2( viewMatrix[ 0 ][ 0 ], viewMatrix[ 2 ][ 0 ] );
+		r /= max( length( r ), 1e-4 );
+		return vec3( w.x * r.x + w.z * r.y, w.y, w.z * r.x - w.x * r.y );
+	}
+#endif
+` +
+    chunk.envmap_physical_pars_fragment
+      .replace('inverseTransformDirection( normal, viewMatrix )', 'bolabStudio( inverseTransformDirection( normal, viewMatrix ) )')
+      .replace('inverseTransformDirection( reflectVec, viewMatrix )', 'bolabStudio( inverseTransformDirection( reflectVec, viewMatrix ) )');
+}
+
+/**
+ * O estúdio: o que o bolo "enxerga" à sua volta e reflete. Tudo no referencial de quem olha (a câmera fica em
+ * +Z; esquerda = −X): uma cúpula clara e neutra (brancos saem brancos), a caixa de luz principal no alto à
+ * esquerda, uma luz de teto larga, um rebatedor de preenchimento à direita e duas tiras de contraluz atrás, que
+ * desenham a borda de tudo o que brilha (ganache, calda, ouro, vidro, porcelana). Valores acima de 1 são luz de
+ * verdade (o mapa é de alta faixa dinâmica).
+ */
+function studioScene() {
+  const scene = new THREE.Scene();
+  // cúpula: degradê do teto ao chão, pintado nos vértices
+  const dome = new THREE.SphereGeometry(30, 48, 24);
+  const pos = dome.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  const top = [0.21, 0.207, 0.204];
+  const mid = [0.275, 0.27, 0.265];
+  const low = [0.14, 0.126, 0.12]; // o chão devolve uma luz quente e fraca
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i) / 30;
+    const a = y >= 0 ? mid : low;
+    const b = y >= 0 ? top : mid;
+    const k = y >= 0 ? Math.pow(y, 0.6) : 1 + Math.max(-1, y * 2.2);
+    for (let c = 0; c < 3; c++) col[i * 3 + c] = a[c] + (b[c] - a[c]) * k;
+  }
+  dome.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  scene.add(new THREE.Mesh(dome, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide })));
+  const plane = new THREE.PlaneGeometry(1, 1);
+  const box = (hex, power, x, y, z, w, h) => {
+    const light = new THREE.Mesh(plane, new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(power), side: THREE.DoubleSide }));
+    light.position.set(x, y, z);
+    light.scale.set(w, h, 1);
+    light.lookAt(0, 0.4, 0);
+    scene.add(light);
+  };
+  box(0xfff8f0, 15, -2.75, 4.75, 2.5, 1.7, 1.25); // principal: alto, à esquerda, um pouco à frente
+  box(0xffffff, 3.2, 0.5, 7, -0.8, 3.1, 3.1); // teto: enche o topo do bolo e as curvas de cima
+  box(0xffeef0, 1.0, 6, 1.4, 1.6, 4.2, 4.4); // preenchimento: grande e fraco, à direita
+  box(0xffffff, 9, 3.3, 2.6, -5.4, 0.7, 5.2); // contraluz da direita (a mais forte)
+  box(0xfff6ee, 5.5, -4.6, 2.2, -4.6, 0.6, 4.6); // contraluz da esquerda
+  box(0xffffff, 0.55, 0, 1.2, 7.5, 7, 3.4); // parede clara atrás de quem olha: nada brilhante reflete "preto"
+  return scene;
+}
+
 const easeOut = (t) => 1 - (1 - t) ** 3;
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
 const backOut = (t) => 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2;
@@ -106,14 +207,15 @@ const bounce = (t) => {
 };
 
 /**
- * Cor de material que, depois da luz e do tone mapping, aparece na tela parecida com a cor
- * escolhida no seletor: tons claros são levemente escurecidos e ganham um pouco de saturação.
+ * Cor de material que, depois da luz, aparece na tela como a cor escolhida no seletor. Com a curva neutra a
+ * cor não é mais lavada: basta deixar aos tons claros uma folga (8%) para a luz principal não os estourar —
+ * é essa folga que mantém o relevo visível num bolo branco. A proporção entre os canais não muda.
  */
 const _hsl = { h: 0, s: 0, l: 0 };
 function displayColor(hex, target = new THREE.Color()) {
   target.set(hex).getHSL(_hsl);
   const light = THREE.MathUtils.smoothstep(_hsl.l, 0.45, 0.8);
-  return target.setHSL(_hsl.h, Math.min(1, _hsl.s * (1 + 0.1 * light)), _hsl.l * (1 - 0.095 * light));
+  return target.multiplyScalar(1 - 0.08 * light);
 }
 
 /** Constrói qualquer decoração: as clássicas (decor.js), as novas (decor2.js) e as de festa (party.js). */
@@ -135,28 +237,32 @@ export function isWebGLAvailable() {
 
 /** Ajustes de material para cada tipo de cobertura. */
 const COVERING_LOOK = {
-  buttercream: { roughness: 0.56, clearcoat: 0.05, clearcoatRoughness: 0.5, sheen: 0.45, normal: 'streak', normalScale: 0.26, topNormal: 'swirl', topScale: 0.3, env: 0.95 },
-  chantilly: { roughness: 0.82, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.8, normal: 'soft', normalScale: 0.5, topNormal: 'soft', topScale: 0.5, env: 1 },
-  ganache: { roughness: 0.2, clearcoat: 0.75, clearcoatRoughness: 0.14, sheen: 0, normal: 'soft', normalScale: 0.07, topNormal: 'soft', topScale: 0.07, env: 1.15 },
-  glace: { roughness: 0.14, clearcoat: 1, clearcoatRoughness: 0.07, sheen: 0, normal: 'soft', normalScale: 0.05, topNormal: 'soft', topScale: 0.05, env: 1.1 },
-  chocolate: { roughness: 0.4, clearcoat: 0.28, clearcoatRoughness: 0.32, sheen: 0, normal: 'streak', normalScale: 0.5, topNormal: 'swirl', topScale: 0.5, env: 1 },
-  mousse: { roughness: 0.76, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.5, normal: 'pore', normalScale: 0.45, topNormal: 'pore', topScale: 0.45, env: 0.95 },
-  naked: { roughness: 0.78, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.6, normal: 'soft', normalScale: 0.7, topNormal: 'rustic', topScale: 1.7, env: 0.9 },
+  // buttercream: acetinado, com o risco fino da espátula · chantilly: fosco e macio · ganache e glacê: verniz
+  // (o glacê com o verniz mais baço: brilho de açúcar, não de plástico)
+  buttercream: { roughness: 0.5, clearcoat: 0.04, clearcoatRoughness: 0.5, sheen: 0.22, normal: 'streak', normalScale: 0.42, topNormal: 'swirl', topScale: 0.3, env: 1 },
+  chantilly: { roughness: 0.84, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.45, normal: 'soft', normalScale: 0.5, topNormal: 'soft', topScale: 0.5, env: 1 },
+  ganache: { roughness: 0.24, clearcoat: 0.85, clearcoatRoughness: 0.09, sheen: 0, normal: 'soft', normalScale: 0.1, topNormal: 'soft', topScale: 0.08, env: 1.1 },
+  glace: { roughness: 0.32, clearcoat: 0.55, clearcoatRoughness: 0.24, sheen: 0, normal: 'soft', normalScale: 0.12, topNormal: 'soft', topScale: 0.1, env: 1 },
+  chocolate: { roughness: 0.42, clearcoat: 0.2, clearcoatRoughness: 0.34, sheen: 0, normal: 'streak', normalScale: 0.6, topNormal: 'swirl', topScale: 0.45, env: 1 },
+  mousse: { roughness: 0.76, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.35, normal: 'pore', normalScale: 0.45, topNormal: 'pore', topScale: 0.45, env: 0.95 },
+  naked: { roughness: 0.78, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.4, normal: 'soft', normalScale: 0.7, topNormal: 'rustic', topScale: 1.7, env: 0.9 },
   // tint = tom próprio do tipo, que multiplica a cor escolhida · map / tile = textura própria (ver looks.js)
-  chantininho: { roughness: 0.78, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.7, normal: 'soft', normalScale: 0.3, topNormal: 'soft', topScale: 0.3, env: 0.95, tint: '#fff6e4' },
-  creamcheese: { roughness: 0.64, clearcoat: 0.03, clearcoatRoughness: 0.5, sheen: 0.4, normal: 'streak', normalScale: 0.36, topNormal: 'swirl', topScale: 0.36, env: 0.95, tint: '#fff3dc' },
-  pasta: { roughness: 0.58, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.3, normal: 'soft', normalScale: 0.03, topNormal: 'soft', topScale: 0.03, env: 0.85 },
-  ganachebranca: { roughness: 0.24, clearcoat: 0.6, clearcoatRoughness: 0.16, sheen: 0, normal: 'soft', normalScale: 0.07, topNormal: 'soft', topScale: 0.07, env: 1.1 },
-  merengue: { roughness: 0.4, clearcoat: 0.22, clearcoatRoughness: 0.3, sheen: 0.2, normal: 'merengue', normalScale: 1, topNormal: 'merengue', topScale: 1, env: 1.05, map: 'merengue', tile: true, tint: '#fffaf0' },
+  chantininho: { roughness: 0.8, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.4, normal: 'soft', normalScale: 0.3, topNormal: 'soft', topScale: 0.3, env: 0.95, tint: '#fffbf2' },
+  creamcheese: { roughness: 0.62, clearcoat: 0.03, clearcoatRoughness: 0.5, sheen: 0.25, normal: 'streak', normalScale: 0.6, topNormal: 'swirl', topScale: 0.36, env: 0.95, tint: '#fff8ea' },
+  pasta: { roughness: 0.6, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.2, normal: 'soft', normalScale: 0.03, topNormal: 'soft', topScale: 0.03, env: 0.9 },
+  ganachebranca: { roughness: 0.28, clearcoat: 0.65, clearcoatRoughness: 0.12, sheen: 0, normal: 'soft', normalScale: 0.1, topNormal: 'soft', topScale: 0.08, env: 1.05 },
+  merengue: { roughness: 0.4, clearcoat: 0.22, clearcoatRoughness: 0.3, sheen: 0.2, normal: 'merengue', normalScale: 1, topNormal: 'merengue', topScale: 1, env: 1.05, map: 'merengue', tile: true, tint: '#fffdf6' },
   brigadeiro: { roughness: 0.5, clearcoat: 0.14, clearcoatRoughness: 0.4, sheen: 0, normal: 'granulado', normalScale: 1.3, topNormal: 'granulado', topScale: 1.3, env: 0.9, map: 'granulado', tile: true },
-  coco: { roughness: 0.95, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.5, normal: 'coco', normalScale: 1.1, topNormal: 'coco', topScale: 1.1, env: 0.85, map: 'coco', tile: true },
+  coco: { roughness: 0.95, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.4, normal: 'coco', normalScale: 1.1, topNormal: 'coco', topScale: 1.1, env: 0.85, map: 'coco', tile: true },
 };
 
 export function createCakeScene(canvas, { onContextLost, onContextRestored, onInteract, onFrame, insets, tier: forcedTier } = {}) {
   if (!isWebGLAvailable()) throw new Error('WebGL indisponível');
 
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const tier = forcedTier || detectTier();
+  // (cópia própria: se o aparelho não der conta, o nível é rebaixado em uso — ver downgrade())
+  const tier = { ...(forcedTier || detectTier()) };
+  prepareShaders();
   const deviceRatio = () => window.devicePixelRatio || 1;
   /** Proporção de pixels do bolo parado (a mais nítida que o nível permite). */
   const stillRatio = () => Math.min(deviceRatio(), tier.maxRatio);
@@ -173,17 +279,52 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   renderer.debug.checkShaderErrors = false; // sem esperar o registro de cada programa: a compilação não trava a tela
   renderer.setPixelRatio(curRatio);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.12;
+  renderer.toneMapping = THREE.CustomToneMapping; // a curva neutra de prepareShaders()
+  renderer.toneMappingExposure = 1;
   renderer.shadowMap.enabled = tier.shadows;
-  renderer.shadowMap.type = tier.softShadow ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+  // sombra macia: no filtro suave cada ponto do mapa vira uns 3 a 4 mm de penumbra (o mapa enquadra só o bolo)
+  renderer.shadowMap.type = tier.softShadow ? THREE.VSMShadowMap : THREE.PCFShadowMap;
   renderer.localClippingEnabled = true;
   renderer.setClearColor(0x000000, 0);
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 60);
-  const tex = createTextureKit({ aniso: Math.min(tier.physical ? 8 : 2, renderer.capabilities.getMaxAnisotropy()), size: tier.texSize });
+  const tex = createTextureKit({ aniso: Math.min(tier.aniso || 4, renderer.capabilities.getMaxAnisotropy()), size: tier.texSize });
   const lib = createDecorLibrary(tex, tier);
+  // r6-luz: cada material das peças passa pelo acabamento do estúdio novo na primeira vez que é usado
+  // (looks.js → MATERIAL_LOOK): metais refletem as caixas de luz, frutas e pérolas ganham o brilho certo.
+  const dressed = new Set();
+  const dress = (name, mat) => {
+    if (!mat || !mat.isMaterial || dressed.has(mat)) return mat;
+    dressed.add(mat);
+    mat.addEventListener('dispose', () => dressed.delete(mat));
+    const look = materialLook(name, mat);
+    if (look) {
+      Object.entries(look).forEach(([prop, value]) => {
+        if (!(prop in mat)) return; // (no nível leve não há verniz nem acetinado)
+        if (mat[prop]?.isColor) mat[prop].set(value);
+        else mat[prop] = value;
+      });
+    }
+    // creme de bico: a sombra dos gomos vem pintada nos vértices, forte, do tempo em que não havia sombra de
+    // verdade. Com a luz nova ela dobrava o escuro (bico branco saía cinza): fica com 55% da força.
+    if (name === 'piping') {
+      mat.onBeforeCompile = (shader) => {
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <color_fragment>',
+          ['#if defined( USE_COLOR_ALPHA )', 'diffuseColor *= vColor;', '#elif defined( USE_COLOR )', 'diffuseColor.rgb *= mix( vec3( 1.0 ), vColor, 0.55 );', '#endif'].join('\n'),
+        );
+      };
+      mat.customProgramCacheKey = () => 'bolab-bico';
+    }
+    return mat;
+  };
+  Object.keys(lib.mat).forEach((name) => {
+    const make = lib.mat[name];
+    lib.mat[name] = (...args) => dress(name, make(...args));
+  });
+  const customOf = lib.custom;
+  lib.custom = (name, make) => dress(name, customOf(name, make));
 
   let pmrem = null;
   let envTarget = null;
@@ -191,9 +332,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     envTarget?.dispose();
     pmrem?.dispose();
     pmrem = new THREE.PMREMGenerator(renderer);
-    const room = new RoomEnvironment();
-    envTarget = pmrem.fromScene(room, 0.035);
-    room.traverse((o) => {
+    const studio = studioScene();
+    envTarget = pmrem.fromScene(studio, 0.018);
+    studio.traverse((o) => {
       o.geometry?.dispose();
       o.material?.dispose();
     });
@@ -201,24 +342,31 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   }
   buildEnvironment();
 
-  /* ───────── Luzes ───────── */
-  // celular: luz principal + contraluz + ambiente (sem preenchimento nem luz das velas: o ambiente compensa)
-  const hemi = new THREE.HemisphereLight(0xfff6f0, 0xf6c9d4, tier.fillLight ? 0.85 : 1.14);
+  /* ───────── Luzes ─────────
+     O grosso da luz vem do estúdio (o ambiente acima): é ele que dá o degradê macio das superfícies e os
+     reflexos. As luzes diretas fazem o que o ambiente não faz: a principal projeta a sombra (e reforça a
+     direção da caixa de luz), o preenchimento abre o lado escuro, a contraluz risca a borda de trás; a luz
+     de hemisfério traz o tom do fundo do palco por baixo. No nível leve não há preenchimento nem luz das velas. */
+  const LIGHTS = { full: { hemi: 0.25, key: 3.0, fill: 0.45, rim: 0.9 }, lite: { hemi: 0.6, key: 2.6, fill: 0, rim: 0.9 } };
+  const LIGHT = tier.physical ? LIGHTS.full : LIGHTS.lite;
+  const hemi = new THREE.HemisphereLight(0xfff6f0, 0xf6c9d4, LIGHT.hemi);
   scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xfff0e0, 2.1);
+  const key = new THREE.DirectionalLight(0xfff8f0, LIGHT.key);
   key.castShadow = tier.shadows;
   key.shadow.mapSize.set(tier.shadowSize, tier.shadowSize);
-  key.shadow.bias = -0.0012;
-  key.shadow.normalBias = 0.018;
-  key.shadow.radius = 5;
-  key.shadow.blurSamples = 12;
+  // (desvio pela normal bem pequeno: peças espelhadas — a tampa do bentô — têm a normal para dentro, e um
+  // desvio grande as empurrava para trás de si mesmas, na própria sombra; a sombra macia dispensa mais que isso)
+  key.shadow.bias = -0.0006;
+  key.shadow.normalBias = 0.003;
+  key.shadow.radius = (5 * tier.shadowSize) / 1024; // a mesma penumbra (~1,5 cm) em qualquer tamanho de mapa
+  key.shadow.blurSamples = tier.shadowSize >= 1024 ? 10 : 8;
   scene.add(key, key.target);
-  const fill = new THREE.DirectionalLight(0xffe3ea, 0.9);
+  const fill = new THREE.DirectionalLight(0xfdf2f6, LIGHT.fill);
   if (tier.fillLight) scene.add(fill, fill.target);
-  const rim = new THREE.DirectionalLight(0xffffff, 1.0);
+  const rim = new THREE.DirectionalLight(0xffffff, LIGHT.rim);
   scene.add(rim, rim.target);
   // brilho quente das velas: fica sempre na cena (intensidade 0 sem velas) para não recompilar materiais
-  const candleLight = new THREE.PointLight(0xffb066, 0, 3.4, 2);
+  const candleLight = new THREE.PointLight(0xffc48a, 0, 3.0, 2);
   if (tier.pointLight) scene.add(candleLight);
 
   /* ───────── Chão: sombra projetada (mancha macia) + sombra de contato ─────────
@@ -243,28 +391,94 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   // sombra macia do bolo sobre o prato: assenta o bolo mesmo sem mapa de sombras (celular)
   const plateShade = new THREE.Mesh(
     shadowPlane,
-    new THREE.MeshBasicMaterial({ map: tex.plateShadow(), color: 0x4a1f2b, transparent: true, opacity: tier.shadows ? 0.12 : 0.3, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
+    new THREE.MeshBasicMaterial({ map: tex.plateShadow(), color: 0x4a1f2b, transparent: true, opacity: tier.shadows ? 0.2 : 0.3, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
   );
   plateShade.rotation.x = -Math.PI / 2;
   scene.add(plateShade);
+
+  /* r6-luz: com o cenário do ateliê à vista, o tampo dele recebe a sombra de verdade do bolo e da base (o desenho
+     exato da tábua, da boleira com pé, das velas) no lugar da mancha: um disco invisível rente ao tampo que só
+     mostra a sombra do mapa de sombras. No nível leve (sem mapa) o cenário pinta a dele, como antes. */
+  const catcher = new THREE.Mesh(new THREE.CircleGeometry(1, 48).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({ color: backdrop.shadow.color, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
+  catcher.receiveShadow = true;
+  catcher.visible = false;
+  catcher.renderOrder = 2;
+  catcher.raycast = () => {};
+  scene.add(catcher);
+  let catcherWanted = false; // o cenário pediu (ctx.floorShadow(false))
+  let catcherReach = 0; // até onde a sombra chega no tampo, a partir do eixo
+  const catching = () => catcherWanted && tier.shadows;
 
   /* ───────── Planos de corte ("Ver por dentro") ───────── */
   const OFF = () => new THREE.Plane(new THREE.Vector3(0, 1, 0), 1000);
   const clipPlanes = [OFF(), OFF()];
   const clipped = { clippingPlanes: clipPlanes, clipIntersection: true, clipShadows: true };
 
+  /* ───────── r6-luz: oclusão nos encontros ─────────
+     Onde duas superfícies se encontram a luz do ambiente não chega: o pé de cada andar escurece de leve e
+     deixa uma penumbra em volta, em cima do andar de baixo. São duas faixas que acompanham o contorno do
+     andar (qualquer formato), com a opacidade nos vértices; uma chamada de desenho por andar, em todos os
+     níveis. A faixa é filha da peça que ela assenta: some, sobe e gira junto com ela nas animações. */
+  const contactMat = new THREE.MeshBasicMaterial({ color: 0x35161d, vertexColors: true, transparent: true, opacity: 0.62, depthWrite: false, toneMapped: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, ...clipped });
+  // [afastamento da parede, altura, opacidade]
+  const CONTACT_FLOOR = [[-0.04, 0.0016, 0.8], [0.02, 0.0016, 0.66], [0.07, 0.0016, 0.32], [0.14, 0.0016, 0.1], [0.24, 0.0016, 0]];
+  const CONTACT_WALL = [[0.0026, 0.001, 0.62], [0.0026, 0.022, 0.36], [0.0026, 0.06, 0.13], [0.0026, 0.13, 0]];
+  function contactGeometry(path, withFloor) {
+    const n = path.n;
+    const strips = withFloor ? [CONTACT_FLOOR, CONTACT_WALL] : [CONTACT_WALL];
+    const count = strips.reduce((sum, rows) => sum + rows.length * (n + 1), 0);
+    const position = new Float32Array(count * 3);
+    const color = new Float32Array(count * 4);
+    const index = [];
+    let k = 0;
+    strips.forEach((rows) => {
+      const first = k;
+      rows.forEach(([off, y, a]) => {
+        for (let i = 0; i <= n; i++) {
+          const j = i % n;
+          position.set([path.x[j] + path.nx[j] * off, y, path.z[j] + path.nz[j] * off], k * 3);
+          color.set([1, 1, 1, a], k * 4);
+          k++;
+        }
+      });
+      for (let r = 0; r < rows.length - 1; r++) {
+        for (let i = 0; i < n; i++) {
+          const a = first + r * (n + 1) + i;
+          const b = a + n + 1;
+          index.push(a, b, a + 1, a + 1, b, b + 1);
+        }
+      }
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(position, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(color, 4));
+    geo.setIndex(index);
+    return geo;
+  }
+  /** Assenta a peça `host` (a cobertura ou a massa de baixo do andar ti) no que está embaixo dela. */
+  function seat(host, t, ti) {
+    const ao = new THREE.Mesh(contactGeometry(t.frost, ti > 0), contactMat);
+    ao.raycast = () => {}; // não é peça: o toque atravessa
+    ao.renderOrder = 1;
+    ao.userData.contact = true;
+    host.add(ao);
+    return host;
+  }
+
   /* ───────── Materiais ───────── */
   // no celular, sem verniz (clearcoat) nem brilho acetinado (sheen): materiais bem mais leves de desenhar
   const coat = (v) => (tier.physical ? v : 0);
-  const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xfffdfb, roughness: tier.physical ? 0.2 : 0.12, clearcoat: coat(0.9), clearcoatRoughness: 0.12 });
-  const gold = new THREE.MeshStandardMaterial({ color: 0xe6bb62, metalness: 0.88, roughness: 0.28, emissive: 0x6b4a10, emissiveIntensity: 0.4 });
+  // porcelana esmaltada: branca, com o esmalte refletindo as caixas de luz · ouro e prata: metal de verdade
+  // (sem "luz própria": quem dá o brilho é o estúdio refletido)
+  const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xfbf9f6, roughness: tier.physical ? 0.3 : 0.16, clearcoat: coat(1), clearcoatRoughness: 0.09 });
+  const gold = new THREE.MeshStandardMaterial({ color: 0xf2c15e, metalness: 1, roughness: 0.2, envMapIntensity: 1.9 });
   // Cobertura por andar (até 3): lateral, topo e a face cortada, cada um com a aparência e a cor do seu andar.
   const frostTiers = [];
   const frostOf = (i) => {
     if (!frostTiers[i]) {
       const side = new THREE.MeshPhysicalMaterial({ color: 0xffffff, sheenColor: 0xffffff, sheenRoughness: 0.55, ...clipped });
       const top = new THREE.MeshPhysicalMaterial({ color: 0xffffff, sheenColor: 0xffffff, sheenRoughness: 0.55, ...clipped });
-      const cut = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72, emissiveIntensity: 0.12 });
+      const cut = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72, emissiveIntensity: 0.06 });
       cut.emissive = cut.color;
       frostTiers[i] = { side, top, cut, scrape: null, canvas: null, map: null, mapKey: '', mapped: false, topRustic: null };
     }
@@ -273,7 +487,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   const frostSide = frostOf(0).side;
   const frostTop = frostOf(0).top;
   const cutFrost = frostOf(0).cut;
-  const dripMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: tier.physical ? 0.2 : 0.13, clearcoat: coat(0.85), clearcoatRoughness: 0.12, ...clipped });
+  const dripMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: tier.physical ? 0.24 : 0.13, clearcoat: coat(1), clearcoatRoughness: 0.07, envMapIntensity: 1.1, ...clipped });
   const cutDrip = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35 });
   // (na calda metálica o material "acende" um pouco na própria cor, como o dourado da boleira)
   dripMat.emissive = dripMat.color;
@@ -304,18 +518,22 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
         name === 'wood' || name === 'plank'
           ? new THREE.MeshStandardMaterial({ map: name === 'wood' ? tex.wood() : tex.plank(), roughness: 0.72 })
           : name === 'marble'
-            ? new THREE.MeshPhysicalMaterial({ map: tex.marble(), roughness: tier.physical ? 0.2 : 0.14, clearcoat: coat(0.55), clearcoatRoughness: 0.15 })
+            ? new THREE.MeshPhysicalMaterial({ map: tex.marble(), roughness: tier.physical ? 0.3 : 0.16, clearcoat: coat(0.9), clearcoatRoughness: 0.08 })
             : name === 'silver'
-              ? new THREE.MeshStandardMaterial({ color: 0xf2f4f8, metalness: 0.72, roughness: 0.24, emissive: 0x565b63, emissiveIntensity: 0.42 })
+              ? new THREE.MeshStandardMaterial({ color: 0xeef0f4, metalness: 1, roughness: 0.2, envMapIntensity: 1.9 })
               : name === 'blackboard'
                 ? new THREE.MeshStandardMaterial({ color: 0x1f1c1e, roughness: 0.62, envMapIntensity: 0.8 })
                 : name === 'glass'
-                    ? new THREE.MeshStandardMaterial({ color: 0xe6f3f5, roughness: 0.04, metalness: 0.1, transparent: true, opacity: 0.36, envMapIntensity: 1.9 })
+                    ? // vidro: o corpo não tem cor (não é uma película leitosa por cima do fundo); o que se vê é só o que ele
+                      // reflete — a beira do prato, que brilha de lado, e as caixas de luz —, somado ao que está atrás
+                      // (opacity 0,1 = o quanto o vidro escurece o que está atrás; também é o que o mantém visível nas fotos
+                      // de fundo transparente, onde o brilho não pode passar da opacidade do ponto)
+                      new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0x0d1516, roughness: 0.03, metalness: 0, envMapIntensity: 2.6, opacity: 0.1, transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor })
                     : name === 'kraft'
                       ? new THREE.MeshStandardMaterial({ color: 0xc8a676, roughness: 0.92, envMapIntensity: 0.5, side: THREE.DoubleSide })
                       : name === 'paper'
                         ? new THREE.MeshStandardMaterial({ color: 0xfbf8f1, roughness: 0.9, envMapIntensity: 0.6 })
-                        : new THREE.MeshStandardMaterial({ color: 0xf0c66a, metalness: 0.72, roughness: 0.27, emissive: 0x7a5412, emissiveIntensity: 0.5 });
+                        : new THREE.MeshStandardMaterial({ color: 0xf2c15e, metalness: 1, roughness: 0.3, envMapIntensity: 1.9 });
     }
     return standMats[name];
   };
@@ -337,7 +555,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     });
   const crumbMat = (i) =>
     layerMat(crumbMats, i, () => {
-      const mat = new THREE.MeshStandardMaterial({ map: tex.crumb(), emissiveMap: tex.crumb(), bumpMap: tex.crumbBump(), bumpScale: 2.2, roughness: 0.92, vertexColors: true, emissiveIntensity: 0.26 });
+      const mat = new THREE.MeshStandardMaterial({ map: tex.crumb(), emissiveMap: tex.crumb(), bumpMap: tex.crumbBump(), bumpScale: 3, roughness: 0.86, vertexColors: true, emissiveIntensity: 0.13 });
       mat.emissive = mat.color; // o miolo "acende" um pouco na própria cor, como massa de verdade atravessada pela luz
       crumbLook(mat, flavorOf(i));
       return mat;
@@ -368,11 +586,12 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   const jamMat = (i) => layerMat(jamMats, i, () => new THREE.MeshPhysicalMaterial({ roughness: tier.physical ? 0.22 : 0.14, clearcoat: coat(0.7), clearcoatRoughness: 0.15, ...clipped }));
   const cutJamMat = (i) => layerMat(cutJamMats, i, () => new THREE.MeshStandardMaterial({ roughness: 0.3, vertexColors: true }));
   let fruitMat = null;
-  const fruitPieces = () => (fruitMat ||= new THREE.MeshStandardMaterial({ map: tex.pieces(), alphaTest: 0.5, roughness: 0.5, side: THREE.DoubleSide }));
+  // (transparente, não recortado: a beira do pedaço sai lisa em vez de serrilhada)
+  const fruitPieces = () => (fruitMat ||= new THREE.MeshStandardMaterial({ map: tex.pieces(), transparent: true, alphaTest: 0.03, depthWrite: false, roughness: 0.42, side: THREE.DoubleSide }));
   const fillingOf = (i) => getFilling(config.fillings[Math.min(i, config.fillings.length - 1)]);
   const cutFillMat = (i) =>
     layerMat(cutFillMats, i, () => {
-      const mat = new THREE.MeshPhysicalMaterial({ roughness: 0.5, vertexColors: true, emissiveIntensity: 0.16 });
+      const mat = new THREE.MeshPhysicalMaterial({ roughness: 0.5, vertexColors: true, emissiveIntensity: 0.08 });
       mat.emissive = mat.color;
       return mat;
     });
@@ -539,6 +758,19 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     return ms;
   }
 
+  /**
+   * Medidas e malhas do corpo do bolo. No celular de hoje o corpo vem com todos os segmentos — é ele que
+   * desenha a silhueta —, menos nos bolos "de longe" (de andares ou GG): esses ficam menores na tela e levam
+   * duas ou três vezes mais massa, recheio e calda; com todos os segmentos passariam do teto de 150 mil
+   * triângulos (um naked de 3 andares com calda farta chegava a 215 mil). Usam a malha intermediária.
+   */
+  function metricsFor(cfg) {
+    const body = tier.bodyDetail ?? tier.detail;
+    const full = cakeMetrics(cfg, body);
+    if (!(tier.detail < 1) || body < 1) return full;
+    return full.stack.length >= 2 || full.base.R > 1.3 ? cakeMetrics(cfg, tier.detail) : full;
+  }
+
   /* ───────── As partes do bolo, por nome (ver o cabeçalho) ───────── */
   const named = new Map(); // nome → { name, kind, tier, index, objects }
   const buildHooks = new Set();
@@ -575,6 +807,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     placeGround();
   }
 
+  const groundDrop = () => ground.drop;
   /** r5-cena: a sombra de contato fica no chão de verdade (com a bailarina, mais baixo que o pé da base). */
   function placeGround() {
     if (!stand) return;
@@ -588,7 +821,17 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const top = m.Htot + decorTop(config) + 0.06;
     const bottom = stand.floorY;
     shadowCenter.set(0, (top + bottom) / 2, m.center.z * 0.5);
-    const rb = Math.hypot(stand.plateRadius + 0.06, (top - bottom) / 2);
+    let rb = Math.hypot(stand.plateRadius + 0.06, (top - bottom) / 2);
+    // (com o cenário à vista o mapa cresce até onde a sombra cai no tampo)
+    const groundY = bottom - groundDrop();
+    const kk = 1 / Math.tan(KEY_LIGHT.elev);
+    catcherReach = Math.max(stand.plateRadius + -groundY * kk, m.base.bounds.maxR + (top - groundY) * kk) + 0.25;
+    catcher.position.set(0, groundY + 0.002, 0);
+    catcher.scale.setScalar(catcherReach);
+    catcher.visible = catching();
+    if (catcher.visible) rb = Math.max(rb, Math.hypot(catcherReach, shadowCenter.y - groundY));
+    // (a tampa aberta da caixinha do bentô sai desse volume: o mapa de sombras cresce para pegá-la inteira)
+    (stand.points || []).forEach((p) => (rb = Math.max(rb, Math.hypot(p[0] - shadowCenter.x, p[1] - shadowCenter.y, p[2] - shadowCenter.z) + 0.06)));
     const sc = key.shadow.camera;
     sc.left = -rb;
     sc.right = rb;
@@ -602,7 +845,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   /** A mancha de sombra no chão cai para o lado oposto ao da luz principal (lightAz = azimute da luz). */
   function placeFloorShadow(lightAz) {
     if (!stand || !m) return;
-    const k = 0.78; // 1 / tan(52°), a altura da luz principal
+    const k = 1 / Math.tan(KEY_LIGHT.elev); // quanto a sombra anda para cada unidade de altura
     const hPlate = -stand.floorY + ground.drop; // r5-cena: com a bailarina, o chão fica mais baixo
     const near = -stand.plateRadius + hPlate * k;
     const far = Math.max(stand.plateRadius + hPlate * k, m.base.bounds.maxR + (hPlate + m.Htot) * k);
@@ -617,12 +860,16 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   function applyBackdropLook(b, k = 1, from = null) {
     if (!from) {
       floor.material.color.set(b.shadow.color);
+      catcher.material.color.set(b.shadow.color);
+      catcher.material.opacity = Math.min(0.42, b.shadow.opacity * 1.2); // (fundo claro: sombra mais leve)
       floor.material.opacity = b.shadow.opacity;
       contact.material.color.set(b.contact.color);
       contact.material.opacity = b.contact.opacity;
       hemi.groundColor.set(b.ground);
       return;
     }
+    catcher.material.color.set(b.shadow.color);
+    catcher.material.opacity = Math.min(0.42, b.shadow.opacity * 1.2);
     floor.material.color.copy(from.shadow).lerp(_bd.set(b.shadow.color), k);
     floor.material.opacity = from.shadowA + (b.shadow.opacity - from.shadowA) * k;
     contact.material.color.copy(from.contact).lerp(_bd.set(b.contact.color), k);
@@ -947,13 +1194,15 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       if (t.volcano) {
         // bolo vulcão: a massa de fôrma de furo e, por cima, o creme que enche o furo e transborda
         bundtColor(flavorOf(0), bundt().color);
-        g.add(built(`massa:${ti}:0`, mesh(buildBundt(t), bundt()), { ...at, index: 0 }));
+        g.add(built(`massa:${ti}:0`, seat(mesh(buildBundt(t), bundt()), t, ti), { ...at, index: 0 }));
         const seed = (Math.round(t.R * 100) * 13 + 7) | 0;
-        g.add(built(`cobertura:${ti}`, mesh(buildVolcanoCream(t, seed), [f.side, f.top]), at));
+        // (o creme do vulcão é a malha mais pesada do bolo: no celular, a versão de metade das colunas)
+        const lean = tier.detail < 1 ? Object.assign(Object.create(t), { detail: tier.detail }) : t;
+        g.add(built(`cobertura:${ti}`, mesh(buildVolcanoCream(lean, seed), [f.side, f.top]), at));
         return;
       }
       if (!t.naked) {
-        g.add(built(`cobertura:${ti}`, mesh(buildFrosting(t), [f.side, f.top]), at));
+        g.add(built(`cobertura:${ti}`, seat(mesh(buildFrosting(t), [f.side, f.top]), t, ti), at));
         if (t.style === 'rosetas') {
           const coat = rosetteCoat(t, ti);
           if (coat) bodyGroup.add(built(`cobertura:${ti}:rosetas`, coat, { ...at, kind: 'cobertura' }));
@@ -962,7 +1211,8 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       }
       t.layerY.forEach((_, i) => {
         const mat = crustMat(i);
-        g.add(built(`massa:${ti}:${i}`, mesh(buildSponge(t, i), [mat, mat]), { ...at, index: i }));
+        const sponge = mesh(buildSponge(t, i), [mat, mat]);
+        g.add(built(`massa:${ti}:${i}`, i === 0 ? seat(sponge, t, ti) : sponge, { ...at, index: i }));
       });
       // semi-naked: entre as camadas aparece o próprio creme da cobertura, não o recheio
       t.fillY.forEach((_, i) => {
@@ -1223,7 +1473,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       }
     };
     ring(stand.plateRadius, -0.02);
-    ring(stand.plateRadius * 0.5, stand.floorY);
+    // (bases de pé apoiam num anel menor que o prato; tábuas, placas e caixas descem até o chão na largura toda —
+    // sem isso a beira de baixo delas ficava de fora da conta e o bolo invadia a faixa de baixo do palco)
+    ring(-stand.floorY > 0.3 ? stand.plateRadius * 0.5 : stand.plateRadius, stand.floorY);
     if (ground.drop) ring(ground.radius || stand.plateRadius * 0.5, stand.floorY - ground.drop); // r5-cena: a bailarina cabe no quadro
     if (m.base !== m) ring(m.base.bounds.maxR, m.base.Ht);
     (stand.points || []).forEach((p) => pts.push(p[0], p[1], p[2])); // a tampa aberta da caixinha do bentô
@@ -1315,11 +1567,15 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   /** Reenquadra mantendo o ângulo atual (quando o bolo muda de tamanho) ou indo para uma vista pronta. */
   function frame({ view = null, animate = true } = {}) {
     if (!m || !stand) return;
-    const cur = getSpherical();
+    // De onde a câmera parte: se já há um voo em curso (duas mudanças seguidas), vale o DESTINO dele, não o ponto
+    // do meio do caminho. Medir o zoom no meio do voo comparava a distância antiga com o enquadramento novo — o
+    // zoom se acumulava a cada mudança e um bolo que tinha acabado de crescer passava do palco (r6-luz).
+    const cur = flying ? flying.to : getSpherical();
     const v = view ? anglesOf(view) : null;
     const angles = v || { az: cur.az, polar: cur.polar };
     const fit = computeFit(size.w / size.h, angles, insetsNow());
-    const zoom = v || !fitDist ? 1 : THREE.MathUtils.clamp(cur.dist / fitDist, 0.5, 1.45);
+    let zoom = v || !fitDist ? 1 : THREE.MathUtils.clamp(cur.dist / fitDist, 0.5, 1.45);
+    if (Math.abs(zoom - 1) < 0.03) zoom = 1; // quem não mexeu no zoom fica exatamente no enquadramento
     fitDist = fit.dist;
     updateLimits();
     const to = { az: angles.az, polar: angles.polar, dist: fit.dist * zoom, ty: fit.ty, tz: fit.tz };
@@ -1399,7 +1655,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const told = Boolean(stage && atelierOn && !first && !instant && !staged);
     const directed = told && animate !== false && stage.before(prev, next, { by }) === true;
     config = JSON.parse(JSON.stringify(next));
-    m = cakeMetrics(config, tier.detail);
+    m = metricsFor(config);
     layout = decorLayout(config, m);
     const quiet = instant || staged || reduceMotion;
 
@@ -1427,11 +1683,12 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     if (metal !== dripMat.userData.metal) {
       dripMat.userData.metal = metal;
       [dripMat, cutDrip].forEach((mt) => {
-        mt.metalness = metal ? 0.82 : 0;
-        mt.emissiveIntensity = metal ? 0.3 : 0;
+        mt.metalness = metal ? 1 : 0;
+        mt.emissiveIntensity = metal ? 0.05 : 0;
       });
-      dripMat.roughness = metal ? 0.3 : tier.physical ? 0.2 : 0.13;
-      dripMat.clearcoat = metal ? 0 : coat(0.85);
+      dripMat.roughness = metal ? 0.24 : tier.physical ? 0.24 : 0.13;
+      dripMat.clearcoat = metal ? 0 : coat(1);
+      dripMat.envMapIntensity = metal ? 1.9 : 1.1;
       cutDrip.roughness = metal ? 0.34 : 0.35;
     }
     // (r5-cena: calda que acabou de ser ligada já nasce na cor dela — não atravessa a cor da calda anterior)
@@ -1506,7 +1763,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     // luz das velas
     // chamas acesas: as clássicas (quantas a pessoa escolheu), uma por algarismo ou a vela faísca
     const flamesLit = config.decor.candleStyle === 'numero' ? config.decor.number.length : config.decor.candleStyle === 'faisca' ? 4 : config.decor.candles;
-    const lightTo = plan.has('velas') && flamesLit ? 0.5 + Math.sqrt(flamesLit) * 0.42 : 0;
+    const lightTo = plan.has('velas') && flamesLit ? 0.3 + Math.sqrt(flamesLit) * 0.22 : 0;
     if (quiet) candleLight.userData.base = lightTo;
     else {
       const from = candleLight.userData.base || 0;
@@ -1661,10 +1918,10 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   function placeLights() {
     const az = getSpherical(_cam).az;
     // luz principal sempre vindo do alto, à esquerda de quem olha
-    placeLight(key, shadowCenter, az - 48 * DEG, 52 * DEG, 7);
+    placeLight(key, shadowCenter, az + KEY_LIGHT.az, KEY_LIGHT.elev, 7);
     placeLight(fill, controls.target, az + 70 * DEG, 18 * DEG, 6);
     placeLight(rim, controls.target, az + 165 * DEG, 38 * DEG, 6);
-    placeFloorShadow(az - 48 * DEG);
+    placeFloorShadow(az + KEY_LIGHT.az);
   }
 
   function applyRatio(r) {
@@ -1688,6 +1945,12 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   let gpuOpen = false;
   let gpuMs = null;
   let gpuAt = 0;
+  // r6-luz: sem o medidor (quase todo celular), um quadro animado em cada 12 espera a placa terminar — a
+  // leitura de 1 ponto da tela só volta quando o quadro está pronto — e esse tempo vale como custo da placa.
+  // Sem isso o regulador só enxergava a CPU: um aparelho travado pela placa de vídeo nunca baixava a
+  // resolução nem o nível.
+  let probeTick = 0;
+  const probePx = new Uint8Array(4);
   function gpuPoll(t) {
     if (!gpuExt || !gpuQuery || gpuOpen) return;
     try {
@@ -1724,6 +1987,15 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     if (gpuOpen) {
       gl.endQuery(gpuExt.TIME_ELAPSED_EXT);
       gpuOpen = false;
+    }
+    if (measure && !gpuExt && !lost && ++probeTick % 12 === 0) {
+      try {
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, probePx);
+        gpuMs = performance.now() - t0;
+        gpuAt = lastFrame;
+      } catch {
+        gpuMs = null;
+      }
     }
     stats.renders++;
     return ms;
@@ -1768,7 +2040,50 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
 
   /** Estado da qualidade em uso (só leitura; exposto no gancho ?czdebug). */
   function quality() {
-    return { tier: tier.name, devicePixelRatio: deviceRatio(), ratio: curRatio, stillRatio: stillRatio(), sharp, gpuTimer: Boolean(gpuExt), governor: gov.state() };
+    return { tier: tier.name, downgraded, devicePixelRatio: deviceRatio(), ratio: curRatio, stillRatio: stillRatio(), sharp, gpuTimer: Boolean(gpuExt), gpuProbe: !gpuExt, governor: gov.state() };
+  }
+
+  /**
+   * r6-luz: último recurso. O aparelho não deu conta nem na menor resolução: o nível cai para o leve, uma vez,
+   * e nunca sobe de volta nesta visita. Sai o que mais pesa por quadro — o mapa de sombras (um passe a mais
+   * com o bolo inteiro), o verniz e o acetinado dos materiais, a luz de preenchimento e a das velas, e o teto
+   * de resolução desce para 1,5 —, sem refazer nenhuma peça: o bolo continua na tela, só mais simples. As peças
+   * construídas daqui em diante já nascem com os materiais leves. O aparelho é lembrado por 14 dias.
+   */
+  let downgraded = false;
+  function downgrade() {
+    const to = tier.fallback ? TIERS[tier.fallback] : null;
+    if (!to || disposed || lost) return false;
+    downgraded = true;
+    Object.assign(tier, { name: to.name, maxRatio: to.maxRatio, shadows: false, softShadow: false, physical: false, fillLight: false, pointLight: false, smallCastShadow: false, wedgeEvery: to.wedgeEvery, fallback: null });
+    renderer.shadowMap.enabled = false;
+    key.castShadow = false;
+    key.shadow.map?.dispose();
+    key.shadow.map = null;
+    scene.remove(fill, fill.target, candleLight);
+    hemi.intensity = LIGHTS.lite.hemi;
+    key.intensity = LIGHTS.lite.key;
+    rim.intensity = LIGHTS.lite.rim;
+    plateShade.material.opacity = 0.3;
+    catcher.visible = false; // (o cenário volta a pintar a sombra dele: ctx.shadowOnGround passa a false)
+    // materiais: o brilho que o verniz dava vira uma superfície um pouco mais lisa (como no nível leve de fábrica)
+    const strip = (mt) => {
+      if (!mt || !mt.isMeshPhysicalMaterial) return;
+      if (mt.clearcoat > 0.2) mt.roughness = Math.max(0.08, mt.roughness * (1 - 0.45 * mt.clearcoat));
+      mt.clearcoat = 0;
+      mt.sheen = 0;
+      mt.iridescence = 0;
+    };
+    dressed.forEach(strip);
+    scene.traverse((o) => (Array.isArray(o.material) ? o.material : [o.material]).forEach(strip));
+    [porcelain, dripMat, ...Object.values(standMats), ...bandMats, ...cutFillMats, ...jamMats].forEach(strip);
+    if (m) m.stack.forEach((_, i) => applyTierLook(i, true));
+    gov.reset(stillRatio(), deviceRatio());
+    applyRatio(Math.min(curRatio, stillRatio()));
+    skipUntil = clock() + 1.2; // os programas são recompilados sem sombra nem verniz: esse quadro não conta
+    rememberLite();
+    invalidate();
+    return true;
   }
 
   /** Sem ninguém mexer há um tempo (celular): o giro e as chamas descansam até o próximo toque. */
@@ -1899,6 +2214,8 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       if (clock() >= skipUntil) {
         const gpuNow = gpuMs != null && t - gpuAt < 0.5 ? gpuMs : null;
         gov.sample(Math.max(cpuMs, gpuNow || 0), 750 / (fps || 60), { cpuMs, gpuMs: gpuNow });
+        // nem a menor resolução bastou: o nível cai (uma vez só; ver downgrade())
+        if (gov.exhausted && tier.fallback) downgrade();
       }
     } else if (!active && !ambient && !sharp && since > 0.22) {
       // parou de mexer: um quadro na resolução máxima, para o bolo parado ficar nítido
@@ -2138,7 +2455,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     tex.warmups().forEach((fn) => warmQueue.push(fn));
     const base = JSON.parse(JSON.stringify(config));
     const tryPart = (cfg, build) => () => {
-      const m2 = cakeMetrics(cfg, tier.detail);
+      const m2 = metricsFor(cfg);
       const part = build({ config: cfg, m: m2, lib, layout: decorLayout(cfg, m2), tier });
       const done = () => part.dispose();
       if (!part.group.children.length) done();
@@ -2411,6 +2728,15 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       },
       floorShadow(on) {
         floor.visible = on;
+        // r6-luz: sem a mancha (cenário à vista), o tampo recebe a sombra de verdade — quando há mapa de sombras
+        catcherWanted = !on;
+        if (m && stand) fitShadow();
+        dirty = true;
+      },
+      /** r6-luz: a direção da luz principal (o cenário pinta a luz do tampo com ela) e se a sombra real cai no tampo. */
+      keyLight: KEY_LIGHT,
+      get shadowOnGround() {
+        return catching();
       },
       getSpherical,
       applySpherical(s) {
@@ -2590,6 +2916,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     [standGroup, bodyGroup, cutGroup, dripGroup].forEach(disposeGroup);
     shadowPlane.dispose();
     plateShade.material.dispose();
+    catcher.geometry.dispose();
+    catcher.material.dispose();
+    contactMat.dispose();
     floor.material.dispose();
     contact.material.dispose();
     buildHooks.clear();
@@ -2641,9 +2970,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     get cutaway() {
       return cutaway;
     },
-    /** Nível de qualidade em uso ('mobile' ou 'desktop'). */
+    /** Família do nível de qualidade em uso ('mobile' ou 'desktop'); o nível exato sai em quality().tier. */
     get tier() {
-      return tier.name;
+      return tier.family || tier.name;
     },
     /** Só para testes: acesso ao renderizador (simular perda de contexto, medir desenho). */
     debug: {
@@ -2659,6 +2988,8 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       stats,
       gov,
       tier,
+      /** r6-luz: força o rebaixamento de nível (teste). */
+      downgrade,
       get ratio() {
         return curRatio;
       },

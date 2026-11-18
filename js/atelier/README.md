@@ -87,6 +87,30 @@ troca animações por transições de 150 ms; contexto perdido não pode travar;
 - Ponto de montagem do jogo: `import('../atelier/game/index.js')` (se existir) e
   `mountGame({ root, bus, audio, bo, getConfig, setConfig, getPrice, goto, openSheet })`.
 
+### Palco: quem mora onde (r6-tela2)
+
+Uma régua só (`--st-gutter`, `--st-gap`, `--st-hit`, `--st-r`, `--st-lane`, `--st-bo`, em `css/customizer.css`):
+
+| Zona | O quê | Regra |
+|---|---|---|
+| canto de cima à direita | `.cz-tools`: ver por dentro · revelar (chá) · velas (Decoração) · jogo · “…” | a única coluna de botões; 44 × 44, raio 12, mesma sombra. Em palco baixo, o que não cabe (velas, revelar, jogo — nesta ordem) vira linha da folha “Ateliê” (`.cz[data-collapsed]`); nunca há segunda coluna |
+| canto de cima à esquerda | `.ag-hud`: a comanda do jogo | só com encomenda em curso |
+| faixa de baixo | a Bô à esquerda; ao lado, **uma coisa por vez**: aviso do palco › figurinha nova › balão | nunca sobre o bolo |
+| por cima do painel | `.st-sheet`: a folha “Ateliê” (jogo, som, modo rápido, vistas, giro, medidas, fundo, cenário) | o bolo fica inteiro à vista |
+
+- **Avisos do palco** (`js/atelier/ui/notices.js`, `host.notes`): `notes.flash(texto)` (recado curto), `notes.push({ kind: 'ask' | 'tip', … })`
+  (fila; a dica espera a Bô e dá a vez a ela) e `notes.control({ … })` (gesto em curso, com a saída por botão).
+  Quem precisar avisar algo sobre o palco usa isto — nada de cartão próprio por cima do bolo.
+- **Ferramenta da etapa**: `host.toolSlot` recebe um botão `.cz-tool` a mais na coluna (hoje: acender / soprar as velas).
+- **Jogo à vista**: o botão do jogo fica na coluna do palco (`.cz-tool--game`, some no modo rápido) e abre a aba direto; a
+  folha “Ateliê” mantém a linha “Encomendas e figurinhas”. Ponto de novidade (`.cz.has-game-news`): figurinha nova ainda não
+  vista no álbum ou encomenda do dia ainda não vista hoje (`prefs.atelierGameSeenDay`).
+- **Cenário e cabeçalho**: a tela 3D passa por baixo do cabeçalho; a leitura do título vem de um véu do tom do fundo
+  (`--st-wall`, definido pela tela a cada troca de fundo) e de `data-tone` — nenhuma cor fixa.
+- **Primeira visita**: o bolo aparece sozinho; uns 3 s depois, o convite do som (um aviso da faixa); depois da resposta a Bô
+  se apresenta; as duas dicas (girar; o convite para o jogo, apontando o botão dele) só entram quando ela termina de falar.
+- A Bô é posicionada pela tela no celular (`css/atelier.css`): âncora no canto de baixo à esquerda, balão ao lado.
+
 ## 4. Jogo — `js/atelier/game/index.js`
 
 ```js

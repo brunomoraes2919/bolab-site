@@ -47,7 +47,7 @@ export function createStage(ctx) {
     candleState: { lit: true },
     revealLevel: 0,
     get confetti() {
-      return (confetti ||= createConfetti(ctx.scene, low ? 64 : 120));
+      return (confetti ||= createConfetti(ctx.scene, low ? 64 : 120, { dot: dotTex }));
     },
     /** A luzinha do fósforo que acende as velas. */
     spark() {

@@ -3,6 +3,7 @@
 // A tela (js/views/customizer.js) busca este módulo depois do primeiro quadro do bolo e entrega um `host`
 // (o que ele pode ler e pedir). Aqui se ligam, sob demanda e cada um por si:
 //
+//   avisos     ./notices.js (host.notes, criado pela tela)      → convite do som, dicas, controles de gesto: um por vez
 //   som        js/atelier/audio.js + audio-ui.js + haptics.js   → ligados ao barramento; trilha por etapa
 //   a Bô       js/atelier/bo/index.js                           → assistente (regras + voz gravada), sugere e a tela aplica
 //   gestos     ./hands.js                                       → colocar peça com o dedo, pingar calda, velas, girar o prato
@@ -16,31 +17,31 @@
 //   const atelier = mountAtelier(host)
 //   atelier.setMode('rapido') · atelier.step(id, prev) · atelier.interact() · atelier.back() → true se fechou algo
 //   atelier.hands.{arm, auto, removeOne, clear} · atelier.reveal() · atelier.video() · atelier.game() · atelier.destroy()
-import { html, raw } from '../../ui.js';
 import { createHands } from './hands.js';
+import { NOTE_ICON } from './notices.js';
 
-const svg = (body) => raw(`<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`);
-const ICON = {
-  sound: svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>'),
-  swipe: svg('<polyline points="18 8 22 12 18 16"/><polyline points="6 8 2 12 6 16"/><line x1="2" x2="22" y1="12" y2="12"/>'),
-  chat: svg('<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>'),
-  bolt: svg('<path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12Z"/>'),
-  ticket: svg('<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2M13 11v2M13 17v2"/>'),
-};
-
-/** As três dicas da primeira visita (no máximo três, puláveis). `spot` = o que pisca enquanto a dica está na tela. */
+/**
+ * As dicas da primeira visita. Chegam UMA POR VEZ, na faixa de avisos, depois que a Bô se apresentou — e cada uma
+ * espera a Bô terminar de falar. Nenhuma tem "próxima": some sozinha, ao ser cumprida ou no ✕.
+ *   girar   some quando a pessoa gira o bolo (ou em 8 s)
+ *   jogo    o convite para brincar: aponta para o botão do jogo, na coluna do palco (ele fica marcado enquanto a
+ *           dica está na tela). Sem o botão à vista (jogo não carregou, celular muito baixo), fala do menu "…".
+ */
 const TIPS = [
-  { icon: 'swipe', text: 'Arraste o bolo para girar e ver de todos os lados.', spot: null },
-  { icon: 'chat', text: 'A Bô é a assistente do ateliê: ela comenta as suas escolhas. Toque nela para pedir um palpite.', spot: '.bo-avatar' },
-  // r5-qa: a terceira dica convida para o jogo (antes só falava do modo rápido: ninguém ficava sabendo das encomendas
-  // e das figurinhas, que são a parte de brincar). Sem o jogo na tela (`game: false`), vale o texto antigo.
+  { id: 'girar', icon: 'swipe', text: 'Arraste o bolo para girar e ver de todos os lados.', ms: 8000, spot: null },
   {
+    id: 'jogo',
     icon: 'ticket',
-    text: 'Quer brincar de confeiteiro? Em “jogo”, clientes fazem encomendas e você ganha figurinhas. Com pressa? “rápido” deixa só o que é preciso para pedir.',
-    spot: '[data-at-game]',
-    alt: { icon: 'bolt', text: 'Com pressa? O Modo rápido tira som e animações e deixa só o que é preciso para pedir.', spot: '[data-at-mode]' },
+    text: 'Quer brincar de confeiteiro? O jogo fica neste botão.',
+    action: 'Jogar',
+    spot: '.cz-tools [data-act="game"]',
+    alt: { text: 'Jogo, som, vistas e modo rápido ficam no menu do palco.', action: 'Abrir', spot: '[data-act="stagemenu"]' },
+    ms: 10000,
   },
 ];
+const INVITE_AFTER = 3200; // o bolo aparece primeiro: o convite do som só vem depois de a pessoa ter visto o bolo
+const TIP_AFTER = 6500; // depois da resposta ao convite (a Bô se apresenta nesse meio-tempo)
+const TIP_GAP = 9000; // entre uma dica e a outra
 
 // o jogo é procurado uma vez por visita à loja (se a pasta não existir, a busca falha uma vez só)
 let gameModule = null;
@@ -93,9 +94,12 @@ export function mountAtelier(host) {
   let boLoading = null;
   let game = null;
   let revealing = null; // a revelação em curso: { close() }
-  let invite = null;
+  const notes = host.notes;
+  let invite = null; // o aviso do convite: { close() }
   let soundPending = false; // o convite saiu sem resposta nesta visita: o alto-falante ainda liga o som
-  let tips = null; // { el, at }
+  let tips = null; // a dica em cartaz: { note, at }
+  let tipsAt = 0; // a próxima dica da fila
+  let spun = false; // a pessoa já girou o bolo: a dica de girar não é mais precisa
   let spunAt = -1e9;
   let sceneOk = false; // a cena (cozinha + animações, js/atelier/stage) carregou: valem os gestos de verdade
   let sceneAsked = false;
@@ -169,7 +173,7 @@ export function mountAtelier(host) {
         if (!alive) return false;
         audio = a.audio;
         haptics = h.haptics;
-        soundEl = u.soundControl({ placement: 'down', align: 'start', className: 'at-sound' });
+        soundEl = u.soundControl({ placement: 'up', align: 'end', className: 'at-sound' });
         // tocar no alto-falante também responde ao convite (ninguém fica com o controle "ligado" e mudo)
         soundEl.addEventListener(
           'click',
@@ -180,6 +184,7 @@ export function mountAtelier(host) {
           true,
         );
         host.hud.querySelector('[data-at-sound]').append(soundEl);
+        syncWants();
         return true;
       })
       .catch((err) => {
@@ -213,36 +218,41 @@ export function mountAtelier(host) {
     audio.suspend();
   }
 
-  /* ───────── convite para ligar o som (só na primeira visita; nunca toca sozinho) ───────── */
+  /* ───────── convite para ligar o som (só na primeira visita; nunca toca sozinho) ─────────
+     Um aviso da faixa de baixo do palco (nunca sobre o bolo nem sobre o painel): a pessoa vê o bolo primeiro. */
+  /** O convite ficou sem resposta: o botão "…" do palco e a linha do som pedem atenção, sem insistir. */
+  function syncWants() {
+    soundEl?.classList.toggle('at-wants', soundPending);
+    host.cz.classList.toggle('wants-sound', soundPending);
+  }
   function showInvite() {
-    if (invite || !alive) return;
-    invite = document.createElement('div');
-    invite.className = 'at-card at-invite';
-    invite.setAttribute('role', 'group');
-    invite.setAttribute('aria-label', 'Som do ateliê');
-    invite.innerHTML = String(html`
-      <span class="at-card__icon">${ICON.sound}</span>
-      <p class="at-card__text"><strong>Ligar o som do ateliê?</strong><span>Música baixinha, sons de confeitaria e a voz da Bô.</span></p>
-      <div class="at-card__acts">
-        <button type="button" class="btn btn--sm" data-at-yes>Ligar o som</button>
-        <button type="button" class="at-card__quiet" data-at-no>Agora não</button>
-      </div>
-    `);
-    invite.addEventListener('click', (ev) => {
-      if (ev.target.closest('[data-at-yes]')) answerInvite(true);
-      else if (ev.target.closest('[data-at-no]')) answerInvite(false);
+    if (invite || !alive || !atelie() || revealing || prefs.get('atelierSoundAsked')) return;
+    const mine = notes.push({
+      kind: 'ask',
+      className: 'at-card at-invite',
+      label: 'Som do ateliê',
+      icon: NOTE_ICON.sound,
+      title: 'Ligar o som do ateliê?',
+      text: 'Música baixinha e a voz da Bô.',
+      closable: false,
+      ms: 16000,
+      actions: [
+        { label: 'Agora não', quiet: true, attr: 'data-at-no', onClick: () => answerInvite(false) },
+        { label: 'Ligar', aria: 'Ligar o som', go: true, attr: 'data-at-yes', onClick: () => answerInvite(true) },
+      ],
+      onClose: (why) => why === 'time' && invite === mine && dismissInvite(),
     });
-    host.layer.append(invite);
-    later(dismissInvite, 16000);
+    invite = mine;
     host.say('Quer ligar o som do ateliê? Tem música baixinha, sons de confeitaria e a voz da assistente Bô. Use os botões Ligar o som ou Agora não.');
   }
   function closeInvite() {
-    invite?.remove();
+    const was = invite;
     invite = null;
+    was?.close('answer');
   }
   function acceptSound({ quiet = false, on = true } = {}) {
     soundPending = false;
-    soundEl?.classList.remove('at-wants');
+    syncWants();
     prefs.set('atelierSoundAsked', true);
     if (!audio) return;
     audio.settings.mute.master = !on;
@@ -250,14 +260,14 @@ export function mountAtelier(host) {
     soundOn();
     if (on && !quiet) audio.sfx('open', { delay: 0.05 });
   }
-  /** on = true liga; false guarda "sem som" (dá para ligar depois, no alto-falante). */
+  /** on = true liga; false guarda "sem som" (dá para ligar depois, no menu do palco). */
   function answerInvite(on, { quiet = false } = {}) {
     if (!invite) return;
     closeInvite();
     acceptSound({ quiet, on });
-    host.say(on ? 'Som ligado. O alto-falante no canto do palco ajusta ou desliga.' : 'Sem som. Para ligar depois, use o alto-falante no canto do palco.');
+    host.say(on ? 'Som ligado. Para ajustar ou desligar, abra o menu do palco.' : 'Sem som. Para ligar depois, abra o menu do palco.');
     startBo();
-    later(maybeTips, 6500);
+    later(maybeTips, TIP_AFTER);
   }
   /**
    * A pessoa seguiu montando sem responder: o convite sai do caminho. Nada toca nesta visita (o som nem é
@@ -267,9 +277,9 @@ export function mountAtelier(host) {
     if (!invite) return;
     closeInvite();
     soundPending = true;
-    soundEl?.classList.add('at-wants');
+    syncWants();
     startBo();
-    later(maybeTips, 6500);
+    later(maybeTips, TIP_AFTER);
   }
 
   /* ───────── a Bô ───────── */
@@ -296,13 +306,18 @@ export function mountAtelier(host) {
   /** Uma dica de gesto: a Bô diz (no balão); sem ela, um aviso curto no palco. `still` = a dica ainda faz sentido? */
   function hint(text, still = () => true, tries = 0) {
     if (!alive || !atelie() || revealing || !still()) return;
-    if (!bo || !bo.enabled) return void host.flash(text);
+    if (!bo || !bo.enabled) return void notes.flash(text, { ms: 4200 });
     if (bo.ui.bubbleOn && tries < 2) return void later(() => hint(text, still, tries + 1), 3200);
     bo.say({ text, mood: 'feliz' });
   }
+  /** A Bô está no palco? (a faixa de avisos começa depois dela; sem ela, usa a largura toda) */
+  function boOn(on) {
+    bo?.setEnabled(on);
+    host.cz.classList.toggle('has-bo', Boolean(bo && bo.enabled));
+  }
   function startBo() {
     if (!atelie() || !alive) return;
-    if (bo) return void bo.setEnabled(true);
+    if (bo) return void boOn(true);
     boLoading ||= Promise.all([import('../bo/index.js'), boStyle()])
       .then(([m]) => {
         if (!alive || bo) return;
@@ -316,7 +331,7 @@ export function mountAtelier(host) {
           source: host.source,
           onAction: (action) => host.applyBo(action, m.applyPatch),
         });
-        if (!atelie()) bo.setEnabled(false);
+        boOn(atelie() && !revealing);
       })
       .catch((err) => console.warn('[atelie] a Bô não chegou:', err?.message || err))
       .finally(() => {
@@ -324,55 +339,67 @@ export function mountAtelier(host) {
       });
   }
 
-  /* ───────── dicas da primeira visita ───────── */
+  /* ───────── dicas da primeira visita: uma por vez, na faixa de avisos ───────── */
+  const tipsBlocked = () => Boolean(invite || revealing || !atelie() || document.querySelector('.overlay') || host.cz.classList.contains('has-order') || host.cz.classList.contains('has-menu') || host.root.querySelector('.ag-panel.is-open'));
   function maybeTips() {
-    if (tips || invite || revealing || !atelie() || prefs.get('atelierTipsSeen') || host.step() !== 'formato' || document.querySelector('.overlay')) return;
-    // r5-qa: com a aba do jogo aberta ou uma encomenda em curso as dicas não entram por cima (ficam para outra hora)
-    if (host.cz.classList.contains('has-order') || host.root.querySelector('.ag-panel.is-open, .ag-sheet.is-open, [class*="ag-"].is-open')) return;
-    const el = document.createElement('div');
-    el.className = 'at-card at-tips';
-    el.setAttribute('role', 'group');
-    el.setAttribute('aria-label', 'Dicas do ateliê');
-    el.addEventListener('click', (ev) => {
-      if (ev.target.closest('[data-at-next]')) showTip(tips.at + 1);
-      else if (ev.target.closest('[data-at-skip]')) closeTips();
+    if (tips || !alive || prefs.get('atelierTipsSeen')) return;
+    if (tipsAt >= TIPS.length) return void endTips();
+    // com o jogo aberto, uma encomenda em curso ou um diálogo por cima, a dica fica para daqui a pouco
+    if (tipsBlocked()) return void later(maybeTips, 4000);
+    if (TIPS[tipsAt].id === 'girar' && spun) tipsAt += 1; // já girou sozinha
+    const i = tipsAt;
+    let tip = TIPS[i];
+    // dica que aponta para um botão que não está à vista (o jogo não carregou, ou foi recolhido no "…") usa a alternativa
+    const seen = (sel) => Boolean(sel && [...host.cz.querySelectorAll(sel)].some((n) => n.getClientRects().length));
+    const viaGame = tip.id === 'jogo' && seen(tip.spot);
+    if (tip.alt && !viaGame) tip = { ...tip, ...tip.alt };
+    const text = tip.text;
+    const note = notes.push({
+      kind: 'tip',
+      className: 'at-tips',
+      label: 'Dica do ateliê',
+      icon: NOTE_ICON[tip.icon],
+      text,
+      ms: tip.ms,
+      closeLabel: 'Fechar a dica',
+      actions: tip.action ? [{ label: tip.action, attr: 'data-at-next', onClick: () => (closeTip('done'), viaGame ? host.openGame() : host.openMenu()) }] : [],
+      wait: () => Boolean(bo?.ui?.bubbleOn) || tipsBlocked(),
+      onShow() {
+        if (tip.spot) host.cz.querySelector(tip.spot)?.classList.add('at-spot');
+        host.say(`Dica: ${text}`);
+      },
+      // a Bô voltou a falar: a dica (e o anel no botão) dá a vez e volta depois
+      onYield(off) {
+        if (tip.spot) host.cz.querySelector(tip.spot)?.classList.toggle('at-spot', !off);
+      },
+      onClose() {
+        unspot();
+        if (tips?.note !== note) return;
+        tips = null;
+        tipsAt = i + 1;
+        if (tipsAt >= TIPS.length) endTips();
+        else later(maybeTips, TIP_GAP);
+      },
     });
-    host.layer.append(el);
-    host.layer.dataset.busy = 'tips';
-    tips = { el, at: -1 };
-    showTip(0);
+    tips = { note, at: i };
   }
   function unspot() {
     host.cz.querySelectorAll('.at-spot').forEach((n) => n.classList.remove('at-spot'));
   }
-  function showTip(i) {
-    if (!tips) return;
-    if (i >= TIPS.length) return void closeTips();
-    let tip = TIPS[i];
-    // r5-qa: dica que aponta para um botão que não está na tela (o jogo não carregou) usa a alternativa
-    if (tip.alt && !host.cz.querySelector(`${tip.spot}:not([hidden])`)) tip = tip.alt;
-    tips.at = i;
-    unspot();
-    if (tip.spot) host.cz.querySelector(tip.spot)?.classList.add('at-spot');
-    const last = i === TIPS.length - 1;
-    tips.el.innerHTML = String(html`
-      <span class="at-card__icon">${ICON[tip.icon]}</span>
-      <p class="at-card__text"><strong>Dica ${i + 1} de ${TIPS.length}</strong><span>${tip.text}</span></p>
-      <div class="at-card__acts">
-        <button type="button" class="btn btn--soft btn--sm" data-at-next>${last ? 'Entendi' : 'Próxima'}</button>
-        ${last ? '' : html`<button type="button" class="at-card__quiet" data-at-skip>Pular</button>`}
-      </div>
-    `);
-    host.say(`Dica ${i + 1} de ${TIPS.length}: ${tip.text}`);
+  function closeTip(why = 'close') {
+    tips?.note.close(why);
   }
-  function closeTips() {
-    if (!tips) return;
-    tips.el.remove();
-    tips = null;
-    unspot();
-    delete host.layer.dataset.busy;
+  function endTips() {
     prefs.set('atelierTipsSeen', true);
     prefs.set('customizerHintSeen', true);
+  }
+  /** Fecha a dica em cartaz e não mostra mais nenhuma nesta visita (voltam na próxima, se ainda não foram vistas). */
+  function closeTips() {
+    const was = tips;
+    tips = null;
+    tipsAt = TIPS.length + 1;
+    was?.note.close('stop');
+    unspot();
   }
 
   /* ───────── modo ───────── */
@@ -381,25 +408,20 @@ export function mountAtelier(host) {
     const ok = await loadSound();
     if (!alive || !atelie()) return;
     if (ok && !prefs.get('atelierSoundAsked') && audio.supported && !audio.settings.mute.master) {
-      showInvite(); // a Bô e as dicas vêm depois da resposta
+      // o bolo primeiro: o convite só entra depois de alguns segundos (a Bô e as dicas vêm depois da resposta)
+      later(showInvite, INVITE_AFTER);
       return;
     }
     if (ok) soundOn();
     startBo();
-    later(maybeTips, 7000);
+    later(maybeTips, TIP_AFTER);
   }
   function leaveAtelie() {
     closeInvite();
-    if (tips) {
-      // quem foi para o modo rápido não precisa mais das dicas agora (elas voltam na próxima visita ao ateliê)
-      tips.el.remove();
-      tips = null;
-      unspot();
-      delete host.layer.dataset.busy;
-    }
+    closeTips(); // quem foi para o modo rápido não precisa das dicas agora (elas voltam na próxima visita ao ateliê)
     revealing?.close();
     soundOff();
-    bo?.setEnabled(false);
+    boOn(false);
     syncScene();
     hands.sync();
   }
@@ -414,10 +436,8 @@ export function mountAtelier(host) {
   offs.push(() => hands.destroy());
   offs.push(
     bus.on('change', (detail) => {
-      if ((detail?.by || 'user') === 'user') {
-        dismissInvite(); // a pessoa já está montando: o convite sai do caminho
-        closeTips(); // r5-qa: e as dicas também — o cartão delas fica sobre a faixa de etapas e segurava o toque em "Massa"
-      }
+      // a pessoa já está montando: o convite sai do caminho (as dicas ficam: moram na faixa do palco e não cobrem nada)
+      if ((detail?.by || 'user') === 'user') dismissInvite();
       hands.changed(detail);
       // velas que entram ou saem do bolo mudam o que o palco oferece (acender, soprar)
       if (/^(decor\.|candles\.)/.test(String(detail?.key || ''))) later(() => hands.sync(), 500);
@@ -433,7 +453,7 @@ export function mountAtelier(host) {
     try {
       const m = await import('./reveal.js');
       if (!alive || revealing) return;
-      bo?.setEnabled(false); // a revelação é do bolo: a Bô espera calada e volta no fim
+      boOn(false); // a revelação é do bolo: a Bô espera calada e volta no fim
       revealing = m.startReveal(host, {
         scene: live,
         later,
@@ -442,7 +462,7 @@ export function mountAtelier(host) {
           revealing = null;
           if (alive && atelie()) {
             call(scene()?.setScene?.bind(scene()), sceneFor());
-            bo?.setEnabled(true);
+            boOn(true);
           }
         },
       });
@@ -471,7 +491,7 @@ export function mountAtelier(host) {
     .catch(() => {});
 
   /* ───────── jogo (js/atelier/game): encomendas e figurinhas, por cima do painel de opções ─────────
-     O botão de abrir é o da coluna do ateliê (launcher: false): o do jogo cairia no mesmo canto do som e do modo. */
+     Quem abre é a linha "Encomendas e figurinhas" da folha "Ateliê" (launcher: false): o palco fica só com o bolo. */
   const boForGame = {
     // sem a Bô (ou com ela desligada), o jogo mostra as falas como texto na própria cena da entrega
     get say() {
@@ -479,6 +499,25 @@ export function mountAtelier(host) {
     },
   };
   const syncOrder = () => host.gameOn(Boolean(game && call(game.current?.bind(game))));
+  /* Novidade no jogo: figurinha nova ainda não vista no álbum, ou a encomenda do dia que a pessoa ainda não viu
+     hoje (basta abrir o jogo uma vez no dia). Vira um ponto discreto no botão do jogo — nada além disso. */
+  const dayKey = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  function syncGameNews() {
+    if (!game || !alive) return;
+    let news = false;
+    try {
+      const s = game.state() || {};
+      news = (s.fresh || []).length > 0 || (prefs.get('atelierGameSeenDay') !== dayKey() && s.daily?.last !== dayKey());
+    } catch {
+      // sem estado legível: sem ponto
+    }
+    host.cz.classList.toggle('has-game-news', news);
+    const btn = host.cz.querySelector('.cz-tools [data-act="game"]');
+    if (btn) btn.setAttribute('aria-label', news ? 'Encomendas e figurinhas. Tem novidade.' : 'Encomendas e figurinhas');
+  }
   function startGame() {
     gameModule ||= import('../game/index.js').catch((err) => {
       console.warn('[atelie] jogo indisponível:', err?.message || err);
@@ -505,11 +544,24 @@ export function mountAtelier(host) {
       offs.push(() => call(game?.destroy?.bind(game)));
       // a comanda de uma encomenda em curso mora no alto do palco: o bolo dá lugar a ela
       ['game.start', 'game.end', 'game.score'].forEach((type) => offs.push(bus.on(type, () => later(syncOrder, 0))));
+      ['game.start', 'game.end', 'game.sticker'].forEach((type) => offs.push(bus.on(type, () => later(syncGameNews, 60))));
       syncOrder();
+      // a aba do jogo abriu: a pessoa viu as novidades de hoje; ao fechar, confere de novo (o álbum zera as figurinhas novas)
+      const tab = host.cz.querySelector('.ag-panel');
+      if (tab && typeof MutationObserver === 'function') {
+        const watch = new MutationObserver(() => {
+          if (tab.classList.contains('is-open')) prefs.set('atelierGameSeenDay', dayKey());
+          later(syncGameNews, 60);
+        });
+        watch.observe(tab, { attributes: true, attributeFilter: ['class'] });
+        offs.push(() => watch.disconnect());
+      }
+      syncGameNews();
       // o jogo ouve 'mode' para saber se está no modo rápido (a tela só emite quando o modo muda)
       if (!atelie()) bus.emit('mode', { mode: host.mode() });
-      const btn = host.hud.querySelector('[data-at-game]');
-      if (btn) btn.hidden = false;
+      // o botão do jogo na coluna do palco e a linha dele na folha "Ateliê"
+      host.cz.querySelectorAll('[data-at-game]').forEach((btn) => (btn.hidden = false));
+      host.cz.classList.add('has-game');
     });
   }
   later(startGame, 900);
@@ -536,15 +588,15 @@ export function mountAtelier(host) {
     reveal,
     video,
     game: () => {
-      // r5-qa: abrir o jogo tira da frente o cartão das dicas e o convite (ficavam por cima da aba "Jogar")
-      closeTips();
+      closeTip('done'); // a dica em cartaz já foi cumprida (a próxima espera o jogo fechar)
       dismissInvite();
       return call(game?.open?.bind(game));
     },
+    /** A folha "Ateliê" vai abrir: a aba do jogo sai da frente (as duas cobrem o mesmo painel). */
+    closeGame: () => Boolean(game && call(game.isOpen?.bind(game))) && call(game.close?.bind(game)),
     /** A etapa mudou. */
     step() {
       dismissInvite();
-      if (tips) closeTips();
       if (atelie() && !revealing) call(scene()?.setScene?.bind(scene()), sceneFor());
       hands.sync();
     },
@@ -554,7 +606,8 @@ export function mountAtelier(host) {
     },
     /** A pessoa mexeu no bolo (girou): a primeira dica já foi cumprida. */
     interact() {
-      if (tips && tips.at === 0) showTip(1);
+      spun = true;
+      if (tips && TIPS[tips.at]?.id === 'girar') closeTip('done'); // cumprida (mesmo que ainda esperando a vez)
       const now = performance.now();
       if (now - spunAt < 1500) return;
       spunAt = now;
@@ -565,13 +618,13 @@ export function mountAtelier(host) {
       if (revealing) return revealing.close(), true;
       // r5-qa: a aba do jogo (encomendas, comanda, entrega, álbum) também é uma camada: "voltar" fecha a aba
       if (game && call(game.isOpen?.bind(game))) return call(game.close?.bind(game)), true;
-      if (tips) return closeTips(), true;
-      if (invite) return dismissInvite(), true; // sem resposta: pergunta de novo na próxima visita
+      if (tips?.note.shown) return closeTip('dismiss'), true;
+      if (invite?.shown) return dismissInvite(), true; // sem resposta: pergunta de novo na próxima visita
       if (hands.back()) return true;
       return false;
     },
     /** Para testes e para o roteiro de sessão. */
-    debug: () => ({ mode: host.mode(), sound: Boolean(offSound), pending: soundPending, audio: audio ? audio.debug() : null, bo: Boolean(bo), boOn: Boolean(bo?.enabled), invite: Boolean(invite), tips: tips ? tips.at : null, scene: sceneOk, game: Boolean(game), order: Boolean(game && call(game.current?.bind(game))) }),
+    debug: () => ({ mode: host.mode(), sound: Boolean(offSound), pending: soundPending, audio: audio ? audio.debug() : null, bo: Boolean(bo), boOn: Boolean(bo?.enabled), invite: Boolean(invite), tips: tips?.note.shown ? tips.at : null, scene: sceneOk, game: Boolean(game), order: Boolean(game && call(game.current?.bind(game))) }),
     get audio() {
       return audio;
     },
@@ -588,11 +641,8 @@ export function mountAtelier(host) {
       timers.clear();
       revealing?.close();
       closeInvite();
-      if (tips) {
-        tips.el.remove();
-        tips = null;
-        unspot();
-      }
+      closeTips();
+      host.cz.classList.remove('has-bo', 'has-game', 'has-game-news', 'wants-sound');
       offs.forEach((off) => {
         try {
           off();

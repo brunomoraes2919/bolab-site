@@ -6,6 +6,12 @@
 // Fluidez no celular: o toque só registra a escolha; no quadro seguinte o painel é atualizado no lugar
 // (só o que mudou — ver morph) e, no outro, o bolo. Nada pesado roda dentro do toque.
 //
+// Composição da tela (r6-tela2; a régua está em css/customizer.css, "Palco: a grade" e "Painel: o ritmo"):
+//   palco    cabeçalho (voltar · título · desfazer, refazer, recomeçar) · UMA coluna de ferramentas no canto de cima
+//            à direita (ver por dentro · revelar · velas · "…") · faixa de baixo (a Bô e, ao lado, um aviso por vez)
+//   folha    "Ateliê" (botão "…"): jogo, som, modo rápido, vistas, giro, medidas, fundo e cenário — por cima do painel
+//   painel   fichas de etapa · opções · barra de total
+//
 // Entradas pelo endereço:  ?bolo=<id salvo>  ·  ?base=<id do produto>  ·  ?linha=<id da linha do carrinho>
 // (esta última abre o bolo que já está no carrinho para editar; o botão final vira "Salvar alterações")
 // ·  ?c=<texto>  abre exatamente o bolo descrito no texto (js/customizer/share.js): o link que o cliente
@@ -16,6 +22,7 @@
 // do ateliê (js/atelier/bus.js), no quadro seguinte ao toque.
 import { html, raw, icon, money, dateLong, on, toast, openDialog, confirmDialog, debounce, confetti } from '../ui.js';
 import { bus } from '../atelier/bus.js';
+import { createNotices, NOTE_ICON } from '../atelier/ui/notices.js';
 import { diffConfig } from '../atelier/diff.js';
 import { copyText } from '../ui.js';
 import { rulesForStep, rulesOf, enforceRules, applyFix } from '../customizer/rules.js';
@@ -254,11 +261,9 @@ const decorSwatches = (hexes) => hexes.map((hex) => ({ hex, name: tintName(hex) 
 const ICON = {
   ruler: ico(`<path d="M3 17 17 3l4 4L7 21Z"/><path d="m7.500 12.500 2 2M10.500 9.500l2 2M13.500 6.500l2 2"/>`),
   redo: ico(`<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.300L21 13"/>`),
-  backdrop: ico(`<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/>`),
   chef: ico(`<path d="M6 13.900A4 4 0 0 1 7.400 6.100a5 5 0 0 1 9.200 0A4 4 0 0 1 18 13.900V19a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1Z"/><path d="M6 17h12"/>`),
   slice: ico(`<circle cx="9" cy="7" r="2"/><path d="M7.200 7.900 3 11v9c0 .6.4 1 1 1h16c.6 0 1-.4 1-1v-9c0-2-3-6-7-8l-3.600 2.600"/><path d="M16 13H3"/><path d="M16 17H3"/>`),
   spin: ico(`<path d="M16.500 7.500C15.600 4.200 14 2 12 2 9.200 2 7 6.500 7 12s2.200 10 5 10c.3 0 .7-.1 1-.2"/><path d="m15.200 13.700 3.800 1.900-1.900 3.800"/><path d="M19 15.600c-1.800.9-4.300 1.400-7 1.400-5.500 0-10-2.200-10-5s4.500-5 10-5c4.800 0 8.900 1.700 9.800 4"/>`),
-  swipe: ico(`<polyline points="18 8 22 12 18 16"/><polyline points="6 8 2 12 6 16"/><line x1="2" x2="22" y1="12" y2="12"/>`),
   // r5-tela: modo rápido, modo ateliê, tirar uma peça, vídeo e encomendas (jogo)
   bolt: ico(`<path d="M13 2 4.500 13.500H11l-1 8.500 8.500-11.500H12Z" ${SOFT}/>`),
   atelier: ico(`<path d="m12 3 1.900 5.100L19 10l-5.100 1.900L12 17l-1.900-5.100L5 10l5.100-1.900Z" ${SOFT}/><path d="M19 15v4M17 17h4M5 3v3M3.500 4.500h3"/>`),
@@ -267,6 +272,11 @@ const ICON = {
   card: ico(`<rect x="4" y="3" width="16" height="18" rx="3" ${SOFT}/><circle cx="12" cy="10" r="3"/><path d="M8 17h8"/>`),
   finger: ico(`<path d="M9 11V5.500a1.500 1.500 0 0 1 3 0V11"/><path d="M12 10.500V9a1.500 1.500 0 0 1 3 0v2"/><path d="M15 11v-.5a1.500 1.500 0 0 1 3 0V15a6 6 0 0 1-6 6h-1.200a5 5 0 0 1-4-2L4 15.500a1.500 1.500 0 0 1 2.400-1.800L9 16" ${SOFT}/>`),
   ticket: ico(`<path d="M4 8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4Z" ${SOFT}/><path d="M14 6v12" stroke-dasharray="2 2.500"/>`),
+  // r6-tela: a folha "Ateliê" (o que é secundário no palco mora nela) e o som
+  more: ico(`<circle cx="5" cy="12" r="1.300" fill="currentColor"/><circle cx="12" cy="12" r="1.300" fill="currentColor"/><circle cx="19" cy="12" r="1.300" fill="currentColor"/>`),
+  // o jogo (encomendas e figurinhas): um controle de videogame, no traço dos outros ícones (desenho no estilo Lucide, ISC)
+  game: ico(`<path d="M17.300 5H6.700a4 4 0 0 0-4 3.600C2.600 9.400 2 14.500 2 16a3 3 0 0 0 3 3c1 0 1.500-.5 2-1l1.400-1.400A2 2 0 0 1 9.800 16h4.400a2 2 0 0 1 1.400.6L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.500-.6-6.600-.7-7.400A4 4 0 0 0 17.300 5Z" ${SOFT}/><path d="M6 11h4M8 9v4M15 12h.01M18 10h.01"/>`),
+  note: ico(`<path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3" ${SOFT}/><circle cx="17" cy="16" r="3" ${SOFT}/>`),
 };
 
 /* ───────── Cor livre (matiz, saturação e brilho ↔ código da cor) ───────── */
@@ -490,8 +500,8 @@ function tipBox(stepId, c, open) {
 /** Título da etapa: só no computador (no celular, o chip escuro da etapa já diz onde a pessoa está). */
 function stepHead(i) {
   const s = STEPS[i];
+  // (sem "Etapa 1 de 7" por cima do título: as fichas de etapa, logo acima, já dizem onde a pessoa está)
   return html`<header class="cz-head">
-    <span class="cz-kicker">Etapa ${i + 1} de ${STEPS.length}</span>
     <h2>${s.title}</h2>
     <p>${s.sub}</p>
   </header>`;
@@ -1599,16 +1609,6 @@ export default {
             </button>
           </header>
 
-          <div class="at-hud" data-at-hud>
-            <span class="at-hud__sound" data-at-sound></span>
-            <button type="button" class="at-mode" data-act="mode" data-at-mode>
-              <span class="at-mode__icon" data-at-mode-icon>${ICON.bolt}</span><span class="at-mode__text"><span class="at-mode__pre">Modo </span><span data-at-mode-text>rápido</span></span>
-            </button>
-            <button type="button" class="at-mode at-mode--game" data-act="game" data-at-game hidden>
-              <span class="at-mode__icon">${ICON.ticket}</span><span class="at-mode__text"><span class="at-mode__pre">Encomendas</span><span class="at-mode__short">jogo</span></span>
-            </button>
-          </div>
-
           <canvas class="cz-canvas" data-cz-canvas tabindex="0" role="img" aria-label="Visualização 3D do seu bolo. Arraste para girar; use as setas do teclado para girar e os botões ao lado para ver por dentro."></canvas>
           <div class="at-fx" data-at-fx></div>
           <div class="cz-loading" data-cz-loading><img src="assets/logo-mark.webp" alt="" width="44" height="68" /><span data-cz-loadtext>Preparando o seu bolo…</span></div>
@@ -1619,26 +1619,75 @@ export default {
           <div class="cz-lost" data-cz-lost hidden><span>Recarregando a visualização…</span></div>
 
           <div class="cz-measure" data-cz-measure hidden></div>
-          <div class="cz-flash" data-cz-flash aria-hidden="true"></div>
-          <div class="cz-hint" data-cz-hint>${ICON.swipe} Arraste para girar</div>
           <div class="cz-meta" data-cz-meta></div>
-          <div class="cz-bgbar" id="cz-bgbar" data-cz-bgbar role="radiogroup" aria-label="Fundo do palco" hidden></div>
-          <div class="cz-bgbar cz-viewbar" id="cz-viewbar" data-cz-viewbar role="group" aria-label="Vistas e medidas" hidden></div>
           <div class="cz-tools" data-cz-tools>
-            <button type="button" class="cz-tool cz-tool--bg" data-act="bgmenu" aria-expanded="false" aria-controls="cz-bgbar" aria-label="Fundo do palco" title="Fundo do palco">${ICON.backdrop}<span>Fundo</span></button>
-            <button type="button" class="cz-tool cz-tool--label cz-tool--reveal" data-act="reveal" aria-pressed="false" aria-label="Revelar a cor" title="Revelar a cor" hidden>${icon('gift')}<span>Revelar</span></button>
-            <button type="button" class="cz-tool cz-tool--label" data-act="cutaway" aria-pressed="false" aria-label="Ver por dentro" title="Ver por dentro">${ICON.slice}<span>Ver por dentro</span></button>
-            <button type="button" class="cz-tool cz-tool--icon" data-act="rotate" aria-pressed="false" aria-label="Giro automático" title="Giro automático">${ICON.spin}</button>
-            <button type="button" class="cz-tool cz-tool--view" data-act="viewmenu" aria-expanded="false" aria-controls="cz-viewbar" aria-label="Vistas e medidas" title="Vistas e medidas">${icon('eye')}</button>
+            <button type="button" class="cz-tool" data-act="cutaway" aria-pressed="false" aria-label="Ver por dentro" title="Ver por dentro">${ICON.slice}<span class="sr-only">Ver por dentro</span></button>
+            <button type="button" class="cz-tool cz-tool--reveal" data-act="reveal" aria-pressed="false" aria-label="Revelar a cor" title="Revelar a cor" hidden>${icon('gift')}<span class="sr-only">Revelar</span></button>
+            <span class="cz-tools__slot" data-st-tool></span>
+            <button type="button" class="cz-tool cz-tool--game" data-act="game" data-at-game aria-label="Encomendas e figurinhas" title="Encomendas e figurinhas" hidden>${ICON.game}</button>
+            <button type="button" class="cz-tool cz-tool--more" data-act="stagemenu" aria-expanded="false" aria-controls="st-sheet" aria-label="Ateliê: som, jogo, vistas e fundo" title="Ateliê: som, jogo, vistas e fundo">${ICON.more}</button>
           </div>
+          <div class="st-lane" data-st-lane></div>
         </section>
 
-        <div class="at-layer" data-at-layer><i class="at-keepout" data-bo-avoid aria-hidden="true"></i></div>
+        <div class="at-layer" data-at-layer></div>
 
         <section class="cz-panel" aria-label="Opções do bolo">
           <nav class="cz-steps" data-cz-steps aria-label="Etapas"></nav>
           <div class="cz-body" data-cz-body tabindex="-1"></div>
           <footer class="cz-foot" data-cz-foot></footer>
+          <section class="st-sheet" id="st-sheet" data-st-sheet aria-label="Ateliê: som, jogo, vistas e fundo" tabindex="-1" hidden>
+            <header class="st-sheet__head">
+              <h2>Ateliê</h2>
+              <button type="button" class="st-sheet__x" data-act="stagemenu-close" aria-label="Fechar">${icon('x')}</button>
+            </header>
+            <div class="st-sheet__body">
+              <div class="st-group" data-at-hud>
+                <button type="button" class="st-row st-row--game" data-act="game" data-at-game hidden>
+                  <span class="st-row__icon">${ICON.game}</span>
+                  <span class="st-row__text"><strong>Encomendas e figurinhas</strong><small>Brinque de confeiteiro: clientes pedem, você monta</small></span>
+                  <span class="st-row__trail">${icon('chevron-right')}</span>
+                </button>
+                <button type="button" class="st-row st-row--switch" role="switch" aria-checked="false" data-act="reveal" data-st-row="reveal" hidden>
+                  <span class="st-row__icon">${icon('gift')}</span>
+                  <span class="st-row__text"><strong>Revelar a cor</strong><small>Mostra no corte a cor do chá revelação</small></span>
+                  <span class="st-row__trail"><i class="st-switch" aria-hidden="true"></i></span>
+                </button>
+                <div class="st-row" data-st-row="tool" hidden>
+                  <span class="st-row__icon">${DECOR_ART.velas}</span>
+                  <span class="st-row__text"><strong>Velas</strong><small>Acenda e segure o botão para soprar</small></span>
+                  <span class="st-row__trail" data-st-tool-home></span>
+                </div>
+                <div class="st-row st-row--sound" data-st-sound>
+                  <span class="st-row__icon">${ICON.note}</span>
+                  <span class="st-row__text"><strong>Som do ateliê</strong><small>Música, efeitos e a voz da Bô</small></span>
+                  <span class="st-row__trail" data-at-sound></span>
+                </div>
+                <button type="button" class="st-row st-row--switch" role="switch" aria-checked="false" data-act="mode" data-at-mode>
+                  <span class="st-row__icon">${ICON.bolt}</span>
+                  <span class="st-row__text"><strong>Modo rápido</strong><small>Sem som, animações e a Bô: só o que é preciso para pedir</small></span>
+                  <span class="st-row__trail"><i class="st-switch" aria-hidden="true"></i></span>
+                </button>
+              </div>
+              <div class="st-group" data-st-views>
+                <h3 class="st-group__title">Como ver o bolo</h3>
+                <div class="cz-viewbar" id="cz-viewbar" data-cz-viewbar role="group" aria-label="Vistas"></div>
+                <button type="button" class="st-row st-row--switch" role="switch" aria-checked="false" data-act="rotate">
+                  <span class="st-row__icon">${ICON.spin}</span>
+                  <span class="st-row__text"><strong>Giro automático</strong><small>O bolo roda devagar enquanto você escolhe</small></span>
+                  <span class="st-row__trail"><i class="st-switch" aria-hidden="true"></i></span>
+                </button>
+                <button type="button" class="st-row st-row--switch" role="switch" aria-checked="false" data-act="measure">
+                  <span class="st-row__icon">${ICON.ruler}</span>
+                  <span class="st-row__text"><strong>Medidas</strong><small>Largura e altura em centímetros, sobre o bolo</small></span>
+                  <span class="st-row__trail"><i class="st-switch" aria-hidden="true"></i></span>
+                </button>
+              </div>
+              <div class="st-group">
+                <div class="cz-bgbar" id="cz-bgbar" data-cz-bgbar></div>
+              </div>
+            </div>
+          </section>
         </section>
         <div class="sr-only" aria-live="polite" data-cz-live></div>
       </div>
@@ -1655,11 +1704,12 @@ export default {
       foot: $('[data-cz-foot]'),
       meta: $('[data-cz-meta]'),
       name: $('[data-cz-name]'),
-      hint: $('[data-cz-hint]'),
       tools: $('[data-cz-tools]'),
+      toolSlot: $('[data-st-tool]'),
+      lane: $('[data-st-lane]'),
+      sheet: $('[data-st-sheet]'),
       measure: $('[data-cz-measure]'),
       viewbar: $('[data-cz-viewbar]'),
-      flash: $('[data-cz-flash]'),
       bg: $('[data-cz-bg]'),
       bgbar: $('[data-cz-bgbar]'),
       fallback: $('[data-cz-fallback]'),
@@ -1704,6 +1754,8 @@ export default {
       tellShown();
     }
     el.cz.dataset.mode = mode;
+    // r6-tela: os avisos do palco (recado, pergunta, dica, controle de gesto) passam todos por aqui, um por vez
+    const notes = createNotices({ lane: el.lane, cz: el.cz });
 
     /* ── estado ── */
     let config = defaultConfig();
@@ -1937,19 +1989,23 @@ export default {
     /* ── 3D ── */
     /** Espaço que os botões flutuantes ocupam no palco e quanto do resto o bolo pode preencher. */
     const stageInsets = () => {
-      if (desktop.matches) return { top: 4, bottom: 84, fill: 0.78 };
-      if (mode !== 'atelie') return { top: 14, bottom: 58, fill: 0.9 };
+      // r6-tela: a grade do palco (css/customizer.css: --st-…). Em cima fica a barra do título; embaixo, a faixa da Bô
+      // e dos avisos (--st-lane); a única coluna de ferramentas mora no canto de cima, à direita.
+      // A tela 3D passa por baixo do cabeçalho (o cenário não é cortado): a altura dele entra na margem de cima.
+      const hdr = Math.max(0, (el.stage.querySelector('.cz-top')?.offsetHeight || 56) - 8);
+      if (desktop.matches) return { top: 4 + hdr, bottom: 96, fill: 0.8 };
       // na revelação os botões e a Bô saem de cena: o bolo toma o palco
-      if (el.cz.classList.contains('is-revealing')) return { top: 12, bottom: 36, fill: 0.88 };
-      // Celular, modo Ateliê: a faixa de baixo do palco é da Bô e do balão dela, e as laterais são das colunas
-      // de botões — o bolo nunca fica atrás de nada. O motor tem um "fill" só (altura e largura); para limitar a
-      // largura sem encolher o bolo na altura, a margem de cima/baixo é recalculada (pode ficar negativa).
+      if (el.cz.classList.contains('is-revealing')) return { top: 12 + hdr, bottom: 36, fill: 0.88 };
+      // Celular: a faixa de baixo é da Bô, do balão e dos avisos — o bolo nunca fica atrás de nada. O motor tem um
+      // "fill" só (altura e largura); para limitar a largura sem encolher o bolo na altura, a margem de cima/baixo
+      // é recalculada (pode ficar negativa). No modo rápido a faixa é mais baixa (só os avisos, sem a Bô).
       const h = el.canvas.clientHeight || 300;
       const w = el.canvas.clientWidth || 360;
-      const top = (ui.gameOn ? 54 : 8) / h; // com uma encomenda do jogo, a comanda ocupa o alto do palco
-      const bottom = 84 / h;
-      const fx = Math.max(0.5, 1 - 124 / w); // 62 px livres de cada lado
-      const sum = 1 - ((1 - top - bottom) * 0.94) / fx;
+      const lane = mode === 'atelie' ? 78 : 66;
+      const top = ((ui.gameOn ? 56 : 6) + hdr) / h; // com uma encomenda do jogo, a comanda ocupa o alto do palco
+      const bottom = lane / h;
+      const fx = Math.max(0.5, 1 - 128 / w); // a coluna de ferramentas (44 + 12 + 8) de um lado; o mesmo do outro, por simetria
+      const sum = 1 - ((1 - top - bottom) * 0.97) / fx;
       return { top: ((sum - (bottom - top)) / 2) * h, bottom: ((sum + (bottom - top)) / 2) * h, fill: fx };
     };
 
@@ -1979,13 +2035,12 @@ export default {
       stageReady(); // r5-qa: o desenho 2D aparece na hora
       el.canvas.hidden = true;
       el.tools.hidden = true;
-      el.hint.hidden = true;
       el.loading.hidden = true;
       el.fallback.hidden = false;
       measuring = false;
       el.measure.hidden = true;
-      el.viewbar.hidden = true;
-      setBgBar(false);
+      setMenu(false, { focus: false });
+      el.sheet.querySelector('[data-st-views]').hidden = true; // sem 3D não há vistas, giro nem medidas
       syncBackdrop({ instant: true });
       drawCake2D(el.fallback.querySelector('canvas'), shownCake(), { background: false });
     }
@@ -2017,7 +2072,7 @@ export default {
     function setRotating(on, remember) {
       rotating = on && !reduceMotion;
       cake?.setAutoRotate(rotating && !measuring);
-      el.tools.querySelector('[data-act="rotate"]').setAttribute('aria-pressed', String(rotating));
+      el.sheet.querySelector('[data-act="rotate"]').setAttribute('aria-checked', String(rotating));
       if (remember) {
         prefs.set('customizerRotate', rotating);
         tellTool('rotate', rotating);
@@ -2027,7 +2082,6 @@ export default {
     /* ── fundo do palco: automático (pelas cores do bolo) ou escolhido no botão "Fundo" ── */
     let stageBackdrop = null;
     let autoBackdropId = null; // último fundo automático: só troca se outro for claramente melhor
-    let bgOpen = false;
 
     function syncBackdrop({ instant = false } = {}) {
       // sem 3D (desenho 2D) o palco fica sempre no fundo claro
@@ -2036,6 +2090,8 @@ export default {
       if (stageBackdrop?.id === b.id) return;
       stageBackdrop = b;
       el.cz.dataset.tone = b.tone;
+      // a cor do véu do cabeçalho: o tom mais claro do fundo (fundos claros) ou o mais escuro (fundos escuros)
+      el.cz.style.setProperty('--st-wall', b.tone === 'dark' ? b.c[3] : b.c[0]);
       const old = [...el.bg.children];
       const layer = document.createElement('div');
       layer.className = 'cz-bg__layer';
@@ -2050,22 +2106,22 @@ export default {
         later(() => old.forEach((n) => n.remove()), 650);
       }
       cake?.setBackdrop(b, { instant });
-      if (bgOpen) renderBgBar();
+      if (menuOpen) renderBgBar();
     }
 
     function renderBgBar() {
       const cur = getBackdrop(config.backdrop) ? config.backdrop : BACKDROP_AUTO;
       const used = stageBackdrop || getBackdrop('rosa');
       el.bgbar.innerHTML = String(html`
-        <p class="cz-bgbar__name"><span>Fundo</span><strong>${cur === BACKDROP_AUTO ? `Automático · ${used.name}` : used.name}</strong></p>
-        <div class="cz-bgbar__row">
+        <h3 class="st-group__title"><span>Fundo do palco</span><small>${cur === BACKDROP_AUTO ? `Automático · ${used.name}` : used.name}</small></h3>
+        <div class="cz-bgbar__row" role="radiogroup" aria-label="Fundo do palco">
           <button type="button" class="cz-bgsw cz-bgsw--auto ${cur === BACKDROP_AUTO ? 'is-on' : ''}" role="radio" aria-checked="${cur === BACKDROP_AUTO ? 'true' : 'false'}" data-act="backdrop" data-value="${BACKDROP_AUTO}" aria-label="Automático: o fundo acompanha as cores do bolo" title="Automático"><b>A</b></button>
           ${BACKDROPS.map(
             (b) => html`<button type="button" class="cz-bgsw ${cur === b.id ? 'is-on' : ''}" role="radio" aria-checked="${cur === b.id ? 'true' : 'false'}" data-act="backdrop" data-value="${b.id}" aria-label="${b.name}" title="${b.name}" style="--sw:${b.c[1]};--sw2:${b.c[3]}"></button>`,
           )}
         </div>
         ${ui.sceneLive && mode === 'atelie'
-          ? html`<p class="cz-bgbar__name at-scenes__name"><span>Cenário</span><strong>${SCENE_NAMES[sceneChoice()] || SCENE_NAMES.auto}</strong></p>
+          ? html`<h3 class="st-group__title at-scenes__name"><span>Cenário em volta do bolo</span></h3>
               <div class="at-scenes" role="group" aria-label="Cenário em volta do bolo">
                 ${Object.entries(SCENE_NAMES).map(([id, name]) => html`<button type="button" class="cz-chip ${sceneChoice() === id ? 'is-on' : ''}" aria-pressed="${sceneChoice() === id ? 'true' : 'false'}" data-act="scene" data-value="${id}">${name}</button>`)}
               </div>`
@@ -2076,12 +2132,43 @@ export default {
     const SCENE_NAMES = { auto: 'Automático', bancada: 'Bancada', vitrine: 'Vitrine', festa: 'Festa' };
     const sceneChoice = () => (Object.hasOwn(SCENE_NAMES, prefs.get('atelierScene')) ? prefs.get('atelierScene') : 'auto');
 
-    function setBgBar(open) {
-      bgOpen = Boolean(open);
-      el.bgbar.hidden = !bgOpen;
-      el.tools.querySelector('[data-act="bgmenu"]').setAttribute('aria-expanded', String(bgOpen));
-      if (bgOpen && viewOpen) setViewBar(false);
-      if (bgOpen) renderBgBar();
+    /* ── r6-tela: a folha "Ateliê" — tudo o que é secundário no palco (jogo, som, modo, vistas, giro, medidas,
+       fundo e cenário) mora aqui, por cima do painel de opções: o bolo continua inteiro à vista enquanto se ajusta ── */
+    let menuOpen = false;
+    let menuInert = [];
+    function syncMenu() {
+      el.sheet.querySelector('[data-act="measure"]').setAttribute('aria-checked', String(measuring));
+      el.sheet.querySelector('[data-act="rotate"]').setAttribute('aria-checked', String(rotating));
+    }
+    function setMenu(open, { focus = true } = {}) {
+      open = Boolean(open);
+      if (open === menuOpen) return;
+      menuOpen = open;
+      const btn = el.tools.querySelector('[data-act="stagemenu"]');
+      btn.setAttribute('aria-expanded', String(open));
+      el.cz.classList.toggle('has-menu', open);
+      if (open) {
+        if (ui.armed) disarm();
+        renderBgBar();
+        renderViewBar();
+        syncMenu();
+        el.sheet.hidden = false;
+        void el.sheet.offsetWidth;
+        el.sheet.classList.add('is-open');
+        // o que ficou por baixo não recebe foco nem toque
+        menuInert = [el.steps, el.body, el.foot].filter((n) => !n.inert);
+        menuInert.forEach((n) => (n.inert = true));
+        el.sheet.querySelector('.st-sheet__body').scrollTop = 0;
+        if (focus) el.sheet.focus({ preventScroll: true });
+        el.live.textContent = 'Ateliê: som, jogo, vistas e fundo do palco. Esc fecha.';
+      } else {
+        const had = el.sheet.contains(document.activeElement);
+        el.sheet.classList.remove('is-open');
+        menuInert.forEach((n) => (n.inert = false));
+        menuInert = [];
+        later(() => !menuOpen && (el.sheet.hidden = true), reduceMotion ? 0 : 200);
+        if (focus && had) btn.focus({ preventScroll: true });
+      }
     }
 
     /** Miniatura de inspiração cujo arquivo não carregou: desenha na hora com o motor 3D (ou em 2D). */
@@ -2162,10 +2249,7 @@ export default {
         sceneShown.then(() => {
           if (!alive) return;
           // a dica de girar: no modo Ateliê ela faz parte das três dicas da primeira visita (js/atelier/ui/)
-          if (cake && !prefs.get('customizerHintSeen') && mode !== 'atelie') {
-            later(() => el.hint.classList.add('is-on'), 900);
-            later(hideHint, 7000);
-          }
+          if (cake && !prefs.get('customizerHintSeen') && mode !== 'atelie') later(showHint, 1200);
           // com tudo parado, adianta o que a pessoa ainda pode escolher (o primeiro toque em cada opção não engasga)
           later(() => alive && cake?.warmUp(), 900);
         });
@@ -2183,22 +2267,23 @@ export default {
     el.steps.addEventListener('scroll', holdSpin, { passive: true });
     root.querySelector('.cz-panel').addEventListener('pointerdown', holdSpin, { passive: true });
 
+    let hintNote = null;
+    /** "Arraste para girar": uma vez só, na faixa de avisos; some ao primeiro giro. */
+    function showHint() {
+      if (!alive || hintNote || prefs.get('customizerHintSeen')) return;
+      hintNote = notes.push({ kind: 'tip', icon: NOTE_ICON.swipe, text: 'Arraste o bolo para girar', ms: 7000, closable: false, onClose: () => prefs.set('customizerHintSeen', true) });
+    }
     function hideHint() {
-      if (!el.hint.classList.contains('is-on')) return;
-      el.hint.classList.remove('is-on');
-      prefs.set('customizerHintSeen', true);
+      hintNote?.close('done');
+      hintNote = null;
     }
 
     const viewFor = (i) => (['acabamento', 'decoracao'].includes(STEPS[i].id) ? 'top' : 'default');
     let manualView = null; // vista escolhida no botão (de frente, de cima): vale até trocar de etapa
 
-    let flashTimer = 0;
-    /** Aviso curto sobre o palco ("De frente", "De cima"…). */
+    /** Recado curto na faixa de avisos do palco ("Vista: de frente", "Modo rápido"…), também dito ao leitor de tela. */
     function flash(text) {
-      el.flash.textContent = text;
-      el.flash.classList.add('is-on');
-      clearTimeout(flashTimer);
-      flashTimer = later(() => el.flash.classList.remove('is-on'), 1300);
+      notes.flash(text);
       el.live.textContent = text;
     }
 
@@ -2233,7 +2318,6 @@ export default {
       el.measure.innerHTML = markup + String(html`<p class="cz-measure__info">${icon('users')}<span>Rende ${servesText(config)}</span></p>`);
     }
     /* ── vistas rápidas (padrão, de frente, de cima) e medidas: uma barra que abre no botão "Vistas" ── */
-    let viewOpen = false;
     const VIEWS = [
       { id: 'default', name: 'Padrão' },
       { id: 'front', name: 'De frente' },
@@ -2244,20 +2328,8 @@ export default {
       el.viewbar.innerHTML = String(html`
         <div class="cz-viewbar__row">
           ${VIEWS.map((x) => html`<button type="button" class="cz-chip ${cur === x.id ? 'is-on' : ''}" aria-pressed="${cur === x.id ? 'true' : 'false'}" data-act="view" data-value="${x.id}">${x.name}</button>`)}
-          <button type="button" class="cz-chip cz-chip--tool ${measuring ? 'is-on' : ''}" aria-pressed="${measuring ? 'true' : 'false'}" data-act="measure">${ICON.ruler}<span>Medidas</span></button>
         </div>
       `);
-    }
-    function setViewBar(open) {
-      viewOpen = Boolean(open) && Boolean(cake);
-      el.viewbar.hidden = !viewOpen;
-      const btn = el.tools.querySelector('[data-act="viewmenu"]');
-      btn.setAttribute('aria-expanded', String(viewOpen));
-      btn.classList.toggle('is-active', measuring || Boolean(manualView));
-      if (viewOpen) {
-        if (bgOpen) setBgBar(false);
-        renderViewBar();
-      }
     }
 
     function setMeasuring(on) {
@@ -2277,7 +2349,10 @@ export default {
         cake?.setAutoRotate(rotating);
         cake?.setView(viewFor(step));
       }
-      setViewBar(viewOpen);
+      if (menuOpen) {
+        renderViewBar();
+        syncMenu();
+      }
       tellTool('measure', measuring);
     }
     const onResize = () => measuring && later(() => alive && measuring && (placeMeasure(), (measureMarkup = ''), drawMeasure()), 200);
@@ -2430,13 +2505,51 @@ export default {
       const on = Boolean(config.reveal?.on) && Boolean(cake);
       if (!on) ui.revealed = false;
       btn.hidden = !on;
-      el.tools.classList.toggle('has-reveal', on); // no celular, com "Revelar" à vista, "Ver por dentro" fica só com o ícone
+      el.tools.classList.toggle('has-reveal', on);
       btn.setAttribute('aria-pressed', String(ui.revealed));
       const label = ui.revealed ? 'Esconder a cor' : 'Revelar a cor';
       btn.setAttribute('aria-label', label);
       btn.title = label;
       btn.querySelector('span').textContent = ui.revealed ? 'Esconder' : 'Revelar';
+      // a mesma ferramenta como linha da folha "Ateliê" (aparece lá quando não cabe na coluna do palco)
+      toolRow.reveal.setAttribute('aria-checked', String(ui.revealed));
+      fitTools();
     }
+
+    /* ── r6-tela: a coluna de ferramentas é UMA coluna, sempre. Ela leva até cinco botões (ver por dentro, revelar,
+       velas, jogo, "…"). Em palco baixo (celular pequeno) nem todos cabem acima da faixa da Bô: o que sobra vira
+       linha da folha "Ateliê", nesta ordem — velas, revelar, jogo. "Ver por dentro" e "…" ficam sempre. ── */
+    const toolBtn = { reveal: el.tools.querySelector('[data-act="reveal"]'), game: el.tools.querySelector('[data-act="game"]') };
+    const toolRow = { reveal: el.sheet.querySelector('[data-st-row="reveal"]'), tool: el.sheet.querySelector('[data-st-row="tool"]') };
+    const toolHome = el.sheet.querySelector('[data-st-tool-home]');
+    function fitTools() {
+      if (!alive) return;
+      const want = { tool: el.toolSlot.childElementCount > 0, reveal: !toolBtn.reveal.hidden, game: !toolBtn.game.hidden && mode === 'atelie' };
+      const lap = parseFloat(getComputedStyle(el.cz).getPropertyValue('--cz-lap')) || 0;
+      // o mesmo limite do CSS (.cz-tools: max-height): do alto da coluna até 68 px acima da borda do painel
+      const room = el.stage.clientHeight ? Math.max(2, Math.floor((el.stage.clientHeight - el.tools.offsetTop - lap - 68 + 8) / 52)) : 9;
+      let n = 2 + want.tool + want.reveal + want.game;
+      const out = [];
+      for (const k of ['tool', 'reveal', 'game']) {
+        if (n <= room || !want[k]) continue;
+        out.push(k);
+        n -= 1;
+      }
+      const list = out.join(' ');
+      if ((el.cz.dataset.collapsed || '') !== list) el.cz.dataset.collapsed = list;
+      const home = out.includes('tool') ? toolHome : el.tools;
+      if (el.toolSlot.parentNode !== home) {
+        if (home === el.tools) el.tools.insertBefore(el.toolSlot, toolBtn.game);
+        else home.append(el.toolSlot);
+      }
+      toolRow.tool.hidden = !out.includes('tool');
+      toolRow.reveal.hidden = !out.includes('reveal');
+    }
+    const toolsWatch = new MutationObserver(fitTools);
+    toolsWatch.observe(el.tools, { attributes: true, attributeFilter: ['hidden'], subtree: true });
+    toolsWatch.observe(el.toolSlot, { childList: true });
+    const stageWatch = typeof ResizeObserver === 'function' ? new ResizeObserver(fitTools) : null;
+    stageWatch?.observe(el.stage);
 
     function commit({ rerender = true, scene = 'now', merge = '' } = {}) {
       const wantScript = config.decor?.messageMode === 'bico';
@@ -2508,10 +2621,9 @@ export default {
       visited.add(step);
       ui.tipOpen = false;
       ui.renaming = false;
-      if (bgOpen) setBgBar(false);
+      setMenu(false, { focus: false });
       if (measuring) setMeasuring(false);
       manualView = null;
-      setViewBar(false);
       const id = STEPS[step].id;
       el.cz.dataset.step = id;
       renderSteps();
@@ -3122,7 +3234,11 @@ export default {
       reset: () => cake?.resetView(),
       undo: () => travel(hist.past, hist.future, 'Última mudança desfeita'),
       redo: () => travel(hist.future, hist.past, 'Mudança refeita'),
-      viewmenu: () => setViewBar(!viewOpen),
+      stagemenu() {
+        if (!menuOpen) atelier?.closeGame();
+        setMenu(!menuOpen);
+      },
+      'stagemenu-close': () => setMenu(false),
       view(v) {
         if (!cake) return;
         const next = VIEWS.some((x) => x.id === v) ? v : 'default';
@@ -3131,13 +3247,13 @@ export default {
         if (cutaway && next !== 'default') setCutaway(false, true);
         cake.setView(manualView || viewFor(step));
         tellTool('view', next);
-        setViewBar(false); // a barra sai da frente: o bolo é o que interessa
+        if (menuOpen) renderViewBar();
+        el.viewbar.querySelector('.is-on')?.focus({ preventScroll: true });
         flash(next === 'default' ? 'Vista padrão' : `Vista: ${VIEWS.find((x) => x.id === next).name.toLowerCase()}`);
       },
       measure() {
         setMeasuring(!measuring);
-        setViewBar(false);
-        if (!measuring) flash('Medidas escondidas');
+        flash(measuring ? 'Medidas em centímetros' : 'Medidas escondidas');
       },
       struct() {
         const custom = (config.tiers || 1) > 1 || config.height !== 'padrao' || config.base !== 'boleira';
@@ -3265,7 +3381,10 @@ export default {
       mode: () => setMode(mode === 'atelie' ? 'rapido' : 'atelie'),
       'reveal-cake': () => atelier?.reveal(),
       video: () => atelier?.video(),
-      game: () => atelier?.game(),
+      game() {
+        setMenu(false, { focus: false });
+        atelier?.game();
+      },
       'clear-decor'() {
         ui.decorOpen = null;
         config.decor.items = [];
@@ -3294,7 +3413,6 @@ export default {
         input?.focus();
         input?.select();
       },
-      bgmenu: () => setBgBar(!bgOpen),
       scene(v) {
         prefs.set('atelierScene', Object.hasOwn(SCENE_NAMES, v) ? v : 'auto');
         atelier?.scene();
@@ -3342,13 +3460,6 @@ export default {
     // os módulos de peças chegam num momento ocioso, um a um (a abertura não espera por eles)
     warmDecorModules(3500);
 
-    // o painel "Fundo" fecha ao tocar fora dele ou com Esc
-    const onDocDown = (ev) => {
-      if (bgOpen && !ev.target.closest?.('[data-cz-bgbar], [data-act="bgmenu"]')) setBgBar(false);
-      // a barra de vistas fica aberta enquanto a pessoa gira o bolo; fecha ao tocar no painel
-      if (viewOpen && !ev.target.closest?.('[data-cz-viewbar], [data-act="viewmenu"], .cz-stage')) setViewBar(false);
-    };
-    document.addEventListener('pointerdown', onDocDown, true);
     root.addEventListener('keydown', (ev) => {
       // Ctrl+Z desfaz, Ctrl+Shift+Z (ou Ctrl+Y) refaz — fora dos campos de texto
       const k = ev.key.toLowerCase();
@@ -3359,14 +3470,8 @@ export default {
         return;
       }
       if (ev.key !== 'Escape') return;
-      if (atelier?.back()) return; // fecha o que o ateliê tiver aberto (peça na mão, revelação, dicas)
-      if (viewOpen) {
-        setViewBar(false);
-        el.tools.querySelector('[data-act="viewmenu"]').focus();
-      }
-      if (!bgOpen) return;
-      setBgBar(false);
-      el.tools.querySelector('[data-act="bgmenu"]').focus();
+      if (menuOpen) return void setMenu(false); // a folha "Ateliê" fecha e o foco volta ao botão dela
+      atelier?.back(); // fecha o que o ateliê tiver aberto (peça na mão, revelação, dicas)
     });
 
     root.addEventListener('qty', (ev) => {
@@ -3564,11 +3669,8 @@ export default {
     function syncModeUi() {
       const quick = mode === 'rapido';
       el.cz.dataset.mode = mode;
-      const btn = root.querySelector('[data-at-mode]');
-      btn.querySelector('[data-at-mode-text]').textContent = quick ? 'ateliê' : 'rápido';
-      btn.querySelector('[data-at-mode-icon]').innerHTML = String(quick ? ICON.atelier : ICON.bolt);
-      btn.setAttribute('aria-label', quick ? 'Voltar ao modo Ateliê: som, animações e a assistente Bô' : 'Mudar para o modo rápido: sem som, sem animações e sem a assistente');
-      btn.title = quick ? 'Som, animações e a assistente Bô' : 'Só o essencial para pedir';
+      // o interruptor "Modo rápido" da folha "Ateliê"
+      root.querySelector('[data-at-mode]').setAttribute('aria-checked', String(quick));
     }
     function setMode(next, { quiet = false } = {}) {
       const to = next === 'rapido' ? 'rapido' : 'atelie';
@@ -3582,6 +3684,7 @@ export default {
       cake?.setView(manualView || viewFor(step));
       bus.emit('mode', { mode });
       atelier?.setMode(mode);
+      fitTools();
       if (!atelier && mode === 'atelie') loadAtelier();
       if (!quiet) {
         const said = mode === 'rapido' ? 'Modo rápido: sem som, sem animações e sem a Bô. Tudo o que você escolheu continua aqui.' : 'Modo Ateliê: som, animações e a Bô de volta.';
@@ -3623,6 +3726,11 @@ export default {
             hud: el.hud,
             layer: el.layer,
             fx: el.fx,
+            notes,
+            toolSlot: el.toolSlot,
+            menuButton: el.tools.querySelector('[data-act="stagemenu"]'),
+            openMenu: () => setMenu(true),
+            openGame: () => actions.game(),
             bus,
             prefs,
             reduceMotion,
@@ -3683,7 +3791,7 @@ export default {
             sceneLive(on, sideIds = null) {
               ui.sceneLive = Boolean(on);
               if (sideIds) ui.sideIds = sideIds;
-              if (bgOpen) renderBgBar();
+              if (menuOpen) renderBgBar();
               if (STEPS[step]?.id === 'decoracao' && ui.decorHow === 'mao') renderBody({ still: true });
             },
             /** Uma encomenda do jogo está em curso: a comanda fica no alto do palco e o bolo desce um pouco. */
@@ -3713,7 +3821,7 @@ export default {
     }
     // "voltar" do Android: primeiro fecha o que o ateliê tiver aberto; depois, o de sempre (diálogos)
     const prevBack = window.bolabBack;
-    const androidBack = () => Boolean(atelier?.back()) || Boolean(prevBack?.());
+    const androidBack = () => (menuOpen ? (setMenu(false), true) : Boolean(atelier?.back())) || Boolean(prevBack?.());
     window.bolabBack = androidBack;
 
     root.__czLoad = (query) => {
@@ -3755,7 +3863,9 @@ export default {
       storeDraft();
       vv?.removeEventListener('resize', syncKeyboard);
       vv?.removeEventListener('scroll', syncKeyboard);
-      document.removeEventListener('pointerdown', onDocDown, true);
+      notes.destroy();
+      toolsWatch.disconnect();
+      stageWatch?.disconnect();
       window.removeEventListener('resize', onResize);
       overlayWatch.disconnect();
       cancelAnimationFrame(flushRaf);

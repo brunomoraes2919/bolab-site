@@ -626,7 +626,7 @@ const MAC_T = 0.164; // altura total (duas casquinhas + recheio)
 
 /** As duas casquinhas: cúpula lisa e baixa, e na base o "pezinho" — o anel rugoso que estufa no forno. */
 function macaronShellsGeometry(D) {
-  const lowp = D < 1;
+  const lowp = D < 0.75; // r6-luz: no celular de hoje (detalhe 0,8) a casquinha já vem redonda, sem facetas
   const top = lathe(
     lowp
       ? [[0.001, 0.082, 1], [0.085, 0.078, 1], [0.137, 0.058, 0.97], [0.15, 0.037, 0.92], [0.156, 0.028, 0.74, 0.008], [0.146, 0.018, 0.6, 0.004]]
@@ -639,7 +639,7 @@ function macaronShellsGeometry(D) {
 
 /** Recheio: um disco de creme um pouco irregular, que quase chega na borda das casquinhas. */
 function macaronFillingGeometry(D) {
-  const lowp = D < 1;
+  const lowp = D < 0.75;
   return lathe(
     lowp ? [[0.138, 0.02, 0.8], [0.147, 0, 1], [0.138, -0.02, 0.8]] : [[0.136, 0.021, 0.74], [0.146, 0.01, 0.96], [0.148, 0, 1], [0.146, -0.01, 0.96], [0.136, -0.021, 0.74]],
     lowp ? 14 : 24,

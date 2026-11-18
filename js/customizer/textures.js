@@ -38,7 +38,6 @@ export function tileNoise(period, seed) {
   const r = rng(seed);
   const grid = new Float32Array(period * period);
   for (let i = 0; i < grid.length; i++) grid[i] = r();
-  const at = (x, y) => grid[(((y % period) + period) % period) * period + (((x % period) + period) % period)];
   const smooth = (t) => t * t * (3 - 2 * t);
   return (u, v) => {
     const x = u * period;
@@ -47,10 +46,17 @@ export function tileNoise(period, seed) {
     const y0 = Math.floor(y);
     const fx = smooth(x - x0);
     const fy = smooth(y - y0);
-    const a = at(x0, y0);
-    const b = at(x0 + 1, y0);
-    const c = at(x0, y0 + 1);
-    const d = at(x0 + 1, y0 + 1);
+    // (as quatro esquinas da célula, com a volta nas bordas feita uma vez só por eixo)
+    let xa = x0 % period;
+    if (xa < 0) xa += period;
+    let ya = y0 % period;
+    if (ya < 0) ya += period;
+    const xb = xa + 1 === period ? 0 : xa + 1;
+    const yb = ya + 1 === period ? 0 : ya + 1;
+    const a = grid[ya * period + xa];
+    const b = grid[ya * period + xb];
+    const c = grid[yb * period + xa];
+    const d = grid[yb * period + xb];
     return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
   };
 }
@@ -117,32 +123,63 @@ function texture(canvas, { repeat = true, srgb = false, aniso = 4 } = {}) {
 
 /* ───────── Coberturas ───────── */
 
-/** Marcas horizontais de espátula (lateral do buttercream). */
-function streakHeight(size, seed) {
+/**
+ * Lateral do buttercream alisado com a espátula de bancada: quase plano, com o risco fino que a lâmina deixa
+ * em volta do bolo (dezenas de fios de meio a dois milímetros, que somem e voltam), umas poucas ondas largas
+ * e rasas (a mão não é uma máquina) e furinhos de ar espichados no sentido do arrasto. O azulejo cobre 16 cm
+ * de altura. Devolve a função de altura (u, v) → 0…1, com emenda nas bordas.
+ */
+function streakField(size, seed) {
   const n1 = tileNoise(4, seed);
-  const n2 = tileNoise(8, seed + 1);
+  const n2 = tileNoise(9, seed + 1);
+  const n3 = tileNoise(3, seed + 5);
   const r = rng(seed + 2);
-  const bands = Array.from({ length: 46 }, () => ({ y: r(), w: 0.004 + r() * 0.02, a: (r() - 0.5) * 0.5, ph: r() * 6.28, wob: r() * 0.006 }));
-  // cada linha da textura só consulta as faixas que passam perto dela (dezenas de vezes mais rápido)
-  const rows = Array.from({ length: size }, (_, y) => {
-    const v = y / size;
-    return bands.filter((b) => {
-      const d = Math.abs(v - b.y);
-      return Math.min(d, 1 - d) < b.w * 3 + b.wob;
-    });
-  });
-  return paintHeight(size, (u, v) => {
-    let h = 0.5;
-    for (const b of rows[Math.min(size - 1, Math.round(v * size))]) {
-      const yy = b.y + Math.sin(u * 6.2832 + b.ph) * b.wob;
-      let d = Math.abs(v - yy);
-      d = Math.min(d, 1 - d);
-      if (d < b.w * 3) h += b.a * Math.exp(-(d * d) / (b.w * b.w));
+  const px = 1 / size;
+  const bands = [];
+  // ondas largas e rasas
+  for (let i = 0; i < 9; i++) bands.push({ y: r(), w: 0.014 + r() * 0.02, a: (r() - 0.5) * 0.2, ph: r() * 6.28, wob: 0.004 + r() * 0.006, f: 1, k: 2 + Math.floor(r() * 3), o: r() });
+  // fios finos da lâmina: nítidos, de força desigual ao longo da volta
+  for (let i = 0; i < 150; i++) bands.push({ y: r(), w: px * (0.55 + r() * r() * 2.4), a: (r() - 0.5) * (0.07 + r() * 0.18), ph: r() * 6.28, wob: r() * 0.0025, f: 1 + Math.floor(r() * 2), k: 2 + Math.floor(r() * 5), o: r() });
+  // a grade de alturas é somada faixa por faixa (cada faixa só toca as linhas vizinhas dela): é o desenho que
+  // abre junto com o bolo, não pode custar segundos num celular
+  const hgt = new Float32Array(size * size).fill(0.5);
+  for (const bd of bands) {
+    const reach = Math.ceil(bd.w * 3 * size) + 1;
+    const inv = 1 / (bd.w * bd.w);
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const yy = bd.y + Math.sin(u * 6.2832 * bd.f + bd.ph) * bd.wob;
+      const amp = bd.a * (0.45 + 0.55 * n3(u * bd.k + bd.o, bd.o));
+      const y0 = Math.round(yy * size);
+      for (let dy = -reach; dy <= reach; dy++) {
+        const d = (y0 + dy) / size - yy;
+        if (Math.abs(d) >= bd.w * 3) continue;
+        hgt[((((y0 + dy) % size) + size) % size) * size + x] += amp * Math.exp(-d * d * inv);
+      }
     }
-    // o ruído é esticado na horizontal: a espátula arrasta o creme em volta do bolo
-    h += (n1(u, v * 6) - 0.5) * 0.16 + (n2(u, v * 10) - 0.5) * 0.08;
-    return h;
-  });
+  }
+  // furinhos de ar: bolhas estouradas pela lâmina, espichadas na horizontal
+  for (let i = 0; i < 70; i++) {
+    const pt = { x: r(), y: r(), rx: px * (1.5 + r() * 4), ry: px * (0.7 + r() * 0.9), d: 0.1 + r() * 0.16 };
+    const ex = Math.ceil(pt.rx * 2 * size) + 1;
+    const ey = Math.ceil(pt.ry * 2 * size) + 1;
+    const cx = Math.round(pt.x * size);
+    const cy = Math.round(pt.y * size);
+    for (let dy = -ey; dy <= ey; dy++) {
+      for (let dx = -ex; dx <= ex; dx++) {
+        const qx = (cx + dx) / size - pt.x;
+        const qy = (cy + dy) / size - pt.y;
+        const q = (qx * qx) / (pt.rx * pt.rx) + (qy * qy) / (pt.ry * pt.ry);
+        if (q < 4) hgt[((((cy + dy) % size) + size) % size) * size + ((((cx + dx) % size) + size) % size)] -= pt.d * Math.exp(-q * 1.4);
+      }
+    }
+  }
+  // o creme é arrastado em volta do bolo: o ruído é esticado na horizontal
+  for (let y = 0; y < size; y++) {
+    const v = y / size;
+    for (let x = 0; x < size; x++) hgt[y * size + x] += (n1(x / size, v * 7) - 0.5) * 0.07 + (n2(x / size, v * 30) - 0.5) * 0.05;
+  }
+  return (u, v) => hgt[(Math.round(v * size) % size) * size + (Math.round(u * size) % size)];
 }
 
 /** Espiral suave de bailarina (topo de bolos redondos). */
@@ -178,12 +215,18 @@ function softHeight(size, seed, pores = false) {
 
 /* ───────── Massa ───────── */
 
-/** Miolo do bolo: claro, com furinhos de ar. Usado como cor (multiplicada pelo sabor) e relevo. */
+/**
+ * Miolo do bolo no corte: massa aerada e úmida, não uma parede lisa. Furinhos de ar de três tamanhos (muitos
+ * miúdos, bastantes médios e irregulares, uns poucos grandes), cada um escuro no fundo e com a beira de baixo
+ * clara — é o que dá a sensação de profundidade —, sobre um fundo de migalha fina e manchas de umidade.
+ * Usado como cor (multiplicada pelo sabor) e relevo. O azulejo cobre 6,2 cm.
+ */
 export function crumbCanvas(size, seed) {
-  const n1 = tileNoise(6, seed);
-  const n2 = tileNoise(20, seed + 1);
-  const n3 = tileNoise(64, seed + 2);
-  const c = paintHeight(size, (u, v) => 0.86 + (n1(u, v) - 0.5) * 0.12 + (n2(u, v) - 0.5) * 0.1 + (n3(u, v) - 0.5) * 0.1);
+  const n1 = tileNoise(5, seed);
+  const n2 = tileNoise(17, seed + 1);
+  const n3 = tileNoise(61, seed + 2);
+  const n4 = tileNoise(128, seed + 3);
+  const c = paintHeight(size, (u, v) => 0.87 + (n1(u, v) - 0.5) * 0.12 + (n2(u, v) - 0.5) * 0.1 + (n3(u, v) - 0.5) * 0.11 + (n4(u, v) - 0.5) * 0.09);
   const ctx = c.getContext('2d');
   const r = rng(seed + 9);
   const hole = (x, y, rx, ry, rot, a) => {
@@ -191,16 +234,22 @@ export function crumbCanvas(size, seed) {
       for (let oy = -1; oy <= 1; oy++) {
         const px = x + ox * size;
         const py = y + oy * size;
-        if (px < -12 || py < -12 || px > size + 12 || py > size + 12) continue;
+        const reach = Math.max(rx, ry) * 2 + 2;
+        if (px < -reach || py < -reach || px > size + reach || py > size + reach) continue;
         ctx.save();
         ctx.translate(px, py);
         ctx.rotate(rot);
-        // brilho na borda de baixo dá volume ao furinho
-        ctx.fillStyle = `rgba(255,255,255,${a * 0.5})`;
+        // a beira de baixo pega luz: dá volume ao furinho
+        ctx.fillStyle = `rgba(255,255,255,${a * 0.55})`;
         ctx.beginPath();
-        ctx.ellipse(0, ry * 0.45, rx, ry, 0, 0, 6.2832);
+        ctx.ellipse(0, ry * 0.5, rx * 1.05, ry, 0, 0, 6.2832);
         ctx.fill();
-        ctx.fillStyle = `rgba(70,45,30,${a})`;
+        // o fundo escurece para o lado de cima (a parede de cima faz sombra)
+        const g = ctx.createRadialGradient(0, -ry * 0.25, 0, 0, 0, Math.max(rx, ry));
+        g.addColorStop(0, `rgba(52,30,18,${Math.min(1, a * 1.35)})`);
+        g.addColorStop(0.7, `rgba(70,44,28,${a})`);
+        g.addColorStop(1, `rgba(88,58,38,${a * 0.55})`);
+        ctx.fillStyle = g;
         ctx.beginPath();
         ctx.ellipse(0, 0, rx, ry, 0, 0, 6.2832);
         ctx.fill();
@@ -209,9 +258,27 @@ export function crumbCanvas(size, seed) {
     }
   };
   const k = size / 256;
-  for (let i = 0; i < 520; i++) hole(r() * size, r() * size, (0.5 + r() * 1.1) * k, (0.4 + r() * 0.8) * k, r() * 3.14, 0.1 + r() * 0.18);
-  for (let i = 0; i < 90; i++) hole(r() * size, r() * size, (1.4 + r() * 2.4) * k, (0.9 + r() * 1.5) * k, r() * 3.14, 0.14 + r() * 0.2);
-  for (let i = 0; i < 9; i++) hole(r() * size, r() * size, (3 + r() * 3) * k, (1.6 + r() * 2) * k, r() * 3.14, 0.16 + r() * 0.14);
+  for (let i = 0; i < 1100; i++) hole(r() * size, r() * size, (0.45 + r() * 0.9) * k, (0.35 + r() * 0.7) * k, r() * 3.14, 0.16 + r() * 0.22);
+  for (let i = 0; i < 230; i++) {
+    const x = r() * size;
+    const y = r() * size;
+    const rx = (1.3 + r() * 2.2) * k;
+    const ry = (0.8 + r() * 1.4) * k;
+    const rot = (r() - 0.5) * 1.2;
+    const a = 0.26 + r() * 0.26;
+    hole(x, y, rx, ry, rot, a);
+    // furo irregular: um segundo lóbulo encostado
+    if (r() < 0.45) hole(x + (r() - 0.5) * rx * 1.6, y + (r() - 0.5) * ry * 1.6, rx * (0.5 + r() * 0.4), ry * (0.5 + r() * 0.4), rot + r(), a);
+  }
+  for (let i = 0; i < 26; i++) {
+    const x = r() * size;
+    const y = r() * size;
+    const rx = (3 + r() * 3.4) * k;
+    const ry = (1.5 + r() * 2) * k;
+    const rot = (r() - 0.5) * 0.9;
+    hole(x, y, rx, ry, rot, 0.32 + r() * 0.2);
+    hole(x + rx * (0.5 + r() * 0.5), y + (r() - 0.5) * ry, rx * 0.55, ry * 0.7, rot + (r() - 0.5), 0.3 + r() * 0.16);
+  }
   return c;
 }
 
@@ -416,6 +483,29 @@ export function normalFromHeight(size, f, strength = 2, sizeY = size) {
   }
   ctx.putImageData(img, 0, 0);
   return out;
+}
+
+/** Amostra f(u, v) numa grade n × n e devolve uma função que a lê com interpolação (com emenda nas bordas). */
+function resampled(f, n) {
+  const g = new Float32Array(n * n);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) g[y * n + x] = f(x / n, y / n);
+  return (u, v) => {
+    const x = u * n;
+    const y = v * n;
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const fx = x - x0;
+    const fy = y - y0;
+    const xa = ((x0 % n) + n) % n;
+    const ya = ((y0 % n) + n) % n;
+    const xb = (xa + 1) % n;
+    const yb = (ya + 1) % n;
+    const a = g[ya * n + xa];
+    const b = g[ya * n + xb];
+    const c = g[yb * n + xa];
+    const d = g[yb * n + xb];
+    return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+  };
 }
 
 /**
@@ -787,69 +877,102 @@ function marbleCanvas(size) {
     const t = (i + 0.2 + r() * 0.6) / 6;
     const pts = walk(size * (t * 1.5 - 0.45), -size * 0.05, main + (r() - 0.5) * 0.3, 40, 0.75);
     const w = size * (0.006 + r() * 0.006);
-    stroke(pts, w * 7, '150,154,166', 0.05);
-    stroke(pts, w * 3.2, '128,132,146', 0.1);
-    stroke(pts, w, '78,82,96', 0.78);
+    // (várias passadas, da mais larga e rala à mais fina: o veio fica esfumado na pedra, não riscado a caneta)
+    stroke(pts, w * 10, '150,154,166', 0.035);
+    stroke(pts, w * 5, '140,144,158', 0.06);
+    stroke(pts, w * 2.4, '124,128,142', 0.11);
+    stroke(pts, w, '104,108,122', 0.26);
+    stroke(pts, w * 0.4, '84,88,102', 0.34);
     // ramos: saem do veio em ângulo fechado e afinam
     for (let k = 0; k < 5; k++) {
       const from = pts[3 + Math.floor(r() * (pts.length - 6))];
       const side = r() < 0.5 ? 1 : -1;
       const branch = walk(from[0], from[1], main + side * (0.45 + r() * 0.5), 6 + Math.floor(r() * 9), 0.8);
-      stroke(branch, w * 1.8, '140,144,156', 0.08);
-      stroke(branch, w * (0.3 + r() * 0.3), '90,94,108', 0.62);
+      stroke(branch, w * 2.6, '140,144,156', 0.07);
+      stroke(branch, w * (0.3 + r() * 0.3), '104,108,122', 0.34);
     }
   }
   // rede de fiozinhos claros, em todas as direções
   for (let i = 0; i < 16; i++) {
     const pts = walk(r() * size, r() * size, r() * 6.28, 6 + Math.floor(r() * 10), 1.1);
-    stroke(pts, size * (0.0012 + r() * 0.0016), '120,124,138', 0.22 + r() * 0.2);
+    stroke(pts, size * (0.0012 + r() * 0.0016), '128,132,146', 0.12 + r() * 0.12);
   }
   return c;
 }
 
 /* ───────── Decorações ───────── */
 
+/**
+ * Casca do morango (cor e relevo). v = 0 (base da textura) é a ponta; v = 1 é o ombro, junto às folhas.
+ * Vermelho fundo na ponta, mais vivo no corpo, um ombro pálido bem estreito; manchas de maturação; e os
+ * aquênios — as "sementes" — miúdos, cada um no fundo da sua covinha, mais escuros que a casca em volta
+ * (o amarelo-vivo de desenho animado era o que fazia a fruta parecer de plástico).
+ */
 function strawberryCanvases(size) {
   const color = makeCanvas(size);
   const bump = makeCanvas(size);
   const cc = color.getContext('2d');
   const bc = bump.getContext('2d');
-  // v = 0 (base da textura) é a ponta do morango; v = 1 é o ombro, junto às folhas.
   const g = cc.createLinearGradient(0, size, 0, 0);
-  g.addColorStop(0, '#b3121f');
-  g.addColorStop(0.45, '#cf1f2a');
-  g.addColorStop(0.8, '#de3a36');
-  g.addColorStop(0.94, '#ec8a6c');
-  g.addColorStop(1, '#f3d2b0');
+  g.addColorStop(0, '#9c0d18');
+  g.addColorStop(0.3, '#bb141f');
+  g.addColorStop(0.62, '#c81c25');
+  g.addColorStop(0.86, '#d2302c');
+  g.addColorStop(0.955, '#e2694f');
+  g.addColorStop(1, '#efc6a0');
   cc.fillStyle = g;
   cc.fillRect(0, 0, size, size);
-  bc.fillStyle = '#909090';
+  // manchas de maturação: mais claras e mais escuras, largas
+  const n1 = tileNoise(4, 913);
+  const n2 = tileNoise(9, 914);
+  const img = cc.getImageData(0, 0, size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const k = 1 + (n1(x / size, y / size) - 0.5) * 0.2 + (n2(x / size, y / size) - 0.5) * 0.1;
+      const i = (y * size + x) * 4;
+      img.data[i] = Math.min(255, img.data[i] * k);
+      img.data[i + 1] = Math.min(255, img.data[i + 1] * k);
+      img.data[i + 2] = Math.min(255, img.data[i + 2] * k);
+    }
+  }
+  cc.putImageData(img, 0, 0);
+  bc.fillStyle = '#a0a0a0';
   bc.fillRect(0, 0, size, size);
-  const cols = 12;
-  const rows = 9;
+  const r = rng(915);
+  const cols = 13;
+  const rows = 11;
+  const s = size / 256;
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
-      const x = ((i + (j % 2 ? 0.5 : 0)) / cols) * size;
-      const y = ((j + 0.6) / rows) * size * 0.93 + size * 0.05;
-      const s = size / 256;
+      const x = ((i + (j % 2 ? 0.5 : 0) + (r() - 0.5) * 0.3) / cols) * size;
+      const v = (j + 0.55 + (r() - 0.5) * 0.3) / rows;
+      const y = (1 - (0.085 + v * 0.83)) * size; // nada de sementes na ponta nem no ombro (lá a textura se fecha)
+      const tilt = (r() - 0.5) * 0.5;
       for (const ox of [-size, 0, size]) {
-        // covinha escura em volta da semente
-        const rg = bc.createRadialGradient(x + ox, y, 0, x + ox, y, 9 * s);
-        rg.addColorStop(0, 'rgba(20,20,20,0.9)');
-        rg.addColorStop(1, 'rgba(20,20,20,0)');
+        // covinha: a casca afunda em volta da semente (relevo) e escurece um nada (cor)
+        const rg = bc.createRadialGradient(x + ox, y, 0, x + ox, y, 8.5 * s);
+        rg.addColorStop(0, 'rgba(18,18,18,0.92)');
+        rg.addColorStop(0.55, 'rgba(40,40,40,0.5)');
+        rg.addColorStop(1, 'rgba(60,60,60,0)');
         bc.fillStyle = rg;
-        bc.fillRect(x + ox - 10 * s, y - 10 * s, 20 * s, 20 * s);
-        bc.fillStyle = '#d8d8d8';
+        bc.fillRect(x + ox - 9 * s, y - 9 * s, 18 * s, 18 * s);
+        const cg = cc.createRadialGradient(x + ox, y, 0, x + ox, y, 7 * s);
+        cg.addColorStop(0, 'rgba(96,6,14,0.5)');
+        cg.addColorStop(1, 'rgba(96,6,14,0)');
+        cc.fillStyle = cg;
+        cc.fillRect(x + ox - 7 * s, y - 7 * s, 14 * s, 14 * s);
+        // a semente: gota miúda, palha-esverdeada, com um ponto de luz
+        bc.fillStyle = '#c4c4c4';
         bc.beginPath();
-        bc.ellipse(x + ox, y, 2.2 * s, 3.4 * s, 0, 0, 6.2832);
+        bc.ellipse(x + ox, y, 1.5 * s, 2.5 * s, tilt, 0, 6.2832);
         bc.fill();
-        cc.fillStyle = 'rgba(120,10,20,0.35)';
+        cc.fillStyle = r() < 0.3 ? '#c9a24e' : '#d8b765';
         cc.beginPath();
-        cc.ellipse(x + ox, y, 5 * s, 6 * s, 0, 0, 6.2832);
+        cc.ellipse(x + ox, y, 1.35 * s, 2.3 * s, tilt, 0, 6.2832);
         cc.fill();
-        cc.fillStyle = '#f0d27a';
+        cc.fillStyle = 'rgba(255,240,190,0.55)';
         cc.beginPath();
-        cc.ellipse(x + ox, y, 2.1 * s, 3.3 * s, 0, 0, 6.2832);
+        cc.ellipse(x + ox - 0.3 * s, y - 0.6 * s, 0.5 * s, 0.9 * s, tilt, 0, 6.2832);
         cc.fill();
       }
     }
@@ -956,9 +1079,9 @@ export function createTextureKit({ aniso = 4, small = false, size = 0 } = {}) {
     return DRAWN.get(k);
   };
   const kit = {
-    streakNormal: () => get('streak', () => texture(drawn('streak', () => heightToNormal(streakHeight(S, 11), 2.4)), { aniso })),
-    // a espiral do topo é suave: no celular metade do tamanho basta (um quarto do tempo para desenhar)
-    swirlNormal: () => get('swirl', () => texture(drawn('swirl', () => heightToNormal(swirlHeight(S >= 512 ? S : S / 2, 23), 2.2, false)), { repeat: false, aniso })),
+    streakNormal: () => get('streak', () => texture(drawn('streak', () => normalFromHeight(S, streakField(S, 11), 1.5)), { aniso })),
+    // a espiral do topo é suave: metade do tamanho basta (um quarto do tempo para desenhar)
+    swirlNormal: () => get('swirl', () => texture(drawn('swirl', () => heightToNormal(swirlHeight(S / 2, 23), 2.2, false)), { repeat: false, aniso })),
     softNormal: () => get('soft', () => texture(drawn('soft', () => heightToNormal(softHeight(S / 2, 31), 2.2)), { aniso })),
     poreNormal: () => get('pore', () => texture(drawn('pore', () => heightToNormal(softHeight(S, 47, true), 2.6)), { aniso })),
     crumb: () => get('crumb', () => texture(drawn('crumb', () => crumbCanvas(S, 5)), { srgb: true, aniso })),
@@ -983,7 +1106,7 @@ export function createTextureKit({ aniso = 4, small = false, size = 0 } = {}) {
       return get(key, () => texture(drawnRecent(`${key}|${S}`, () => crumbLookCanvas(S, flavor)), { srgb: true, aniso }));
     },
     /** Pedaços à mostra no corte dos recheios (frutas, castanhas, biscoito): atlas 6 × 3, ver looks.js. */
-    pieces: () => get('pieces', () => texture(drawn('pieces', () => piecesCanvas(S >= 512 ? 128 : 96)), { repeat: false, srgb: true, aniso })),
+    pieces: () => get('pieces', () => texture(drawn('pieces', () => piecesCanvas(S >= 512 ? 192 : 96)), { repeat: false, srgb: true, aniso })),
     /** Textura feita fora daqui (looks.js), criada uma vez por cena e liberada junto com as outras. */
     lazy: (key, make) => get(key, make),
     /** Desenho guardado para a sessão inteira (a chave leva o tamanho das texturas). */
@@ -991,7 +1114,8 @@ export function createTextureKit({ aniso = 4, small = false, size = 0 } = {}) {
     size: S,
     aniso,
     combNormal: () => get('comb', () => texture(drawn('comb', () => heightToNormal(combHeight(S), 3.2)), { aniso })),
-    rusticNormal: () => get('rustic', () => texture(drawn('rustic', () => normalFromHeight(S, rusticHeight(57), 1.7)), { aniso })),
+    // (os golpes de espátula são largos: a altura é calculada em metade do tamanho e ampliada — um quarto do tempo)
+    rusticNormal: () => get('rustic', () => texture(drawn('rustic', () => normalFromHeight(S, S >= 512 ? resampled(rusticHeight(57), S / 2) : rusticHeight(57), 1.7)), { aniso })),
     wood: () => get('wood', () => texture(drawn('wood', () => woodCanvas(S)), { repeat: false, srgb: true, aniso })),
     marble: () => get('marble', () => texture(drawn('marble', () => marbleCanvas(S)), { repeat: false, srgb: true, aniso })),
     plank: () => get('plank', () => texture(drawn('plank', () => plankCanvas(S)), { repeat: false, srgb: true, aniso })),

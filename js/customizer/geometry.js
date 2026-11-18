@@ -945,7 +945,8 @@ export function buildDrip(m, seed = 1) {
   // no celular a malha da calda tem ~1/4 dos triângulos; em bolo de 3 andares (cada andar pequeno na tela), menos ainda
   // (r5-junta3d: o GG — 30 cm ou mais no andar de baixo — também é visto de longe)
   const far = (m.stack?.length || 1) >= 3 || (m.base?.R || m.R) > 1.3;
-  const lod = m.detail < 1 ? (far ? 3 : 2.1) : far ? 1.2 : 1;
+  // r6-luz: três degraus — nível leve (0,5), celular de hoje em bolo de andares (0,8) e malha inteira
+  const lod = m.detail < 0.75 ? (far ? 3 : 2.1) : m.detail < 1 ? (far ? 1.9 : 1.4) : far ? 1.2 : 1;
   const ds = 0.0115 * lod;
   const cols = Math.max(96, Math.round(outer.length / ds));
   const col = resamplePath(outer, cols);

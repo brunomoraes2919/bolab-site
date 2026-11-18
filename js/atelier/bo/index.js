@@ -255,7 +255,7 @@ export function createBo({ mount, bus = null, audio = null, getConfig, getStep =
 
   /* ───────── falar ───────── */
   const clipOf = (id) => (id && manifest?.falas?.[id]) || null;
-  const urlOf = (clip) => `${voiceBase}${clip.arquivo}${clip.h ? `?v=${clip.h}` : ''}`;
+  const urlOf = (clip) => `${voiceBase}${clip.arquivo}${clip.p || clip.h ? `?v=${clip.p || clip.h}` : ''}`; // p muda quando a voz ou a pronúncia mudam: o clipe antigo não fica preso no aparelho
   // o balão fica o tempo de ler; com botão de sugestão ou com a nota, fica bem mais (a pessoa pode fechar)
   const holdFor = (d) => (d.stars ? 18000 : d.actions?.length ? 14000 : 2600 + Math.min(5200, (d.text || '').length * 42));
 

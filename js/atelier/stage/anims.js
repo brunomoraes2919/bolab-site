@@ -740,7 +740,7 @@ export function createAnims(S) {
       if (!j.info) j.mesh.visible = false;
     });
     // ferramentas: a espátula espalha o creme no topo; o raspador (em pé, encostado) sobe e alisa a lateral
-    const knifeTop = mode === 'full' ? tool('spatula') : null;
+    const knifeTop = mode === 'full' ? tool('offset') : null; // espátula angular: a mão fica acima do creme
     const sp = tool('scraper');
     sp.visible = false;
     if (knifeTop) knifeTop.visible = false;
@@ -1325,6 +1325,8 @@ export function createAnims(S) {
     if (!flames.length) return null;
     const tl = timeline('candles.light', { ...p, count: flames.length });
     const spark = S.spark();
+    const match = tool('match');
+    match.visible = false;
     const order = flames.map((f, i) => ({ f, i, x: f.flame.position.x })).sort((a, b) => a.x - b.x);
     S.candleState.lit = true;
     return {
@@ -1347,10 +1349,18 @@ export function createAnims(S) {
         spark.position.copy(_p);
         const fl = 0.16 + 0.03 * Math.sin(t * 47);
         spark.scale.set(fl * show, fl * show, 1);
+        // o fósforo: a cabeça na chama, o palito subindo para a mão (à direita de quem olha)
+        match.visible = spark.visible;
+        if (match.visible) {
+          const out = viewDir(64);
+          match.position.set(_p.x, _p.y - 0.028, _p.z);
+          aimY(match, out.x * 0.86, 0.5, out.z * 0.86);
+        }
       },
       finish() {
         flames.forEach((f) => (f.lv = 1));
         spark.visible = false;
+        match.visible = false;
       },
     };
   }
@@ -1743,6 +1753,7 @@ export function createAnims(S) {
           ground: S.sets.visible ? S.sets.benchY : ctx.stand.floorY,
           spread: m.base.bounds.maxR + 0.9,
           seconds: tl.dur,
+          camera: ctx.camera,
         });
       },
       update() {},

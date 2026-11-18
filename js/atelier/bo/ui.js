@@ -2,6 +2,9 @@
 // tudo o que ela diz), a ação sugerida como botão, os atalhos "Pergunte à Bô" ao tocar nela e os controles de
 // repetir, silenciar e de quanto ela fala.
 //
+// Caixa: a mascote ocupa um QUADRADO (52 px no celular, 72 px no computador); logo abaixo vem a etiqueta
+// "assistente" (.bo-tag). A âncora (.bo-anchor) é a soma dos dois; o balão e os atalhos se prendem a ela.
+//
 // Posição: por padrão, o canto de baixo à esquerda do palco, desviando do que já mora ali (botões do palco,
 // etiqueta de fatias e prazo). A pessoa pode ARRASTAR a Bô para outro lugar: ela gruda na lateral mais próxima
 // e a escolha fica guardada. O balão abre para o lado onde há espaço e nunca por cima dos botões do palco.
@@ -73,6 +76,7 @@ export function createUi({ mount, chips = [], modes = ['falante', 'importa', 'mu
       <button type="button" class="bo-avatar" data-bo-avatar aria-expanded="false" aria-label="Bô, assistente da BOLAB. Toque para ver os atalhos; arraste para mudar de lugar.">
         <span class="bo-dot" data-bo-dot></span>
       </button>
+      <span class="bo-tag" aria-hidden="true">assistente</span>
     </div>
     <div class="bo-live" aria-live="polite" aria-atomic="true" data-bo-live></div>
   `);
@@ -92,7 +96,10 @@ export function createUi({ mount, chips = [], modes = ['falante', 'importa', 'mu
   mount.append(root);
 
   let pos = position && typeof position === 'object' ? { ...position } : {}; // { s: { side, fy }, l: { side, fy } }
-  let geo = { x: 8, y: 8, w: 52, h: 68, W: 0, H: 0 };
+  const TAG = 17; // a etiqueta "assistente" abaixo da caixa da mascote (1 px de respiro + 16 px)
+  const TAIL = 14; // altura da ponta do balão (css/atelier-bo.css)
+  const reduceMotion = () => Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+  let geo = { x: 8, y: 8, w: 52, h: 52 + TAG, W: 0, H: 0 };
   let hideTimer = 0;
   let hideLeft = 0;
   let hideStart = 0;
@@ -100,6 +107,8 @@ export function createUi({ mount, chips = [], modes = ['falante', 'importa', 'mu
   let liveTimer = 0;
   let hovering = false;
   let destroyed = false;
+  let visTimer = 0;
+  let leaving = false;
 
   /* ───────── posição esperta ───────── */
   const rectsOf = (selector, m) =>
@@ -117,8 +126,9 @@ export function createUi({ mount, chips = [], modes = ['falante', 'importa', 'mu
     const H = m.height;
     const size = W >= 640 ? 'l' : 's';
     root.dataset.size = size;
-    const w = size === 'l' ? 86 : 52;
-    const h = Math.round((w * 158) / 120);
+    const w = size === 'l' ? 72 : 52; // a caixa da mascote é quadrada
+    const h = w + TAG;
+    const headY = w * 0.6; // o meio do rosto dela, medido do alto da âncora
     const margin = size === 'l' ? 20 : 8;
     const gap = size === 'l' ? 12 : 8;
     const lap = parseFloat(getComputedStyle(mount).getPropertyValue('--cz-lap')) || 0; // o painel sobe sobre o palco no celular
@@ -150,7 +160,7 @@ export function createUi({ mount, chips = [], modes = ['falante', 'importa', 'mu
     const mode = gutter >= 190 ? 'stack' : sideRoom >= 216 ? 'side' : 'stack';
     const vert = y + h / 2 >= H / 2 ? 'b' : 't';
     const room = Math.floor(gutter >= 190 ? clamp(gutter, 200, 300) : mode === 'side' ? Math.min(sideRoom, 330) : Math.min(W - 2 * margin, 330));
-    const panelRoom = gutter >= 190 ? Math.max(room, 268) : room;
+    const panelRoom = gutter >= 190 ? Math.max(room, 288) : room; // duas colunas de fichas pedem um pouco mais
     root.dataset.layout = mode;
     root.dataset.side = side;
     root.dataset.vert = vert;
@@ -163,14 +173,14 @@ export function createUi({ mount, chips = [], modes = ['falante', 'importa', 'mu
       const bx1 = bx0 + room;
       const inBand = obstacles.filter((o) => o.left < bx1 && o.right > bx0 && o.top < y + h + 2 && o.bottom > y - 2);
       // o balão fica na altura do ombro da Bô e sobe (ou desce) para não cobrir os botões do palco
-      const lift = inBand.reduce((v, o) => Math.max(v, y + h - (o.top - 8)), h * 0.3);
-      const drop = inBand.reduce((v, o) => Math.max(v, o.bottom + 8 - y), h * 0.1);
+      const lift = inBand.reduce((v, o) => Math.max(v, y + h - (o.top - 8)), TAG + w * 0.12);
+      const drop = inBand.reduce((v, o) => Math.max(v, o.bottom + 8 - y), w * 0.12);
       root.style.setProperty('--bo-lift', `${Math.round(lift)}px`);
       root.style.setProperty('--bo-drop', `${Math.round(drop)}px`);
       root.style.setProperty('--bo-shift', '0px');
       root.style.setProperty('--bo-shift-panel', '0px');
-      // a ponta do balão fica na altura da cabeça dela (ou no canto, quando o balão teve de subir)
-      root.style.setProperty('--bo-tail', `${Math.round(Math.max(9, (vert === 'b' ? h * 0.62 - lift : h * 0.38 - drop)))}px`);
+      // a ponta do balão fica na altura do rosto dela (ou no canto, quando o balão teve de subir)
+      root.style.setProperty('--bo-tail', `${Math.round(Math.max(11, (vert === 'b' ? h - headY - lift : headY - drop) - TAIL / 2))}px`);
     } else {
       const shiftOf = (r) => Math.round(clamp(side === 'l' ? x : x + w - r, margin, Math.max(margin, W - r - margin)) - x);
       root.style.setProperty('--bo-shift', `${shiftOf(room)}px`);
@@ -257,10 +267,10 @@ export function createUi({ mount, chips = [], modes = ['falante', 'importa', 'mu
     box.style.setProperty('--bo-by', `${Math.round(y - geo.y)}px`);
     if (maxh) box.style.setProperty('--bo-maxh', `${maxh}px`);
     // a ponta continua na cabeça da Bô quando ela está ao alcance do balão; senão some
-    const head = geo.y + geo.h * 0.36 - y;
+    const head = geo.y + geo.w * 0.6 - y; // o meio do rosto dela, medido do alto do balão
     const height = maxh || bh;
-    if (root.dataset.layout === 'side' && head > 10 && head < height - 20) {
-      box.style.setProperty('--bo-tail-y', `${Math.round(head)}px`);
+    if (root.dataset.layout === 'side' && head > 11 + TAIL / 2 && head < height - 11 - TAIL / 2) {
+      box.style.setProperty('--bo-tail-y', `${Math.round(head - TAIL / 2)}px`);
       box.style.setProperty('--bo-tail-o', '1');
     }
   }
@@ -530,15 +540,38 @@ export function createUi({ mount, chips = [], modes = ['falante', 'importa', 'mu
     dot(on) {
       el.dot.classList.toggle('is-on', Boolean(on));
     },
+    /** Mostra ou esconde a Bô. Ela entra com um pulinho e sai encolhendo (sem movimento, troca na hora). */
     setVisible(on) {
-      root.hidden = !on;
-      if (on) layout({ instant: true });
+      clearTimeout(visTimer);
+      if (on) {
+        const was = root.hidden || leaving;
+        leaving = false;
+        root.hidden = false;
+        layout({ instant: true });
+        if (was) avatar.gesture(reduceMotion() ? '' : 'pop');
+        return;
+      }
+      if (root.hidden || leaving) return;
+      hide();
+      closePanel();
+      if (reduceMotion()) {
+        root.hidden = true;
+        return;
+      }
+      leaving = true;
+      avatar.gesture('out');
+      visTimer = setTimeout(() => {
+        leaving = false;
+        root.hidden = true;
+        avatar.gesture('');
+      }, 150);
     },
     destroy() {
       destroyed = true;
       clearTimeout(hideTimer);
       clearTimeout(liveTimer);
       clearTimeout(instantTimer);
+      clearTimeout(visTimer);
       ro?.disconnect();
       io?.disconnect();
       window.removeEventListener('resize', onResize);

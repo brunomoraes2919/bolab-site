@@ -90,6 +90,7 @@ export function blowButton({ label = 'Segure para soprar', onStart, onBlow, redu
 }
 
 export function createHands(host, { scene, atelie, later, hint }) {
+  const notes = host.notes;
   const { bus } = host;
   const fx = host.fx;
   let armed = null; // id da peça na mão
@@ -97,8 +98,8 @@ export function createHands(host, { scene, atelie, later, hint }) {
   let ghostRaf = 0;
   let ghostAt = null;
   let banner = null;
-  let chip = null; // aviso/controle do palco na etapa (calda, velas, espalhar)
-  let chipTimer = 0;
+  let chip = null; // a ferramenta da etapa na coluna do palco (acender / soprar as velas)
+  let blowTold = false; // o recado que explica o botão de soprar já foi dado nesta visita
   let spreading = null;
   let dripHinted = false;
   let candleTries = 0;
@@ -454,19 +455,15 @@ export function createHands(host, { scene, atelie, later, hint }) {
   host.stage.addEventListener('pointerout', onLeave, true);
   host.stage.addEventListener('keydown', onKey, true);
 
+  /* O aviso de "peça na mão" é um controle da faixa de avisos do palco (./notices.js): fica enquanto a peça estiver
+     na mão, com a saída "Pronto". */
   function renderBanner() {
     const d = armed ? getDecor(armed) : null;
     if (!d || step() !== 'decoracao') {
-      banner?.remove();
+      banner?.close();
       banner = null;
       syncLane();
       return;
-    }
-    if (!banner) {
-      banner = document.createElement('div');
-      banner.className = 'at-banner';
-      fx.append(banner);
-      syncLane();
     }
     const room = placed().length >= MAX_PLACED ? 'limite' : roomFor(d.id);
     const text =
@@ -477,7 +474,12 @@ export function createHands(host, { scene, atelie, later, hint }) {
           : room === 'limite'
             ? `Já são ${MAX_PLACED} peças à mão: tire uma para trocar`
             : 'Sem lugar livre: tire uma decoração para abrir espaço';
-    banner.innerHTML = String(html`<span class="at-banner__text">${text}</span><button type="button" class="at-banner__btn" data-act="place-done">Pronto</button>`);
+    if (!banner) {
+      banner = notes.control({ className: 'at-banner', label: 'Peça na mão', text: html`<span class="at-banner__text">${text}</span>`, actions: [{ label: 'Pronto', className: 'at-banner__btn', attr: 'data-act="place-done"' }] });
+      syncLane();
+      return;
+    }
+    banner.set({ text: html`<span class="at-banner__text">${text}</span>` });
   }
   function arm(id) {
     const next = id && getDecor(id)?.unit ? id : null;
@@ -523,20 +525,17 @@ export function createHands(host, { scene, atelie, later, hint }) {
     host.say('Todas as peças colocadas à mão foram tiradas.');
   }
 
-  /** Há um aviso ou controle na faixa de baixo do palco? (no celular, o balão da Bô abre logo abaixo dele) */
+  /** Há um controle de gesto na faixa de baixo do palco? */
   function syncLane() {
-    host.cz.classList.toggle('has-lane', Boolean(banner || chip));
+    host.cz.classList.toggle('has-lane', Boolean(banner || spreading));
   }
 
-  /* ───────── aviso / controle do palco na etapa ───────── */
-  function setChip(node, ms = 0) {
-    clearTimeout(chipTimer);
+  /* ───────── ferramenta da etapa (velas): um botão a mais na coluna de ferramentas do palco ───────── */
+  function setChip(node) {
     chip?.destroy?.();
     chip?.remove();
     chip = node || null;
-    if (chip) fx.append(chip);
-    syncLane();
-    if (chip && ms) chipTimer = later(() => chip === node && setChip(null), ms);
+    if (chip) host.toolSlot.append(chip);
   }
 
   /* ───────── pingar a calda (tocar na borda) ───────── */
@@ -562,7 +561,7 @@ export function createHands(host, { scene, atelie, later, hint }) {
   function candleChip() {
     const cd = scene()?.candles;
     const has = host.config().decor.items.includes('velas');
-    if (!cd || !has || !atelie() || step() !== 'decoracao' || armed) return false;
+    if (!cd || !has || !atelie() || step() !== 'decoracao') return false;
     if (!(cd.count > 0)) {
       // as velas ainda estão chegando ao bolo (as peças são montadas aos poucos): confere de novo daqui a pouco
       if (candleTries++ < 8) later(sync, 600);
@@ -571,7 +570,7 @@ export function createHands(host, { scene, atelie, later, hint }) {
     candleTries = 0;
     if (cd.lit) {
       const btn = blowButton({
-        label: 'Segure para soprar',
+        label: 'Segure para soprar as velas',
         reduceMotion: host.reduceMotion,
         onStart: () => gesture('blow', 'start'),
         onBlow: (k) => {
@@ -585,13 +584,27 @@ export function createHands(host, { scene, atelie, later, hint }) {
             .finally(() => later(sync, 250));
         },
       });
-      btn.classList.add('at-blow--chip');
+      btn.classList.add('at-blow--chip', 'cz-tool');
+      btn.title = 'Segure para soprar as velas';
+      const fresh = !chip || !chip.classList.contains('at-blow--chip');
       setChip(btn);
+      // na primeira vez que o botão aparece na etapa, um recado diz o que ele faz
+      if (fresh && !blowTold) {
+        blowTold = true;
+        later(() => {
+          if (!chip?.classList.contains('at-blow--chip')) return;
+          // em palco baixo o botão das velas mora na folha "Ateliê" (não coube na coluna)
+          const tucked = String(host.cz.dataset.collapsed || '').includes('tool');
+          notes.flash(tucked ? 'Para soprar as velas, abra o menu “…” do palco' : 'Para soprar as velas, segure o botão à direita', { ms: 3600 });
+        }, 900);
+      }
     } else {
       const el = document.createElement('button');
       el.type = 'button';
-      el.className = 'at-note at-note--btn';
-      el.innerHTML = String(html`${ICON.flame}<span>Acender as velas</span>`);
+      el.className = 'at-note at-note--btn cz-tool';
+      el.title = 'Acender as velas';
+      el.setAttribute('aria-label', 'Acender as velas');
+      el.innerHTML = String(html`${ICON.flame}<span class="sr-only">Acender as velas</span>`);
       el.addEventListener('click', () => {
         el.disabled = true;
         gesture('light', 'start');
@@ -620,32 +633,46 @@ export function createHands(host, { scene, atelie, later, hint }) {
     }
     const at = () => (typeof run.progress === 'function' ? run.progress() : Number(run.progress) || 0);
     if (!run || at() >= 1) return false; // a cena não começou (sem bolo, desligada): nada a girar
-    const el = document.createElement('div');
-    el.className = 'at-spread';
-    el.innerHTML = String(html`<span class="at-spread__ring" aria-hidden="true"><i></i>${ICON.turn}</span><span class="at-spread__text">Gire o prato</span><button type="button" class="at-spread__btn">Alisar para mim</button>`);
-    const bar = el.querySelector('i');
-    spreading = { sp, run, el, drag: null, said: 0, raf: 0 };
+    spreading = { sp, run, el: null, note: null, drag: null, said: 0, raf: 0 };
     const mine = spreading;
+    // o controle do prato: um aviso da faixa do palco, com a saída por botão e o quanto já foi alisado
+    mine.note = notes.control({
+      className: 'at-spread',
+      label: 'Girar o prato',
+      icon: ICON.turn,
+      title: 'Gire o prato',
+      bar: true,
+      barClass: 'at-spread__ring',
+      actions: [
+        {
+          label: 'Alisar para mim',
+          className: 'at-spread__btn',
+          // saída por botão: a cobertura termina sozinha, de uma vez
+          onClick: () => {
+            for (let i = 0; i < 12 && spreading === mine; i++) sp.feed?.(0.6);
+          },
+        },
+      ],
+    });
+    mine.el = mine.note.el;
+    const bar = mine.el.querySelector('.at-spread__ring i');
     const done = () => spreading === mine && spreadEnd(true);
     Promise.resolve(run.done).then(done, done);
-    el.querySelector('button').addEventListener('click', () => {
-      // saída por botão: a cobertura termina sozinha, de uma vez
-      for (let i = 0; i < 12 && spreading === mine; i++) sp.feed?.(0.6);
-    });
     const tick = () => {
       if (spreading !== mine) return;
       bar.style.transform = `scaleX(${Math.max(0.04, Math.min(1, at()))})`;
       mine.raf = requestAnimationFrame(tick);
     };
     mine.raf = requestAnimationFrame(tick);
-    setChip(el);
+    syncLane();
     gesture('spread', 'start', { cued: true });
     host.say('Gire o prato com o dedo para alisar a cobertura, use as setas do teclado ou o botão Alisar para mim. Se preferir, ela termina sozinha.');
     return true;
   }
   const angleOf = (ev) => {
     const r = host.canvas.getBoundingClientRect();
-    return Math.atan2(ev.clientY - (r.top + r.height * 0.55), ev.clientX - (r.left + r.width / 2));
+    // o centro do prato na tela: a tela 3D começa no alto do palco (por baixo do cabeçalho), o bolo fica um pouco abaixo do meio
+    return Math.atan2(ev.clientY - (r.top + r.height * 0.6), ev.clientX - (r.left + r.width / 2));
   };
   function spreadDown(ev) {
     ev.stopPropagation();
@@ -694,7 +721,8 @@ export function createHands(host, { scene, atelie, later, hint }) {
         // já terminou
       }
     }
-    if (chip === s.el) setChip(null);
+    s.note?.close();
+    syncLane();
     gesture('spread', 'end', { cued: true, finished: Boolean(finished) });
   }
   const onSpreadKey = (ev) => {
@@ -729,16 +757,14 @@ export function createHands(host, { scene, atelie, later, hint }) {
     if (step() !== 'cobertura' && spreading) spreadEnd(false);
     renderBanner();
     host.cz.classList.toggle('is-placing', Boolean(armed) && step() === 'decoracao');
+    if (!candleChip() && chip) setChip(null); // nada a oferecer agora: o botão das velas sai do palco
     if (spreading) return;
-    if (candleChip()) return;
     const c = host.config();
     if (atelie() && step() === 'cobertura' && !dripHinted && c.shape !== 'vulcao' && !c.drip.on && host.cake() && !host.cz.classList.contains('is-flat')) {
       dripHinted = true;
       // um pouco depois de chegar à etapa (a Bô costuma abrir a etapa com uma fala)
       later(() => hint('Dica de confeiteira: toque na borda do bolo para pingar a calda.', () => step() === 'cobertura' && !host.config().drip.on), 4200);
     }
-    // nada a oferecer agora: o controle das velas sai do palco
-    if (chip) setChip(null);
   }
 
   return {
@@ -768,7 +794,6 @@ export function createHands(host, { scene, atelie, later, hint }) {
     debug: { pick, project, topOf },
     destroy() {
       cancelAnimationFrame(ghostRaf);
-      clearTimeout(chipTimer);
       if (spreading) spreadEnd(false);
       host.stage.removeEventListener('pointerdown', onDown, true);
       host.stage.removeEventListener('pointermove', onMove, true);
@@ -778,7 +803,7 @@ export function createHands(host, { scene, atelie, later, hint }) {
       host.stage.removeEventListener('keydown', onKey, true);
       host.stage.removeEventListener('keydown', onSpreadKey, true);
       setChip(null);
-      banner?.remove();
+      banner?.close();
       banner = null;
       syncLane();
       ghost.remove();

@@ -1180,3 +1180,57 @@ export function paintMarbleTop(canvas, c1, c2, seed = 7) {
   }
   g.putImageData(img, 0, 0);
 }
+
+/* ───────── r6-luz: acabamento dos materiais das peças ─────────
+   As peças de decoração criam os seus materiais em decor.js, decor2.js, party.js e pecas-*.js. Com o estúdio
+   novo (caixas de luz de verdade no ambiente), o motor passa cada um por aqui na primeira vez que é usado:
+   metais deixam de "acender por conta própria" (era o que fazia as vezes de reflexo) e passam a refletir as
+   caixas de luz; frutas, pérolas e chocolate ganham o brilho certo. A chave é o nome do material na
+   biblioteca (lib.mat.<nome>) ou a chave de lib.custom(); um * no fim vale como prefixo. */
+// (ouro e prata só parecem metal refletindo muita luz: o ambiente vale quase o dobro para eles, como numa tenda de
+// luz; a cor de cada metal fica a do cardápio — o motor a converte em refletância de metal, ver engine.js)
+const METAL = { metalness: 1, emissiveIntensity: 0, envMapIntensity: 1.9 };
+export const MATERIAL_LOOK = {
+  // ouro: metal de verdade (cor de base do ouro; o brilho é o estúdio refletido)
+  gold: { ...METAL, roughness: 0.2 },
+  goldPaint: { ...METAL, roughness: 0.28, emissiveIntensity: 0.05 },
+  glitter: { ...METAL, roughness: 0.33, emissiveIntensity: 0.04 },
+  'x2-goldleaf': { ...METAL, roughness: 0.2, emissiveIntensity: 0.03, envMapIntensity: 2.1 },
+  'pk-metal': { ...METAL, roughness: 0.16 },
+  'pk-glitter': { ...METAL, roughness: 0.35 },
+  'pf-flake': { ...METAL, roughness: 0.22 },
+  'pf-dragee': { ...METAL, roughness: 0.17 },
+  'pf-starlet': { metalness: 0.9, roughness: 0.32, envMapIntensity: 1.8 },
+  'pf-mirror*': { ...METAL, roughness: 0.07, envMapIntensity: 1.8 },
+  'pt-ringMetal*': { ...METAL, roughness: 0.12, envMapIntensity: 1.9 },
+  candleMetal: { ...METAL, roughness: 0.26 },
+  // frutas: casca úmida (verniz) sobre a cor; o morango deixa passar um nada de luz
+  strawberry: { roughness: 0.4, clearcoat: 0.8, clearcoatRoughness: 0.16, bumpScale: 1, envMapIntensity: 1.1 },
+  blueberry: { color: 0x2f3a6e, roughness: 0.48, sheen: 1, sheenRoughness: 0.42, sheenColor: 0xaebcf0 },
+  raspberry: { roughness: 0.36, clearcoat: 0.6, clearcoatRoughness: 0.2 },
+  'pk-fruit': { roughness: 0.32, clearcoat: 0.7, clearcoatRoughness: 0.18 },
+  'pf-grape': { roughness: 0.32, clearcoat: 0.5, clearcoatRoughness: 0.3 },
+  'x2-candy': { roughness: 0.16, clearcoat: 1, clearcoatRoughness: 0.08 },
+  // pérolas: lisas, com o nácar por cima
+  pearl: { color: 0xfffaf2, roughness: 0.2, clearcoat: 1, clearcoatRoughness: 0.08, iridescence: 0.55, envMapIntensity: 1.25 },
+  'pt-pearl': { roughness: 0.28, clearcoat: 0.8, clearcoatRoughness: 0.16 },
+  // chocolate temperado: brilho macio, não espelho
+  chocolate: { roughness: 0.38, clearcoat: 0.42, clearcoatRoughness: 0.26 },
+  'x2-choc': { roughness: 0.34, clearcoat: 0.5, clearcoatRoughness: 0.24 },
+  // creme de bico e pétalas: acetinado
+  piping: { roughness: 0.58, sheen: 0.3, sheenRoughness: 0.5 },
+  'pk-cream': { roughness: 0.58, sheen: 0.3, sheenRoughness: 0.5 },
+  plaque: { roughness: 0.26, clearcoat: 0.7, clearcoatRoughness: 0.14 },
+  // folhagem: sem luz própria (ela achatava as folhas)
+  'pf-foliage': { emissiveIntensity: 0.12 },
+};
+const LOOK_PREFIXES = Object.keys(MATERIAL_LOOK).filter((k) => k.endsWith('*'));
+
+/** O acabamento do material `key` (ou null). Metais sem entrada própria recebem o acerto geral dos metais. */
+export function materialLook(key, mat) {
+  if (MATERIAL_LOOK[key]) return MATERIAL_LOOK[key];
+  const pre = LOOK_PREFIXES.find((k) => key.startsWith(k.slice(0, -1)));
+  if (pre) return MATERIAL_LOOK[pre];
+  if (mat && mat.metalness >= 0.75) return METAL;
+  return null;
+}
