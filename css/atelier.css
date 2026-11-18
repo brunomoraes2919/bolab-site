@@ -1,0 +1,1468 @@
+/* BOLAB — Ateliê (frente Tela): a camada de imersão do personalizador.
+   Carregada com a rota #/monte-seu-bolo, depois de css/customizer.css. Só tokens de css/tokens.css.
+   Prefixos: .at-… (o que é do ateliê) e .cz… (ajustes do personalizador que dependem do modo).
+
+   Composição do palco:
+     canto de cima à esquerda   .at-hud     som + "Modo rápido" (+ encomendas, quando o jogo existir)
+     canto de cima à direita    .cz-tools   ferramentas do palco, em coluna no celular em pé (modo Ateliê)
+     faixa de baixo             .at-layer   a Bô e o balão dela, o convite de som e as dicas — nunca sobre o bolo:
+                                            a tela 3D guarda essa faixa (stageInsets em js/views/customizer.js)
+     sobre o bolo               .at-fx      prévia da peça, avisos do gesto, gravação
+   Movimento: só transform e opacity, 120–260 ms, curva de saída forte; a revelação é o único momento longo. */
+
+.cz {
+  --at-ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --at-lane: 84px; /* altura da faixa da Bô no celular (a mesma de stageInsets) */
+  --at-side: 62px; /* coluna das ferramentas no celular */
+}
+
+/* ───────── Grade: a camada do ateliê ocupa a mesma célula do palco ───────── */
+.cz > .cz-stage,
+.cz > .at-layer {
+  grid-area: 1 / 1;
+}
+
+.cz > .cz-panel {
+  grid-area: 2 / 1;
+}
+
+@media (min-width: 900px), (max-height: 520px) and (min-width: 560px) and (max-width: 899px) {
+  .cz > .cz-panel {
+    grid-area: 1 / 2;
+  }
+}
+
+.at-layer {
+  position: relative;
+  z-index: 5; /* acima do painel: um balão comprido desce sobre a borda dele, não sobre o bolo */
+  min-width: 0;
+  min-height: 0;
+  pointer-events: none;
+  container-type: inline-size;
+}
+
+.cz[data-mode="rapido"] .at-layer,
+.cz.is-typing .at-layer {
+  display: none;
+}
+
+/* com o teclado do celular aberto, o palco fica só com o bolo e o campo */
+.cz.is-typing .at-hud,
+.cz.is-typing .at-fx {
+  display: none;
+}
+
+.at-keepout {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  display: none;
+  width: min(560px, 62%);
+  height: 46px;
+}
+
+/* a etiqueta de fatias e prazo mora no canto de baixo do palco: a Bô fica acima dela */
+@media (min-width: 1340px) {
+  .at-keepout {
+    display: block;
+  }
+}
+
+/* ───────── HUD: som e modo ───────── */
+.at-hud {
+  position: absolute;
+  top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) + 2px);
+  left: 10px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  transition: opacity var(--t-med) var(--at-ease);
+}
+
+.at-hud__sound:empty {
+  display: none;
+}
+
+.cz[data-mode="rapido"] .at-hud__sound,
+.cz[data-mode="rapido"] .at-mode--game {
+  display: none;
+}
+
+.at-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  box-shadow: var(--shadow-1);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  white-space: nowrap;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform var(--t-fast) var(--at-ease), box-shadow var(--t-fast), color var(--t-fast);
+}
+
+.at-mode[hidden] {
+  display: none;
+}
+
+.at-mode:active {
+  transform: scale(0.96);
+}
+
+.at-mode:focus-visible {
+  outline: 2.5px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.at-mode__icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--action);
+}
+
+.at-mode__icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.at-mode__short {
+  display: none;
+}
+
+/* celular: o botão do modo cabe na coluna do canto (ícone com a palavra embaixo), sem avançar sobre o bolo */
+@media (max-width: 899px) {
+  .at-mode {
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+    min-width: 48px;
+    height: auto;
+    min-height: 52px; /* cresce com o texto ampliado, em vez de cortar */
+    padding: 4px 5px;
+    font-size: var(--fs-2xs);
+    line-height: 1.1;
+  }
+
+  .at-mode__pre {
+    display: none;
+  }
+
+  .at-mode__short {
+    display: inline;
+  }
+
+  .at-hud {
+    left: 8px;
+  }
+
+  .at-hud .aa-btn {
+    width: 48px;
+  }
+}
+
+/* no modo rápido o convite de volta é discreto: só o ícone até a pessoa olhar para ele */
+.cz[data-mode="rapido"] .at-mode:not(.at-mode--game) {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--text-2);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .at-mode:hover {
+    box-shadow: var(--shadow-2);
+    color: var(--action-hover);
+  }
+}
+
+@media (min-width: 900px) {
+  .at-hud {
+    top: calc(var(--cz-bar) + 4px);
+    left: 20px;
+    gap: 8px;
+  }
+
+  .at-mode {
+    font-size: var(--fs-sm);
+    padding: 0 14px 0 12px;
+  }
+}
+
+/* ───────── Jogo (js/atelier/game): a comanda da encomenda fica ao lado da coluna do ateliê, nunca por cima ───────── */
+.cz .ag {
+  --ag-x: 64px;
+}
+
+@media (min-width: 900px) {
+  .cz .ag {
+    --ag-x: 176px;
+  }
+}
+
+/* ───────── Cenário em volta do bolo (dentro do painel "Fundo") ───────── */
+.at-scenes__name {
+  margin-top: 10px;
+}
+
+.at-scenes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.at-scenes .cz-chip {
+  min-height: 40px;
+}
+
+/* telas baixas (celular pequeno em pé): os três botões do canto encolhem um pouco para caber acima da Bô */
+@media (max-width: 899px) and (max-height: 700px) and (min-height: 521px) {
+  .at-hud {
+    gap: 4px;
+  }
+
+  .at-hud .aa-btn {
+    height: 40px;
+  }
+
+  .at-mode {
+    min-height: 40px;
+    padding: 2px 5px;
+  }
+
+  .at-mode__icon,
+  .at-mode__icon svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+/* r5-qa: celular muito baixo (320 × 568): três botões em coluna não cabem acima da Bô — ela ficava por cima do
+   "jogo". O terceiro botão passa para uma segunda coluna (como as ferramentas do outro lado já fazem). */
+@media (max-width: 899px) and (max-height: 600px) and (min-height: 521px) {
+  .at-hud {
+    flex-flow: column wrap;
+    align-content: flex-start;
+    max-height: 88px;
+    column-gap: 4px;
+  }
+
+  .cz .ag {
+    --ag-x: 112px;
+  }
+}
+
+/* o que está sendo apontado por uma dica */
+.cz .at-spot {
+  outline: 3px solid var(--action);
+  outline-offset: 4px;
+  border-radius: var(--r-md);
+}
+
+/* ───────── Celular (em pé ou deitado), modo Ateliê: ferramentas em coluna, faixa de baixo livre para a Bô ───────── */
+@media (max-width: 899px) {
+  .cz[data-mode="atelie"] .cz-tools {
+    top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) + 2px);
+    right: 10px;
+    bottom: auto;
+    flex-flow: column wrap-reverse;
+    gap: 6px;
+    max-height: calc(100% - var(--cz-bar) - env(safe-area-inset-top, 0px) - var(--cz-lap) - 6px);
+  }
+
+  .cz[data-mode="atelie"] .cz-tool--label {
+    width: 44px;
+    padding: 0;
+  }
+
+  .cz[data-mode="atelie"] .cz-tool--label span {
+    display: none;
+  }
+
+  .cz[data-mode="atelie"] .cz-bgbar {
+    top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) + 2px);
+    right: calc(var(--at-side) + 2px);
+    bottom: auto;
+    max-width: calc(100% - var(--at-side) - 14px);
+  }
+
+  .cz[data-mode="atelie"] .cz-hint {
+    display: none;
+  }
+
+  /* a Bô: canto de baixo à esquerda, no pé do palco; o balão abre ao lado dela e cresce para baixo */
+  .cz .at-layer .bo {
+    overflow: visible;
+  }
+
+  .cz .at-layer .bo[data-size="s"] .bo-anchor {
+    top: auto;
+    bottom: calc(var(--cz-lap) + 6px);
+    left: 8px;
+    transform: none;
+  }
+
+  .cz .at-layer .bo[data-size="s"] .bo-bubble,
+  .cz .at-layer .bo[data-size="s"] .bo-panel {
+    top: -8px;
+    right: auto;
+    bottom: auto;
+    left: calc(100% + 8px);
+    width: calc(100vw - 68px - var(--at-side) - 8px);
+    width: calc(100cqw - 68px - var(--at-side) - 8px);
+    max-width: 340px;
+    transform-origin: 0% 20%;
+  }
+
+  /* com um aviso de gesto na faixa (peça na mão, velas, prato), o balão abre logo abaixo dele, sobre a borda do
+     painel: os dois ficam à vista e o botão do aviso continua tocável */
+  .cz.has-lane .at-layer .bo[data-size="s"] .bo-bubble {
+    top: 66px;
+  }
+
+  .cz.has-lane .at-layer .bo[data-size="s"] .bo-bubble::after {
+    display: none;
+  }
+
+  .cz .at-layer .bo[data-size="s"] .bo-bubble::after {
+    top: 22px;
+    right: auto;
+    bottom: auto;
+    left: -5px;
+  }
+
+  .cz .at-layer .bo[data-size="s"] .bo-bubble {
+    padding: 9px 12px;
+  }
+
+  /* a etiqueta começa na borda da mascote (com texto ampliado ela não sai da tela) */
+  .cz .at-layer .bo[data-size="s"] .bo-anchor::after {
+    left: -2px;
+    transform: none;
+  }
+}
+
+/* Celular em pé: no resumo e na revelação o palco cresce (é o momento do bolo). */
+@media (max-width: 559px), (max-width: 899px) and (min-height: 521px) {
+  .cz[data-mode="atelie"][data-step="resumo"] {
+    --cz-stage-to: clamp(250px, min(54vh, 100vh - 330px), 520px);
+  }
+
+  .cz.is-revealing,
+  .cz.is-revealing[data-step="resumo"] {
+    --cz-stage-to: clamp(250px, 100vh - 318px, 560px);
+  }
+
+  @supports (height: 100dvh) {
+    .cz[data-mode="atelie"][data-step="resumo"] {
+      --cz-stage-to: clamp(250px, min(54dvh, 100dvh - 330px), 520px);
+    }
+
+    .cz.is-revealing,
+    .cz.is-revealing[data-step="resumo"] {
+      --cz-stage-to: clamp(250px, 100dvh - 318px, 560px);
+    }
+  }
+}
+
+/* com altura sobrando, os atalhos "Pergunte à Bô" usam a largura toda (as ferramentas ficam acima da faixa) */
+@media (max-width: 559px) and (min-height: 700px) {
+  .cz .at-layer .bo[data-size="s"] .bo-panel {
+    width: calc(100vw - 76px);
+    width: calc(100cqw - 76px);
+    max-width: none;
+  }
+}
+
+/* "assistente": a Bô se apresenta pelo que é (regras de confeitaria e voz gravada), sempre à vista */
+.cz .at-layer .bo-anchor::after {
+  content: "assistente";
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  padding: 1px 6px 2px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  color: var(--text-2);
+  font-size: 0.625rem;
+  font-weight: 800;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.cz .at-layer .bo[data-size="l"] .bo-anchor::after {
+  bottom: -9px;
+  font-size: var(--fs-2xs);
+}
+
+/* enquanto as dicas estão na tela, o balão espera (a voz e o leitor de tela seguem) */
+.cz .at-layer[data-busy] .bo-bubble {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ───────── Cartões da faixa: convite de som e dicas ───────── */
+.at-card {
+  position: absolute;
+  top: calc(100% - var(--cz-lap) - var(--at-lane) + 2px);
+  left: 8px;
+  right: calc(var(--at-side) + 2px);
+  z-index: 6;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  max-width: 400px;
+  padding: 12px 12px 10px;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+  color: var(--text);
+  pointer-events: auto;
+  animation: at-card-in 240ms var(--at-ease) both;
+}
+
+.at-tips {
+  left: 68px;
+}
+
+@keyframes at-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+.at-card__icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--rose-100);
+  color: var(--action);
+}
+
+.at-card__text {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: 1.35;
+  color: var(--text-2);
+}
+
+.at-card__text strong {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 800;
+}
+
+.at-card__acts {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.at-card__acts .btn {
+  min-height: 44px;
+  padding-inline: 16px;
+}
+
+.at-card__quiet {
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  touch-action: manipulation;
+}
+
+.at-card__quiet:active {
+  background: var(--fill);
+}
+
+.at-card__quiet:focus-visible {
+  outline: 2.5px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .at-card__quiet:hover {
+    background: var(--fill);
+    color: var(--text);
+  }
+}
+
+/* computador: na faixa livre à esquerda do bolo, logo acima da Bô (onde o balão dela abre) */
+@media (min-width: 900px) {
+  .at-card,
+  .at-tips {
+    top: auto;
+    right: auto;
+    bottom: 152px;
+    left: 20px;
+    width: clamp(200px, calc(26cqw - 20px), 300px);
+  }
+}
+
+@media (min-width: 1340px) {
+  .at-card,
+  .at-tips {
+    bottom: 206px;
+  }
+}
+
+/* celular deitado: a faixa de baixo é a do palco (o painel fica ao lado) */
+@media (max-height: 520px) and (min-width: 560px) and (max-width: 899px) {
+  .at-card,
+  .at-tips {
+    top: auto;
+    right: auto;
+    bottom: 8px;
+    left: 68px;
+    width: min(320px, calc(100% - 76px));
+  }
+
+  .at-invite {
+    left: 8px;
+  }
+
+  .cz .at-layer .bo {
+    overflow: visible;
+  }
+
+  .cz .at-layer .bo[data-size="s"] .bo-bubble,
+  .cz .at-layer .bo[data-size="s"] .bo-panel {
+    max-width: calc(100cqw - 76px);
+  }
+}
+
+/* ───────── Sobre o bolo: prévia da peça, avisos de gesto ───────── */
+.at-fx {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.at-fx > * {
+  pointer-events: auto;
+}
+
+.at-ghost {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 44px;
+  height: 44px;
+  border: 3px solid var(--green);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--green) 22%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--white) 85%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms var(--at-ease);
+  will-change: transform;
+}
+
+.at-ghost.is-on {
+  opacity: 1;
+}
+
+.at-ghost.is-no {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 22%, transparent);
+}
+
+/* não cabe: além da cor, o anel ganha um traço (não depende só de verde/vermelho) */
+.at-ghost.is-no::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 12%;
+  width: 76%;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: 2px;
+  background: var(--red);
+  transform: rotate(-45deg);
+}
+
+/* "aqui não cabe": o aviso balança de leve, uma vez (translate à parte: não desfaz o transform de cada um) */
+.at-fx.is-nofit ~ .cz-flash,
+.at-fx.is-nofit .at-banner {
+  animation: at-shake 320ms var(--at-ease);
+}
+
+@keyframes at-shake {
+  20% {
+    translate: -6px 0;
+  }
+
+  50% {
+    translate: 5px 0;
+  }
+
+  80% {
+    translate: -2px 0;
+  }
+}
+
+/* Avisos e controles de gesto. No celular moram na faixa de baixo do palco (a mesma da Bô, que cede a vez):
+   o bolo fica inteiro à vista enquanto a pessoa escolhe o lugar da peça. No computador, no alto do palco. */
+.at-banner,
+.at-note,
+.at-spread,
+.at-rec {
+  position: absolute;
+  bottom: calc(var(--cz-lap) + 14px);
+  left: 68px;
+  right: calc(var(--at-side) + 2px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 6px 6px 14px;
+  border-radius: var(--r-lg);
+  background: var(--text);
+  box-shadow: var(--shadow-2);
+  color: var(--surface);
+  font-size: var(--fs-meta);
+  font-weight: 700;
+  line-height: 1.3;
+  animation: at-rise-in 220ms var(--at-ease) both;
+}
+
+@keyframes at-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes at-drop-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+}
+
+@keyframes at-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* gravando: no alto, ao centro (o resto do palco esmaece) */
+.at-rec {
+  top: calc(var(--cz-bar) + env(safe-area-inset-top, 0px) + 2px);
+  right: auto;
+  bottom: auto;
+  left: 50%;
+  transform: translateX(-50%);
+  animation-name: at-drop-in;
+}
+
+/* modo rápido no celular: sem a Bô, o aviso usa a faixa inteira (as ferramentas voltam quando a peça é solta) */
+.cz[data-mode="rapido"] .at-banner {
+  bottom: calc(var(--cz-lap) + 10px);
+  left: 10px;
+  right: 10px;
+}
+
+@media (max-width: 899px) {
+  .cz[data-mode="rapido"].is-placing .cz-tools {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
+/* o convite de som ficou sem resposta: o alto-falante pede atenção, sem insistir */
+.at-wants .aa-btn::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--action);
+}
+
+.at-wants .aa-btn {
+  position: relative;
+}
+
+.at-banner__text {
+  min-width: 0;
+}
+
+.at-banner__btn,
+.at-spread__btn {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-meta);
+  font-weight: 800;
+  touch-action: manipulation;
+}
+
+/* alvo de toque de 44 px, mesmo com o botão baixo */
+.at-banner__btn,
+.at-spread__btn {
+  position: relative;
+}
+
+.at-banner__btn::after,
+.at-spread__btn::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+}
+
+.at-banner__btn:active,
+.at-spread__btn:active {
+  transform: scale(0.96);
+}
+
+.at-banner__btn:focus-visible,
+.at-spread__btn:focus-visible,
+.at-note--btn:focus-visible {
+  outline: 2.5px solid var(--surface);
+  outline-offset: 2px;
+}
+
+/* modo rápido no celular, com uma peça na mão: o canto do modo sai da frente do bolo visto de cima */
+@media (max-width: 899px) {
+  .cz[data-mode="rapido"].is-placing .at-hud {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
+.cz.is-placing .cz-canvas {
+  cursor: crosshair;
+}
+
+.at-note {
+  padding: 8px 14px 8px 10px;
+}
+
+.at-note svg,
+.at-rec i {
+  flex: none;
+}
+
+.at-note--btn {
+  justify-content: flex-start;
+  min-height: 44px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.at-note--btn:active {
+  transform: scale(0.97);
+}
+
+.at-spread {
+  padding: 6px 6px 6px 10px;
+}
+
+.at-spread__text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* o quanto já foi alisado: um fio que cresce na base do aviso */
+.at-spread__ring {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+}
+
+.at-spread__ring i {
+  position: absolute;
+  right: 12px;
+  bottom: 3px;
+  left: 12px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--rose-300, var(--action));
+  transform: scaleX(0.04);
+  transform-origin: 0 50%;
+}
+
+.at-rec {
+  padding: 8px 14px 8px 12px;
+}
+
+.at-rec i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--red);
+  animation: at-blink 900ms steps(2, jump-none) infinite;
+}
+
+@keyframes at-blink {
+  to {
+    opacity: 0.25;
+  }
+}
+
+.cz.is-recording .cz-top,
+.cz.is-recording .cz-tools,
+.cz.is-recording .at-hud {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+@media (min-width: 900px) {
+  .at-banner,
+  .at-note,
+  .at-spread,
+  .at-rec,
+  .cz[data-mode="rapido"] .at-banner {
+    top: calc(var(--cz-bar) + 6px);
+    right: auto;
+    bottom: auto;
+    left: 50%;
+    max-width: calc(100% - 560px);
+    font-size: var(--fs-sm);
+    transform: translateX(-50%);
+    animation-name: at-drop-in;
+  }
+
+  .at-note--btn:active {
+    transform: translateX(-50%) scale(0.97);
+  }
+}
+
+/* celular deitado: o canto de baixo do palco */
+@media (max-height: 520px) and (min-width: 560px) and (max-width: 899px) {
+  .at-banner,
+  .at-note,
+  .at-spread,
+  .cz[data-mode="rapido"] .at-banner {
+    right: 8px;
+    bottom: 60px;
+    left: 68px;
+  }
+}
+
+/* ───────── Soprar as velas ───────── */
+.at-blow {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 0;
+  color: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.at-blow__ring {
+  position: relative;
+  display: block;
+  width: 104px;
+  height: 104px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--white) 14%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--white) 70%, transparent);
+  transition: transform 160ms var(--at-ease);
+}
+
+/* o fôlego: um disco claro cresce de dentro para fora enquanto a pessoa segura */
+.at-blow__ring i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--white) 42%, transparent);
+  opacity: 0;
+  transform: scale(0.2);
+  transition: transform 200ms var(--at-ease), opacity 200ms var(--at-ease);
+}
+
+.at-blow.is-held .at-blow__ring i {
+  opacity: 1;
+}
+
+.at-blow.is-held .at-blow__ring {
+  transform: scale(0.96);
+}
+
+.at-blow.is-held .at-blow__ring i {
+  transition: none;
+}
+
+.at-blow__icon {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  color: var(--white);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.at-blow__icon svg {
+  width: 30px;
+  height: 30px;
+}
+
+.at-blow:focus-visible {
+  outline: 0;
+}
+
+.at-blow:focus-visible .at-blow__ring {
+  outline: 3px solid var(--white);
+  outline-offset: 4px;
+}
+
+/* versão pequena, no palco (etapa Decoração): na faixa de baixo no celular, no alto no computador */
+.at-blow--chip {
+  position: absolute;
+  bottom: calc(var(--cz-lap) + 14px);
+  left: 68px;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 14px 0 6px;
+  border-radius: var(--r-lg);
+  background: var(--text);
+  box-shadow: var(--shadow-2);
+  color: var(--surface);
+  font-size: var(--fs-meta);
+}
+
+@media (min-width: 900px) {
+  .at-blow--chip {
+    top: calc(var(--cz-bar) + 6px);
+    bottom: auto;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+}
+
+.at-blow--chip .at-blow__ring {
+  width: 32px;
+  height: 32px;
+}
+
+.at-blow--chip .at-blow__icon {
+  position: absolute;
+  top: 50%;
+  left: 22px;
+  width: 20px;
+  height: 20px;
+  transform: translate(-50%, -50%);
+}
+
+.at-blow--chip .at-blow__icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ───────── Revelação ───────── */
+.at-reveal__shade {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: radial-gradient(ellipse 62% 56% at 50% 46%, transparent 0%, transparent 46%, color-mix(in srgb, var(--stage) 78%, transparent) 100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 600ms var(--ease);
+}
+
+.cz.is-revealing .at-reveal__shade {
+  opacity: 1;
+}
+
+.cz-bg {
+  transition: filter 600ms var(--ease);
+}
+
+.cz.is-revealing .cz-bg {
+  filter: brightness(0.5) saturate(0.9);
+}
+
+/* com a cena carregada, quem baixa a luz é ela (as luzes do 3D): por cima fica só uma vinheta leve */
+.cz.is-revealing.has-scene .at-reveal__shade {
+  opacity: 0.55;
+}
+
+.cz.is-revealing.has-scene.is-party .at-reveal__shade {
+  opacity: 0;
+}
+
+/* o sopro: a luz das velas some um instante… */
+.cz.is-revealing.is-blown .cz-bg {
+  filter: brightness(0.28) saturate(0.8);
+  transition-duration: 200ms;
+}
+
+/* …e a festa acende tudo */
+.cz.is-revealing.is-party .cz-bg {
+  filter: none;
+  transition-duration: 500ms;
+}
+
+.cz.is-revealing.is-party .at-reveal__shade {
+  opacity: 0;
+}
+
+/* o fio que separa palco e painel some: a cena é uma só */
+.cz.is-revealing .cz-panel {
+  box-shadow: none;
+}
+
+.cz.is-revealing .cz-top,
+.cz.is-revealing .cz-tools,
+.cz.is-revealing .cz-meta,
+.cz.is-revealing .cz-bgbar,
+.cz.is-revealing .cz-hint,
+.cz.is-revealing .at-hud,
+.cz.is-revealing .at-layer,
+.cz.is-revealing .at-fx {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 200ms var(--ease), visibility 0s linear 200ms;
+}
+
+.at-reveal {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  border-radius: inherit;
+  background: var(--stage);
+  color: var(--white);
+  text-align: center;
+  outline: 0;
+  animation: at-fade-in 320ms var(--ease) both;
+}
+
+.at-reveal__panel {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: 400px;
+  padding: 20px 24px calc(16px + var(--safe-bottom));
+}
+
+.at-reveal__name {
+  margin: 0;
+  color: color-mix(in srgb, var(--white) 72%, transparent);
+  font-size: var(--fs-meta);
+  font-weight: 700;
+}
+
+.at-reveal__title {
+  margin: 0;
+  color: var(--white);
+  font-size: var(--fs-3xl);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.at-reveal__sub {
+  min-height: 1.4em;
+  margin: 0;
+  color: color-mix(in srgb, var(--white) 82%, transparent);
+  font-size: var(--fs-md);
+}
+
+.at-reveal__slot {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  min-height: 150px;
+  margin-top: 14px;
+  align-content: center;
+  width: 100%;
+}
+
+.at-reveal__go {
+  width: 100%;
+  min-height: 52px;
+  background: var(--white);
+  color: var(--stage);
+}
+
+.at-reveal__go svg {
+  width: 20px;
+  height: 20px;
+}
+
+.at-reveal__back,
+.at-reveal__skip {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: var(--r-md);
+  color: color-mix(in srgb, var(--white) 82%, transparent);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  touch-action: manipulation;
+}
+
+.at-reveal__skip[hidden] {
+  display: none;
+}
+
+.at-reveal__back:active,
+.at-reveal__skip:active {
+  background: color-mix(in srgb, var(--white) 12%, transparent);
+}
+
+.at-reveal__go:focus-visible,
+.at-reveal__back:focus-visible,
+.at-reveal__skip:focus-visible {
+  outline: 3px solid var(--white);
+  outline-offset: 3px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .at-reveal__back:hover,
+  .at-reveal__skip:hover {
+    background: color-mix(in srgb, var(--white) 12%, transparent);
+    color: var(--white);
+  }
+}
+
+/* telas baixas: a revelação cabe sem rolar */
+@media (max-height: 700px) {
+  .at-reveal__title {
+    font-size: var(--fs-2xl);
+  }
+
+  .at-reveal__slot {
+    min-height: 128px;
+    margin-top: 6px;
+  }
+
+  .at-reveal .at-blow__ring {
+    width: 84px;
+    height: 84px;
+  }
+
+  .at-reveal .at-blow__icon {
+    top: 24px;
+  }
+}
+
+/* ───────── Resumo: "Revelar meu bolo" ───────── */
+.at-revealbtn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  margin: 10px 0 8px;
+  padding: 10px 12px;
+  border-radius: var(--r-lg);
+  background: var(--stage);
+  color: var(--white);
+  text-align: left;
+  touch-action: manipulation;
+  transition: transform var(--t-fast) var(--at-ease), background var(--t-fast);
+}
+
+.cz[data-mode="rapido"] .at-revealbtn {
+  display: none;
+}
+
+.at-revealbtn:active {
+  transform: scale(0.98);
+}
+
+.at-revealbtn:focus-visible {
+  outline: 2.5px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.at-revealbtn__icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--stage-2);
+  color: var(--rose-200, var(--white));
+}
+
+.at-revealbtn__icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.at-revealbtn__text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.at-revealbtn__text strong {
+  font-size: var(--fs-md);
+  font-weight: 800;
+}
+
+.at-revealbtn__text small {
+  color: color-mix(in srgb, var(--white) 76%, transparent);
+  font-size: var(--fs-meta);
+}
+
+.at-revealbtn > svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  opacity: 0.7;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .at-revealbtn:hover {
+    background: var(--stage-2);
+  }
+}
+
+/* ───────── Decoração: "uma a uma, com o dedo" ───────── */
+.cz-hand {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 12px;
+  padding: 12px;
+  border-radius: var(--r-md);
+  background: var(--fill);
+}
+
+.cz-hand__lead {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+}
+
+.cz-hand__lead strong {
+  color: var(--text);
+}
+
+.cz-hand__acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.cz-hand__acts .btn {
+  min-height: 44px;
+}
+
+.cz-hand .cz-picked {
+  margin: 0;
+}
+
+.cz-hand .cz-linkbtn {
+  min-height: 44px;
+}
+
+.cz-pick__main--static {
+  padding-right: 10px;
+  cursor: default;
+}
+
+.cz-pick__main--static small {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.cz-opt--hand .cz-opt__price small {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.cz-quiet__btn[hidden] {
+  display: none;
+}
+
+/* ───────── Cartão do bolo e vídeo (dentro do diálogo) ───────── */
+.at-cardbox {
+  display: grid;
+  gap: 14px;
+}
+
+.at-cardbox img,
+.at-video video {
+  display: block;
+  width: 100%;
+  max-width: 300px;
+  height: auto;
+  margin: 0 auto;
+  border-radius: var(--r-lg);
+  background: var(--fill);
+  box-shadow: var(--shadow-1);
+}
+
+.at-video {
+  display: grid;
+  gap: 10px;
+  text-align: center;
+}
+
+.at-cardbox__side {
+  display: grid;
+  gap: 6px;
+}
+
+.at-cardbox__field {
+  display: grid;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+
+.at-cardbox__field small {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.at-cardbox__field .input {
+  font-size: 1rem; /* 16 px: o iPhone não aproxima a tela ao focar */
+}
+
+.at-cardbox__hint {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+
+.at-cardbox__more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  margin-left: -12px;
+}
+
+.at-cardbox__more .cz-linkbtn {
+  min-height: 44px;
+}
+
+.at-cardbox__more svg {
+  width: 18px;
+  height: 18px;
+}
+
+@media (min-width: 640px) {
+  .at-cardbox {
+    grid-template-columns: 260px minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+/* ───────── A bancada "anda": a etapa nova entra pelo lado para onde a pessoa foi ───────── */
+.cz[data-mode="atelie"][data-dir="fwd"] .cz-body:not(.is-still) > * {
+  animation: at-step-fwd 260ms var(--at-ease) both;
+}
+
+.cz[data-mode="atelie"][data-dir="back"] .cz-body:not(.is-still) > * {
+  animation: at-step-back 260ms var(--at-ease) both;
+}
+
+.cz[data-mode="atelie"][data-dir] .cz-body:not(.is-still) > :nth-child(2) {
+  animation-delay: 30ms;
+}
+
+.cz[data-mode="atelie"][data-dir] .cz-body:not(.is-still) > :nth-child(3) {
+  animation-delay: 60ms;
+}
+
+.cz[data-mode="atelie"][data-dir] .cz-body:not(.is-still) > :nth-child(n + 4) {
+  animation-delay: 90ms;
+}
+
+@keyframes at-step-fwd {
+  from {
+    opacity: 0;
+    transform: translateX(22px);
+  }
+}
+
+@keyframes at-step-back {
+  from {
+    opacity: 0;
+    transform: translateX(-22px);
+  }
+}
+
+/* espera viva: o texto de "preparando" troca com um fundido curto */
+.cz-loading [data-cz-loadtext] {
+  display: inline-block;
+  animation: at-fade-in 400ms var(--ease) both;
+}
+
+/* ───────── Reduzir movimento ───────── */
+@media (prefers-reduced-motion: reduce) {
+  .at-card,
+  .at-banner,
+  .at-note,
+  .at-spread,
+  .at-reveal,
+  .cz[data-mode="atelie"][data-dir] .cz-body:not(.is-still) > * {
+    animation: at-fade-in 150ms linear both;
+    animation-delay: 0ms;
+  }
+
+  .at-fx.is-nofit ~ .cz-flash,
+  .at-fx.is-nofit .at-banner,
+  .at-rec i {
+    animation: none;
+  }
+
+  .at-blow__ring,
+  .at-blow__ring i,
+  .at-mode,
+  .at-revealbtn {
+    transition: none;
+  }
+
+  .cz-bg,
+  .at-reveal__shade {
+    transition-duration: 150ms;
+  }
+}

@@ -101,7 +101,7 @@
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  width: 76px;
+  width: max(76px, 4.75rem); /* acompanha o texto ampliado: os nomes não se atropelam */
   padding-top: 2px;
   text-align: center;
 }
@@ -263,18 +263,29 @@
 }
 
 /* ───────── Faixa do personalizador 3D ─────────
-   Palco de cacau escuro com os bolos renderizados pelo próprio personalizador. */
+   Palco de cacau escuro com os bolos renderizados pelo próprio personalizador. Embaixo, as etapas
+   em fila sobre uma faixa mais escura: os bolos ficam "atrás do balcão". */
 .cz3d {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 38%;
+  grid-template-rows: 1fr auto;
   align-items: center;
-  min-height: 212px;
-  padding: 18px 0 18px 18px;
+  min-height: 228px;
   border-radius: var(--r-xl);
   background: radial-gradient(130% 130% at 100% 10%, var(--stage-2) 0%, var(--stage) 58%);
   color: #fff;
   overflow: hidden;
+  transition: transform var(--t-fast) var(--ease);
+}
+
+.cz3d:active {
+  transform: scale(0.99);
+}
+
+.cz3d:focus-visible {
+  outline-color: #fff;
+  outline-offset: -3px;
 }
 
 .cz3d__copy {
@@ -285,6 +296,39 @@
   align-items: flex-start;
   gap: 6px;
   min-width: 0;
+  padding: 18px 0 16px 18px;
+}
+
+/* As etapas do personalizador, na ordem em que aparecem lá. */
+.cz3d__steps {
+  grid-column: 1 / -1;
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 5px;
+  padding: 10px 18px;
+  background: #1D0C0F;
+  box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.1);
+  color: #F1D9DF;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.cz3d__step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.cz3d__step svg {
+  width: 10px;
+  height: 10px;
+  color: var(--rose-400);
+  stroke-width: 3;
 }
 
 .cz3d__tag {
@@ -544,20 +588,83 @@
   padding: 2px 16px;
 }
 
-/* ───────── Tablet (ainda com cara de aplicativo) ───────── */
-@media (min-width: 640px) and (max-width: 899px) {
+/* ───────── Tablet (ainda com cara de aplicativo) ─────────
+   A busca é a do cabeçalho; promoções duas a duas; categorias em seis colunas; mais pedidos e
+   itens de festa em grade de quatro; avaliações em três colunas. */
+@media (min-width: 600px) and (max-width: 899px) {
+  .hero.home-top {
+    padding-block: 2px var(--s-5);
+  }
+
+  .home-sec {
+    padding-block: var(--s-5) var(--s-1);
+  }
+
   .promos > .promo {
     width: calc(50% - 5px);
+    min-height: 160px;
+  }
+
+  .cats {
+    margin-top: var(--s-4);
   }
 
   .cats__row {
-    gap: 12px;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+    overflow: visible;
+    margin-inline: 0;
+    padding-inline: 0;
+  }
+
+  .cat {
+    width: auto;
+    gap: 8px;
+  }
+
+  .cat__img {
+    width: 76px;
+    height: 76px;
+    border-radius: 20px;
+  }
+
+  .cat__label {
+    font-size: var(--fs-meta);
+  }
+
+  .best,
+  .addons {
+    --rail-cols-md: 3;
+  }
+
+  .again,
+  .reviews {
+    --rail-cols-md: 2;
   }
 
   .cz3d {
     grid-template-columns: minmax(0, 1fr) 44%;
-    min-height: 232px;
-    padding-left: 24px;
+    min-height: 248px;
+  }
+
+  .cz3d__copy {
+    padding: 22px 0 20px 24px;
+  }
+
+  .cz3d__steps {
+    gap: 2px 8px;
+    padding: 11px 24px;
+    font-size: var(--fs-meta);
+  }
+
+  .cz3d__step {
+    gap: 8px;
+  }
+
+  .cz3d__step svg {
+    width: 12px;
+    height: 12px;
   }
 
   .cz3d__title {
@@ -578,15 +685,6 @@
     width: 56%;
   }
 
-  .menu-groups {
-    grid-template-columns: 1fr 1fr;
-    align-items: start;
-  }
-
-  .menu-group:first-child {
-    grid-row: span 2;
-  }
-
   .how {
     grid-template-columns: 1fr 1fr;
     column-gap: var(--s-6);
@@ -594,6 +692,54 @@
 
   .how__step:nth-child(2) {
     border-top: 0;
+  }
+}
+
+/* Celular grande (600–719 px): uma fileira cheia em cada grade. */
+@media (min-width: 600px) and (max-width: 719px) {
+  .best > :nth-child(n + 4),
+  .addons > :nth-child(n + 4),
+  .reviews > :nth-child(n + 3) {
+    display: none;
+  }
+}
+
+/* Tablet de verdade (720–899 px): a busca é a do cabeçalho e cabe uma coluna a mais. */
+@media (min-width: 720px) and (max-width: 899px) {
+  .hero.home-top {
+    padding-top: var(--s-3);
+  }
+
+  .home-search {
+    display: none;
+  }
+
+  .best,
+  .addons {
+    --rail-cols-md: 4;
+  }
+
+  .best > :nth-child(n + 5),
+  .addons > :nth-child(n + 5) {
+    display: none;
+  }
+
+  .again,
+  .reviews {
+    --rail-cols-md: 3;
+  }
+
+  .reviews > :nth-child(n + 4) {
+    display: none;
+  }
+
+  .menu-groups {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+
+  .menu-group:first-child {
+    grid-row: span 2;
   }
 }
 
@@ -745,12 +891,27 @@
   /* Faixa do 3D larga, com os três bolos lado a lado. */
   .cz3d {
     grid-template-columns: minmax(0, 1fr) 52%;
-    min-height: 264px;
-    padding: 32px 0 32px 40px;
+    min-height: 296px;
   }
 
   .cz3d__copy {
     gap: 8px;
+    padding: 32px 0 28px 40px;
+  }
+
+  .cz3d__steps {
+    gap: 2px 12px;
+    padding: 13px 40px;
+    font-size: var(--fs-sm);
+  }
+
+  .cz3d__step {
+    gap: 12px;
+  }
+
+  .cz3d__step svg {
+    width: 13px;
+    height: 13px;
   }
 
   .cz3d__title {

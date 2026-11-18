@@ -2,42 +2,80 @@
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
+    <!--
+      POLÍTICA DE SEGURANÇA DA PÁGINA (Content-Security-Policy). Diz ao navegador de onde a loja
+      pode carregar cada tipo de coisa. Se um dia entrar um texto malicioso na página, ele não
+      consegue rodar script nem mandar dados para outro site. Explicação em README.md > Segurança.
+        script-src   só arquivos da própria loja + o mapa de imports logo abaixo (autorizado pelo
+                     código "sha256-…"). NÃO escreva <script>…</script> nem onclick="" no HTML:
+                     não roda. Se mexer no mapa de imports, rode  node tools/csp_hash.mjs --gravar  —
+                     ele recalcula o código e grava aqui.
+        img-src      fotos da loja, imagens geradas na hora (data:, blob:) e as fotos de
+                     demonstração do Unsplash. Hospedou fotos em outro endereço? Acrescente aqui.
+        connect-src  a loja e o ViaCEP (busca de CEP). Novo serviço (pagamento, banco de dados)?
+                     Acrescente o endereço dele aqui.
+      Este <meta> precisa continuar sendo o primeiro depois do charset.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'sha256-kaEog0AsPo4/9apXRMvp5eF3zpfBg9ltlJNNm2KUPio='; style-src 'self' 'unsafe-inline'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https://images.unsplash.com; font-src 'self'; connect-src 'self' data: blob: https://viacep.com.br; media-src 'self' data: blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'"
+    />
+    <meta name="referrer" content="same-origin" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>BOLAB — Bolos artesanais sob encomenda</title>
+    <title>BOLAB — Bolos artesanais sob encomenda em Cuiabá</title>
     <meta name="description" content="Delivery de bolos artesanais em Cuiabá e Várzea Grande. Peça um clássico ou monte o seu em 3D e receba com dia e horário marcados." />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#FFFFFF" />
-    <meta property="og:title" content="BOLAB — Delivery de bolos artesanais" />
-    <meta property="og:description" content="Peça um clássico ou monte o seu bolo em 3D. Entrega com dia e horário marcados." />
+    <meta name="color-scheme" content="light" />
+    <meta name="application-name" content="BOLAB" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="BOLAB" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- Endereço oficial da loja e cartão de compartilhamento (WhatsApp, Instagram, Facebook, X).
+         Quem lê estas linhas não roda JavaScript, então elas ficam fixas aqui. Ao mudar a loja de
+         endereço (domínio próprio), rode  node tools/trocar_endereco.mjs https://novo-endereco/  -->
+    <link rel="canonical" href="https://brunomoraes2919.github.io/bolab-site/" />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="assets/icon-512.png" />
+    <meta property="og:site_name" content="BOLAB" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta property="og:url" content="https://brunomoraes2919.github.io/bolab-site/" />
+    <meta property="og:title" content="BOLAB — Delivery de bolos artesanais" />
+    <meta property="og:description" content="Peça um clássico ou monte o seu bolo em 3D. Entrega com dia e horário marcados em Cuiabá e Várzea Grande." />
+    <meta property="og:image" content="https://brunomoraes2919.github.io/bolab-site/assets/og-bolab.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="BOLAB: bolos artesanais sob encomenda, com três bolos decorados montados no personalizador 3D" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="BOLAB — Delivery de bolos artesanais" />
+    <meta name="twitter:description" content="Peça um clássico ou monte o seu bolo em 3D. Entrega com dia e horário marcados." />
+    <meta name="twitter:image" content="https://brunomoraes2919.github.io/bolab-site/assets/og-bolab.jpg" />
 
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png" />
     <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
 
+    <!-- Mapa de imports do Three.js (personalizador 3D). É o único script escrito dentro do HTML e
+         fica em UMA linha só: o código "sha256-…" da política lá em cima é calculado sobre este
+         texto exato (com quebra de linha, mudaria entre Windows e o servidor). Vem antes de
+         qualquer módulo para valer em todos os navegadores. -->
+    <script type="importmap">{"imports":{"three":"./vendor/three/three.module.min.js","three/addons/":"./vendor/three/addons/"}}</script>
+
+    <!-- Partida: bloqueio de quadro, aviso de falha e pedido antecipado dos arquivos da tela de
+         entrada (estilo da tela, a própria tela e a imagem principal do início). "async": não
+         segura o desenho da página. -->
+    <script src="js/boot.js" async></script>
+
     <!-- A fonte da marca mora aqui no site (assets/fonts): o app não depende da internet para ela. -->
     <link rel="preload" as="font" type="font/woff2" href="assets/fonts/plus-jakarta-sans-latin.woff2" crossorigin />
     <link rel="preconnect" href="https://images.unsplash.com" />
 
-    <script>
-      // DESEMPENHO DA ABERTURA (atalhos; nenhum muda a aparência):
-      //
-      // 1. A imagem do primeiro banner do início começa a baixar junto com o resto. Antes ela só
-      //    era pedida depois de todo o JavaScript rodar. Se trocar a imagem do primeiro banner
-      //    em js/views/home.js (PROMOS), troque o arquivo aqui também.
-      (function () {
-        if (location.hash && location.hash !== '#' && location.hash !== '#/') return;
-        var link = document.createElement('link');
-        link.rel = 'preload';
-        link.as = 'image';
-        link.href = 'assets/img/cz-morango.webp';
-        document.head.appendChild(link);
-      })();
-    </script>
-
-    <!-- 2. Os arquivos de JavaScript da primeira tela são pedidos todos de uma vez, em vez de um
-         descobrir o outro em fila. Se criar um arquivo novo usado na abertura, pode acrescentar
-         aqui; se esquecer, nada quebra (ele só carrega um pouco depois). -->
+    <!-- Os arquivos de JavaScript da moldura são pedidos todos de uma vez, em vez de um descobrir
+         o outro em fila. Se criar um arquivo novo usado na abertura, pode acrescentar aqui; se
+         esquecer, nada quebra (ele só carrega um pouco depois). -->
     <link rel="modulepreload" href="js/app.js" />
     <link rel="modulepreload" href="js/router.js" />
     <link rel="modulepreload" href="js/shell.js" />
@@ -46,28 +84,18 @@
     <link rel="modulepreload" href="js/icons.js" />
     <link rel="modulepreload" href="js/components.js" />
     <link rel="modulepreload" href="js/data/site.js" />
+    <link rel="modulepreload" href="js/data/montar.js" />
     <link rel="modulepreload" href="js/data/products.js" />
     <link rel="modulepreload" href="js/data/photos.js" />
-    <link rel="modulepreload" href="js/views/home.js" />
 
+    <!-- Estilo da moldura e dos componentes. O estilo de cada área (home, catalog, cart, account,
+         customizer) é carregado pelo roteador junto com a tela, logo antes da marca abaixo:
+         a ordem das folhas continua a mesma de sempre. -->
     <link rel="stylesheet" href="css/tokens.css" />
     <link rel="stylesheet" href="css/base.css" />
     <link rel="stylesheet" href="css/components.css" />
     <link rel="stylesheet" href="css/shell.css" />
-    <link rel="stylesheet" href="css/home.css" />
-    <link rel="stylesheet" href="css/catalog.css" />
-    <link rel="stylesheet" href="css/cart.css" />
-    <link rel="stylesheet" href="css/account.css" />
-    <link rel="stylesheet" href="css/customizer.css" />
-
-    <script type="importmap">
-      {
-        "imports": {
-          "three": "./vendor/three/three.module.min.js",
-          "three/addons/": "./vendor/three/addons/"
-        }
-      }
-    </script>
+    <meta name="bolab-area-css" content="" />
   </head>
   <body data-layout="default">
     <a class="skip-link" href="#/" data-skip>Pular para o conteúdo</a>
@@ -83,21 +111,8 @@
     <nav id="tabbar" class="tabbar" aria-label="Navegação principal"></nav>
 
     <noscript>
-      <p style="padding: 24px; text-align: center">Para usar a loja BOLAB, ative o JavaScript no seu navegador.</p>
+      <p class="boot__fail">Para usar a loja BOLAB, ative o JavaScript no seu navegador.</p>
     </noscript>
-    <script>
-      // Se algum arquivo essencial não chegar (rede instável), a pessoa vê um aviso com
-      // "Tentar de novo" em vez de ficar olhando a logo para sempre.
-      function bolabBootFail() {
-        var boot = document.getElementById('boot');
-        if (!boot || window.__bolabReady) return;
-        boot.innerHTML =
-          '<div class="boot__fail"><img src="assets/logo-mark.webp" alt="" width="48" height="74" />' +
-          '<h1>Não conseguimos abrir a loja</h1><p>Confira sua conexão com a internet e tente de novo.</p>' +
-          '<button class="btn" type="button" onclick="location.reload()">Tentar de novo</button></div>';
-      }
-      setTimeout(bolabBootFail, 12000);
-    </script>
-    <script type="module" src="js/app.js" onerror="bolabBootFail()"></script>
+    <script type="module" src="js/app.js"></script>
   </body>
 </html>

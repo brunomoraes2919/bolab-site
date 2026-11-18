@@ -81,6 +81,38 @@
   box-shadow: 0 1px 0 var(--line), 0 4px 16px rgba(17, 17, 20, 0.05);
 }
 
+/* Tela demorando a chegar (js/router.js põe .is-routing no <body> depois de um instante): uma
+   linha fina corre sob o cabeçalho. Em rede boa ela nem aparece. */
+.header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 2px;
+  background: var(--action);
+  opacity: 0;
+  transform: scaleX(0);
+  transform-origin: left;
+  pointer-events: none;
+}
+
+body.is-routing .header::after {
+  opacity: 1;
+  animation: routing 2.4s cubic-bezier(0.1, 0.7, 0.2, 1) forwards;
+}
+
+@keyframes routing {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(0.86);
+  }
+}
+
+
 .header__inner {
   display: flex;
   align-items: center;
@@ -140,9 +172,12 @@
 }
 
 .header__where-label {
+  overflow: hidden;
   color: var(--text-2);
   font-size: var(--fs-2xs);
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap; /* com o texto ampliado o rótulo não quebra em duas linhas (sairia do cabeçalho) */
 }
 
 .header__where-place {
@@ -368,6 +403,13 @@
     font-size: var(--fs-sm);
   }
 
+  /* tablet deitado: 16 px, para o iPad não ampliar a página ao focar */
+  @media (pointer: coarse) {
+    .header__search input {
+      font-size: var(--fs-md);
+    }
+  }
+
   .header__actions {
     gap: 4px;
     margin-right: 0;
@@ -416,6 +458,17 @@
   .header__cart.has-items {
     background: var(--action);
     color: #fff;
+  }
+
+  /* No botão com valor o contador fica ao lado do ícone, não por cima: "9+" não encosta no preço. */
+  .header__cart-icon {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .header__cart-icon .count-badge {
+    position: static;
   }
 
   .header__cart.has-items .count-badge {
@@ -497,13 +550,15 @@
     min-height: 46px;
   }
 
+  /* Com o texto ampliado (200%) ou em janela estreita, os links descem para outra linha em vez
+     de sumirem atrás do recorte. */
   .header__nav {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 2px;
+    gap: 0 2px;
     margin-left: -12px;
     min-width: 0;
-    overflow: hidden;
   }
 
   .header__nav a {
@@ -520,8 +575,10 @@
     transition: color var(--t-fast);
   }
 
-  .header__nav a:hover {
-    color: var(--text);
+  @media (hover: hover) {
+    .header__nav a:hover {
+      color: var(--text);
+    }
   }
 
   .header__nav a.is-active {
@@ -573,6 +630,7 @@
   }
 
   .subnav__info button {
+    position: relative;
     min-height: 36px;
     padding: 0 10px;
     border-radius: 8px;
@@ -581,12 +639,25 @@
     font-weight: 600;
   }
 
+  /* 36 px no desenho, 44 px de área de toque (tablet deitado) */
+  .subnav__info button::before {
+    content: "";
+    position: absolute;
+    inset: -4px 0;
+  }
+
   .subnav__info button strong {
     font-weight: 800;
     letter-spacing: 0.03em;
   }
 
-  .subnav__info button:hover {
+  @media (hover: hover) {
+    .subnav__info button:hover {
+      background: var(--rose-100);
+    }
+  }
+
+  .subnav__info button:active {
     background: var(--rose-100);
   }
 
@@ -599,6 +670,23 @@
 @media (min-width: 900px) and (max-width: 1179px) {
   .subnav__info {
     display: none;
+  }
+}
+
+/* Janela estreita de computador (tablet deitado): os oito links cabem em uma linha só. */
+@media (min-width: 900px) and (max-width: 1039px) {
+  .header__nav {
+    margin-left: -8px;
+  }
+
+  .header__nav a {
+    padding: 0 8px;
+    font-size: var(--fs-meta);
+  }
+
+  .header__nav a.is-active::after {
+    left: 8px;
+    right: 8px;
   }
 }
 
@@ -657,6 +745,15 @@
   gap: 8px;
 }
 
+/* endereço de várias linhas: ícone e marca de seleção ficam no alto, junto do nome */
+.recv__addresses .option {
+  align-items: flex-start;
+}
+
+.recv__addresses .option__check {
+  margin-top: 9px;
+}
+
 /* nome do endereço e endereço em linhas separadas (são <span> dentro de <label>) */
 .recv__addresses .option__title,
 .recv__addresses .option__desc {
@@ -708,7 +805,9 @@
   gap: 3px;
   height: var(--tabbar-h);
   color: var(--text-3);
-  font-size: var(--fs-2xs);
+  /* Com o texto do aparelho ampliado os rótulos crescem só até onde cabem nas cinco colunas
+     (13,5 px); além disso eles se atropelavam. O ícone e o nome acessível continuam valendo. */
+  font-size: min(var(--fs-2xs), 13.5px);
   font-weight: 600;
   transition: color var(--t-fast);
 }
@@ -716,6 +815,18 @@
 .tabbar a svg {
   width: 23px;
   height: 23px;
+  transition: transform var(--t-fast) var(--ease);
+}
+
+/* toque: o ícone afunda um pouco na hora, antes de a tela trocar */
+.tabbar a:active svg {
+  transform: scale(0.9);
+}
+
+.tabbar a {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .tabbar a.is-active {
@@ -815,6 +926,180 @@
   from {
     opacity: 0;
     transform: translateY(12px);
+  }
+}
+
+/* ───────── Tablet (720–899 px) ─────────
+   Cabeçalho com a logo inteira, o contexto de entrega em caixa, a busca no meio e o carrinho com
+   o valor (por isso a barra "Ver carrinho" não aparece aqui: o botão do cabeçalho faz o papel dela
+   e está sempre à vista). A barra inferior continua, com os itens agrupados no centro. */
+@media (min-width: 600px) and (max-width: 899px) {
+  .tabbar {
+    grid-template-columns: repeat(5, minmax(0, 116px));
+    justify-content: center;
+  }
+}
+
+@media (min-width: 720px) and (max-width: 899px) {
+  .header {
+    box-shadow: 0 1px 0 var(--line);
+  }
+
+  .header__inner {
+    gap: 12px;
+  }
+
+  .header__logo {
+    margin-right: 0;
+  }
+
+  .header__logo img {
+    height: 38px;
+  }
+
+  .header__where {
+    flex: none;
+    gap: 8px;
+    max-width: 216px;
+    min-height: 46px;
+    padding: 4px 10px 4px 6px;
+    margin-left: 0;
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+
+  .header__where-icon {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: var(--rose-50);
+    color: var(--action);
+  }
+
+  .header__where-icon svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .header__where-chev {
+    align-self: center;
+    margin-bottom: 0;
+    color: var(--text-2);
+  }
+
+  .header__search {
+    display: block;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .header__search input {
+    height: 46px;
+  }
+
+  .header__search-link {
+    display: none;
+  }
+
+  .header__actions {
+    margin-right: 0;
+  }
+
+  .header__cart {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    width: auto;
+    min-width: 46px;
+    height: 46px;
+    padding: 0 12px;
+    border-radius: var(--r-md);
+    background: var(--fill);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .header__cart.has-items {
+    padding: 0 14px 0 12px;
+    background: var(--action);
+    color: #fff;
+  }
+
+  .header__cart-icon {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .header__cart-icon .count-badge {
+    position: static;
+  }
+
+  .header__cart.has-items .count-badge {
+    background: #fff;
+    color: var(--rose-700);
+    box-shadow: none;
+  }
+
+  .header__cart-icon svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* o valor só aparece quando há itens; vazio, o botão é só o ícone */
+  .header__cart.has-items .header__cart-total {
+    display: inline;
+    font-variant-numeric: tabular-nums;
+  }
+
+  body.has-cartbar {
+    --cartbar-h: 0px;
+  }
+
+  body.has-cartbar .cartbar {
+    display: none;
+  }
+
+  /* Rodapé: os três contatos lado a lado. */
+  .footer__contact {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .footer__contact .row {
+    align-items: flex-start;
+    padding: 14px;
+  }
+
+  .footer__contact .row + .row {
+    border-top: 0;
+    border-left: 1px solid var(--line-soft);
+  }
+
+  .footer__contact .row__chev {
+    display: none;
+  }
+}
+
+/* Tablet estreito: o contexto de entrega fica sem a caixinha do ícone, para a busca caber. */
+@media (min-width: 720px) and (max-width: 819px) {
+  .header__where {
+    max-width: 166px;
+    padding-left: 12px;
+  }
+
+  .header__where-icon {
+    display: none;
+  }
+}
+
+/* Com largura de sobra, "Cuiabá e Várzea Grande" cabe inteiro. */
+@media (min-width: 820px) and (max-width: 899px) {
+  .header__where {
+    max-width: 258px;
   }
 }
 
@@ -960,12 +1245,14 @@ body {
     background: rgba(255, 255, 255, 0.08);
   }
 
-  .footer__social .icon-btn:hover {
-    background: var(--action);
-    color: #fff;
+  @media (hover: hover) {
+    .footer__social .icon-btn:hover {
+      background: var(--action);
+      color: #fff;
+    }
   }
 
-  .footer h3 {
+  .footer h2 {
     margin-bottom: var(--s-3);
     color: #fff;
     font-size: var(--fs-sm);
@@ -974,23 +1261,25 @@ body {
   }
 
   .footer li {
-    padding-block: 2px;
     color: #C9B3BA;
   }
 
   .footer li a {
-    display: inline-block;
-    padding-block: 6px; /* área de toque confortável em tablet deitado */
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px; /* área de toque em tablet deitado */
   }
 
   .footer li:not(:has(a)) {
-    padding-block: 8px;
+    padding-block: 10px;
   }
 
-  .footer li a:hover {
-    color: #fff;
-    text-decoration: underline;
-    text-underline-offset: 3px;
+  @media (hover: hover) {
+    .footer li a:hover {
+      color: #fff;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
   }
 
   .footer__bottom {
@@ -1075,4 +1364,47 @@ body[data-layout="focus"] .header__inner {
 
 .stars .is-on {
   color: var(--star);
+}
+
+/* Etiqueta "Sem internet" (js/app.js): discreta, logo abaixo do cabeçalho, sem empurrar a página. */
+.offline-bar {
+  position: fixed;
+  top: calc(var(--header-h) + env(safe-area-inset-top, 0px) + var(--s-2));
+  left: 50%;
+  z-index: var(--z-sticky);
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: var(--r-pill);
+  background: var(--text);
+  color: #fff;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: var(--shadow-2);
+  pointer-events: none;
+}
+
+body[data-layout="immersive"] .offline-bar {
+  top: calc(env(safe-area-inset-top, 0px) + var(--s-2));
+}
+
+/* Lugar guardado para o cabeçalho (e, no computador, para a faixa de seções) enquanto o
+   JavaScript ainda não os desenhou. Sem isso a primeira pintura saía sem eles e o conteúdo
+   descia quando apareciam (salto de layout). O js/boot.js marca no <html> as entradas que não
+   têm essas faixas: personalizador (tela cheia) e login/checkout (sem faixa de seções). */
+.header:empty {
+  min-height: var(--header-h);
+}
+
+@media (min-width: 900px) {
+  .subnav:empty {
+    min-height: 47px;
+  }
+}
+
+html[data-entry="immersive"] .header:empty,
+html[data-entry="immersive"] .subnav:empty,
+html[data-entry="focus"] .subnav:empty {
+  display: none;
 }

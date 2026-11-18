@@ -97,6 +97,13 @@
   box-shadow: inset 0 0 0 2px var(--action);
 }
 
+/* No toque, todo campo tem 16 px: abaixo disso o iPhone amplia a página ao focar e não volta. */
+@media (pointer: coarse) {
+  .catalog-sort .select {
+    font-size: var(--fs-md);
+  }
+}
+
 /* Resultados: seções (celular), lista filtrada ou grade (computador). */
 .catalog-results {
   display: grid;
@@ -190,8 +197,26 @@
   }
 }
 
-/* Tablet: as linhas de cardápio em duas colunas, cada uma no seu cartão. */
-@media (min-width: 640px) and (max-width: 899px) {
+/* Tablet: a busca é a do cabeçalho (ficam só as abas presas no topo) e as linhas de cardápio
+   vão em duas colunas, cada uma no seu cartão. */
+@media (min-width: 720px) and (max-width: 899px) {
+  .catalog-search {
+    display: none;
+  }
+
+  .catalog-top.is-compact {
+    transform: none;
+  }
+
+  .catalog-sec__title {
+    margin-bottom: var(--s-3);
+    font-size: var(--fs-xl);
+  }
+
+  .catalog-results {
+    gap: var(--s-5);
+  }
+
   .catalog-list,
   .favs-list {
     display: grid;
@@ -581,6 +606,27 @@
   /* avisos logo acima do rodapé de compra */
   body:has(.pd-sticky) .toast-host {
     bottom: calc(84px + var(--safe-bottom));
+  }
+}
+
+/* Tablet: o rodapé de compra fica na largura de um botão confortável, no centro. */
+@media (min-width: 600px) and (max-width: 899px) {
+  .pd-sticky {
+    padding-inline: max(var(--gutter), calc((100vw - 640px) / 2));
+  }
+}
+
+@media (min-width: 600px) and (max-width: 719px) {
+  .pd-photo {
+    aspect-ratio: 16 / 10;
+  }
+}
+
+/* Tablet em pé: a foto acompanha a rolagem enquanto a pessoa escolhe tamanho e escreve a mensagem. */
+@media (min-width: 720px) and (max-width: 899px) {
+  .pd-photo {
+    position: sticky;
+    top: calc(var(--header-h) + var(--s-4));
   }
 }
 

@@ -1,10 +1,11 @@
 // BOLAB — carrinho ("sacola" do aplicativo).
 import { html, icon, money, plural, on, toast } from '../ui.js';
-import { photo, lineThumb, qtyStepper, pageHead, productCard, totalsSummary, priceButton, sectionHead, promoBanner, dayLabel, listRow } from '../components.js';
+import { photo, lineThumb, qtyStepper, pageHead, productCard, totalsSummary, priceButton, sectionHead, promoBanner, dayLabel, listRow, prepLabel } from '../components.js';
 import { cart, schedule, store } from '../store.js';
 import { receiveContext } from '../shell.js';
 import { PRODUCTS, addOns, getProduct, isCake } from '../data/products.js';
 import { SITE, COUPONS, WALLET_COUPONS } from '../data/site.js';
+import { MONTAR, montarFrom } from '../data/montar.js'; // r5-qa: o convite ao personalizador sai de um lugar só
 
 /* O que a pessoa está digitando (e o que já viu) sobrevive aos redesenhos da tela. */
 const draft = { coupon: '', couponError: '', pct: 0, openDetails: new Set(), freshLine: '' };
@@ -145,6 +146,7 @@ function lineItem(l) {
         </div>
         ${custom ? html`<span class="badge badge--rose cart-line__tag">${icon('cube')}Montado em 3D</span>` : ''}
         ${l.sizeLabel ? html`<p class="cart-line__meta">${l.sizeLabel}</p>` : ''}
+        ${custom && l.prepHours ? html`<p class="cart-line__meta cart-line__prep">${icon('clock')}<span>${prepLabel(l.prepHours)}${l.prepHours >= 72 ? ` (${Math.round(l.prepHours / 24)} dias)` : ''}</span></p>` : ''}
         ${parts.length && !open ? html`<p class="cart-line__meta cart-line__recipe">${parts.map((p) => p.value).join(' · ')}</p>` : ''}
         ${l.note ? html`<p class="cart-line__meta cart-line__note">${icon('message')}<span>${l.note}</span></p>` : ''}
         ${l.qty > 1 ? html`<p class="cart-line__meta">${l.qty} × ${money(l.price)}</p>` : ''}
@@ -334,7 +336,7 @@ function emptyCart() {
         <p>Escolha um bolo do cardápio ou monte o seu em 3D.</p>
         <div class="cart-empty__cta">
           <a class="btn" href="#/cardapio">Ver cardápio</a>
-          <a class="btn btn--secondary" href="#/monte-seu-bolo">${icon('cube')}Montar meu bolo em 3D</a>
+          <a class="btn btn--secondary" href="${MONTAR.href}">${icon('cube')}${MONTAR.button}</a>
         </div>
       </div>
       <section class="cart-picks" aria-labelledby="cart-picks-t">
@@ -344,11 +346,11 @@ function emptyCart() {
       <div class="cart-empty__promo">
         ${promoBanner({
           tone: 'stage',
-          tag: 'Só na BOLAB',
-          title: 'Monte o seu em 3D',
-          text: 'Massa, recheio e cobertura do seu jeito.',
-          cta: 'Montar agora',
-          href: '#/monte-seu-bolo',
+          tag: MONTAR.tag,
+          title: MONTAR.title,
+          text: `${MONTAR.line} ${montarFrom()}`,
+          cta: MONTAR.cta,
+          href: MONTAR.href,
           img: 'assets/img/cz-morango.webp',
           cutout: true,
         })}

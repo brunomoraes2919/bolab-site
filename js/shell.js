@@ -5,6 +5,7 @@ import { auth, cart, favs, store, prefs, addresses, schedule, orders } from './s
 import { navigate, onRoute, currentRoute, goBack } from './router.js';
 import { SITE, CATEGORIES } from './data/site.js';
 import { dayLabel } from './components.js';
+import { MONTAR } from './data/montar.js';
 
 const CATS = CATEGORIES.filter((c) => c.id !== 'todos');
 
@@ -13,7 +14,7 @@ const NAV = [
   { href: '#/', label: 'Início', match: (p) => p === '/' },
   { href: '#/cardapio', label: 'Cardápio', match: (p, q) => (p === '/cardapio' && !q.cat) || p.startsWith('/produto') },
   ...CATS.map((c) => ({ href: `#/cardapio?cat=${c.id}`, label: c.label, match: (p, q) => p === '/cardapio' && q.cat === c.id })),
-  { href: '#/monte-seu-bolo', label: 'Monte o seu em 3D', match: (p) => p.startsWith('/monte-seu-bolo'), highlight: true },
+  { href: MONTAR.href, label: MONTAR.name, match: (p) => p.startsWith('/monte-seu-bolo'), highlight: true },
   { href: '#/pedidos', label: 'Meus pedidos', match: (p) => p.startsWith('/pedido') },
 ];
 
@@ -195,7 +196,7 @@ function renderHeader() {
         ${focus
           ? html`<img src="assets/logo.webp" alt="BOLAB" width="103" height="40" />`
           : html`<picture>
-              <source media="(min-width: 900px)" srcset="assets/logo.webp" width="113" height="44" />
+              <source media="(min-width: 720px)" srcset="assets/logo.webp" width="113" height="44" />
               <img src="assets/logo-mark.webp" alt="BOLAB" width="22" height="34" />
             </picture>`}
       </a>
@@ -270,9 +271,9 @@ function renderTabbar() {
   setHtml('tabbar', html`
     <a href="#/" class="${is(home)}" ${cur(home)}>${icon('home')}<span>Início</span></a>
     <a href="#/cardapio" class="${is(menu)}" ${cur(menu)}>${icon('cake')}<span>Cardápio</span></a>
-    <a href="#/monte-seu-bolo" class="tabbar__fab" aria-label="Monte seu bolo em 3D">
+    <a href="${MONTAR.href}" class="tabbar__fab" aria-label="${MONTAR.tab}: ${MONTAR.name}">
       <span class="tabbar__fab-btn">${icon('cube')}</span>
-      <span>Montar</span>
+      <span>${MONTAR.tab}</span>
     </a>
     <a href="#/pedidos" class="${is(orders)}" ${cur(orders)}>${icon('receipt')}<span>Pedidos</span></a>
     <a href="${auth.isLogged() ? '#/conta' : '#/entrar'}" class="${is(account)}" ${cur(account)}>${icon('user')}<span>${auth.isLogged() ? 'Conta' : 'Entrar'}</span></a>
@@ -281,10 +282,11 @@ function renderTabbar() {
 
 /* ───────── Barra "Ver carrinho" (celular) ─────────
    Aparece acima da barra inferior sempre que há itens no carrinho. Some nas telas que já têm
-   a sua barra de ação (produto, carrinho, checkout, atendimento), no personalizador e no login.
+   a sua barra de ação (produto, carrinho, checkout, atendimento), no personalizador, no login e
+   nas telas de formulário da conta (#/conta/…), onde ela cobria os campos e o botão de salvar.
    Quando está à vista, <body> ganha a classe .has-cartbar e a variável --cartbar-h (css/shell.css)
    passa a valer a altura dela, para as outras telas reservarem o espaço. */
-const NO_CARTBAR = /^\/(carrinho|checkout|produto\/|atendimento|monte-seu-bolo|entrar)/;
+const NO_CARTBAR = /^\/(carrinho|checkout|produto\/|atendimento|monte-seu-bolo|entrar|conta\/)/;
 
 function renderCartbar() {
   const { path } = currentRoute();
@@ -344,14 +346,14 @@ function renderFooter() {
           <div class="footer__social">${social}</div>
         </div>
         <div>
-          <h3>Cardápio</h3>
+          <h2>Cardápio</h2>
           <ul>
             ${CATS.map((c) => html`<li><a href="#/cardapio?cat=${c.id}">${c.label}</a></li>`)}
-            <li><a href="#/monte-seu-bolo">Monte o seu em 3D</a></li>
+            <li><a href="${MONTAR.href}">${MONTAR.name}</a></li>
           </ul>
         </div>
         <div>
-          <h3>Sua conta</h3>
+          <h2>Sua conta</h2>
           <ul>
             <li><a href="#/pedidos">Meus pedidos</a></li>
             <li><a href="#/favoritos">Favoritos</a></li>
@@ -360,7 +362,7 @@ function renderFooter() {
           </ul>
         </div>
         <div>
-          <h3>Atendimento</h3>
+          <h2>Atendimento</h2>
           <ul>
             <li><a href="#/atendimento">Fale com a gente</a></li>
             <li><a href="https://wa.me/${SITE.whatsapp}" target="_blank" rel="noopener">WhatsApp ${SITE.whatsappLabel}</a></li>

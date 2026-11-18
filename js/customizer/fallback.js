@@ -64,6 +64,10 @@ function drawBase(ctx, base, cx, baseY, cw, u) {
   } else if (base === 'madeira') board('#a8733f', '#7c5128', 0.1, 0.22);
   else if (base === 'dourada') board('#e3bb62', '#b98d2f', 0.05, 0.16);
   else if (base === 'prateada') board('#d9dce2', '#a9adb6', 0.05, 0.16);
+  // r5-estrutura: bases novas, em desenho aproximado (a boleira de vidro cai no prato claro, logo abaixo)
+  else if (base === 'tabua') board('#b98250', '#8a5c30', 0.08, 0.3);
+  else if (base === 'preta') board('#2a2628', '#131112', 0.06, 0.16);
+  else if (base === 'caixa') board('#c8a676', '#a8844e', 0.14, 0.2);
   else if (base === 'marmore') {
     board('#f1f0ed', '#c9c7c2', 0.09, 0.22);
     ctx.strokeStyle = 'rgba(120,120,128,0.45)';

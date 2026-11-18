@@ -3,8 +3,9 @@
 // Unidades: 1 = 10 cm. O bolo apoia em y = 0 e cresce para cima.
 import * as THREE from 'three';
 import { rng } from './textures.js';
-import { getSize, getFilling, tierRadii, LAYER_CM, FILLING_CM, SINGLE_CM } from '../data/customizer.js';
+import { getSize, getFilling, getFillAdd, getDripAmount, getDripLength, PIECES, tierRadii, LAYER_CM, FILLING_CM, SINGLE_CM, VOLCANO_CM } from '../data/customizer.js';
 import { rng as seeded } from './textures.js';
+import { pieceCell, meringueHeight, COVER_TILE, FAULT_HALF, faultEdges } from './looks.js';
 
 const TAU = Math.PI * 2;
 const smoothstep = (a, b, x) => {
@@ -76,17 +77,21 @@ function circlePath(r, segments = 112) {
   return b.finish();
 }
 
-function roundedRectPath(hx, hz, rc) {
+function roundedRectPath(hx, hz, rc, low = false) {
+  // low (r5-junta3d): no celular, menos pontos nas quinas e nas retas — as malhas varridas por este contorno
+  // (massas e recheios do naked, cobertura) ficam um terço mais leves, e a reta continua reta
   const b = new PathBuilder();
   const H = Math.PI / 2;
-  b.arc(hx - rc, hz - rc, rc, 0, H);
-  b.lineTo(-hx + rc, hz, 0, 1);
-  b.arc(-hx + rc, hz - rc, rc, H, 2 * H);
-  b.lineTo(-hx, -hz + rc, -1, 0);
-  b.arc(-hx + rc, -hz + rc, rc, 2 * H, 3 * H);
-  b.lineTo(hx - rc, -hz, 0, -1);
-  b.arc(hx - rc, -hz + rc, rc, 3 * H, 4 * H);
-  b.lineTo(hx, hz - rc, 1, 0);
+  const step = low ? 0.11 : 0.07;
+  const seg = low ? 0.22 : 0.14;
+  b.arc(hx - rc, hz - rc, rc, 0, H, 1, step);
+  b.lineTo(-hx + rc, hz, 0, 1, seg);
+  b.arc(-hx + rc, hz - rc, rc, H, 2 * H, 1, step);
+  b.lineTo(-hx, -hz + rc, -1, 0, seg);
+  b.arc(-hx + rc, -hz + rc, rc, 2 * H, 3 * H, 1, step);
+  b.lineTo(hx - rc, -hz, 0, -1, seg);
+  b.arc(hx - rc, -hz + rc, rc, 3 * H, 4 * H, 1, step);
+  b.lineTo(hx, hz - rc, 1, 0, seg);
   return b.finish();
 }
 
@@ -94,7 +99,7 @@ function roundedRectPath(hx, hz, rc) {
  * Coração feito de arcos e retas tangentes: dois lóbulos bem separados, bico marcado na frente
  * e reentrância funda atrás — para ser lido como coração de qualquer ângulo.
  */
-function heartPath(k) {
+function heartPath(k, low = false) {
   const r = 0.54 * k;
   const a = 0.6 * k;
   const bz = -0.36 * k; // centro dos lóbulos (z)
@@ -112,11 +117,11 @@ function heartPath(k) {
   const nz = Math.sin(beta1);
   const b = new PathBuilder();
   b.arc(0, zN, rn, Math.PI / 2, alphaN, -1, 0.12);
-  b.arc(a, bz, r, beta0, TAU + beta1, 1, 0.06);
-  b.lineTo(rt * nx, tz + rt * nz, nx, nz);
+  b.arc(a, bz, r, beta0, TAU + beta1, 1, low ? 0.09 : 0.06);
+  b.lineTo(rt * nx, tz + rt * nz, nx, nz, low ? 0.2 : 0.14);
   b.arc(0, tz, rt, beta1, Math.PI - beta1, 1, 0.1);
-  b.lineTo(-a - r * nx, bz + r * nz, -nx, nz);
-  b.arc(-a, bz, r, Math.PI - beta1, Math.PI - beta0 + TAU, 1, 0.06);
+  b.lineTo(-a - r * nx, bz + r * nz, -nx, nz, low ? 0.2 : 0.14);
+  b.arc(-a, bz, r, Math.PI - beta1, Math.PI - beta0 + TAU, 1, low ? 0.09 : 0.06);
   b.arc(0, zN, rn, Math.PI - alphaN, Math.PI / 2, -1, 0.12);
   return b.finish();
 }
@@ -145,12 +150,51 @@ function hexPath(R) {
   return b.finish();
 }
 
+/** Oval (elipse): a mesma área de um redondo um pouco menor, esticada no sentido do comprimento. */
+function ellipsePath(a, b, segments = 120) {
+  const p = new PathBuilder();
+  for (let i = 0; i < segments; i++) {
+    const t = (i / segments) * TAU;
+    const c = Math.cos(t);
+    const s = Math.sin(t);
+    const l = Math.hypot(b * c, a * s) || 1;
+    p.push(a * c, b * s, (b * c) / l, (a * s) / l);
+  }
+  return p.finish();
+}
+
+/**
+ * Flor: seis gomos redondos (a fôrma de pétalas), com o encontro entre dois gomos arredondado para dentro —
+ * assim a cobertura, a calda e os bicos acompanham a reentrância sem dobrar sobre si mesmos.
+ */
+function petalPath(R, lobes = 6, low = false) {
+  const a = 0.5 * R; // do centro do bolo ao centro de cada gomo
+  const r = 0.47 * R; // raio de cada gomo
+  const rn = 0.09; // raio do arredondamento entre dois gomos
+  const half = Math.PI / lobes;
+  const d = a * Math.cos(half) + Math.sqrt((r + rn) ** 2 - (a * Math.sin(half)) ** 2); // centro do arredondamento
+  const delta = Math.atan2(a * Math.sin(half), d - a * Math.cos(half));
+  const b = new PathBuilder();
+  for (let k = 0; k < lobes; k++) {
+    const phi = k * 2 * half;
+    b.arc(a * Math.cos(phi), a * Math.sin(phi), r, phi - half - delta, phi + half + delta, 1, low ? 0.1 : 0.07);
+    const psi = phi + half;
+    b.arc(d * Math.cos(psi), d * Math.sin(psi), rn, psi + Math.PI + delta, psi + Math.PI - delta, -1, 0.16);
+  }
+  return b.finish();
+}
+
+/** Bolo visto de longe (r5-junta3d): de andares, ou GG. No celular, as camadas do naked usam perfis mais leves. */
+const farCake = (m) => (m.stack?.length || 1) >= 2 || (m.base?.R || m.R) > 1.3;
+
 /** Contorno da massa para um formato e raio nominal R (já descontada a espessura da cobertura). */
 export function shapePath(shape, R, detail = 1) {
-  if (shape === 'square') return roundedRectPath(R * 0.9 - 0.045, R * 0.9 - 0.045, 0.17);
-  if (shape === 'rect') return roundedRectPath(R * 1.14 - 0.045, R * 0.76 - 0.045, 0.17);
-  if (shape === 'heart') return heartPath(R);
+  if (shape === 'square') return roundedRectPath(R * 0.9 - 0.045, R * 0.9 - 0.045, 0.17, detail < 1);
+  if (shape === 'rect') return roundedRectPath(R * 1.14 - 0.045, R * 0.76 - 0.045, 0.17, detail < 1);
+  if (shape === 'heart') return heartPath(R, detail < 1);
   if (shape === 'hex') return hexPath(R);
+  if (shape === 'oval') return ellipsePath(R * 1.2 - 0.045, R * 0.82 - 0.045, detail < 1 ? 88 : 120);
+  if (shape === 'flor') return petalPath(R - 0.045, 6, detail < 1);
   return circlePath(R - 0.045, detail < 1 ? 80 : 112);
 }
 
@@ -270,6 +314,29 @@ export function pointInPath(path, px, pz) {
   return inside;
 }
 
+/** Onde a semirreta que sai de (cx, cz) na direção theta cruza o contorno: { t = distância, s = posição ao longo dele }. */
+export function raySpot(path, cx, cz, theta) {
+  const dx = Math.cos(theta);
+  const dz = Math.sin(theta);
+  const out = { t: 0, s: 0 };
+  for (let i = 0; i < path.n; i++) {
+    const j = (i + 1) % path.n;
+    const ex = path.x[j] - path.x[i];
+    const ez = path.z[j] - path.z[i];
+    const den = dx * ez - dz * ex;
+    if (Math.abs(den) < 1e-9) continue;
+    const ax = path.x[i] - cx;
+    const az = path.z[i] - cz;
+    const t = (ax * ez - az * ex) / den;
+    const u = (ax * dz - az * dx) / den;
+    if (t > out.t && u >= -1e-6 && u <= 1 + 1e-6) {
+      out.t = t;
+      out.s = path.s[i] + u * (path.s[i + 1] - path.s[i]);
+    }
+  }
+  return out;
+}
+
 /** Distância do ponto (cx, cz) até o contorno na direção theta. */
 export function rayHit(path, cx, cz, theta) {
   const dx = Math.cos(theta);
@@ -312,12 +379,20 @@ export function pathBounds(path) {
 // skirt = barra de calda acumulada no pé (coberturas despejadas)
 const FROST = {
   buttercream: { t: 0.045, rf: 0.03, lip: 0.006 },
+  chantininho: { t: 0.05, rf: 0.036, lip: 0.004 },
+  creamcheese: { t: 0.048, rf: 0.042, lip: 0.004 },
+  pasta: { t: 0.04, rf: 0.017 }, // pasta americana sobre ganache firme: quina viva
+  merengue: { t: 0.05, rf: 0.07 },
+  brigadeiro: { t: 0.05, rf: 0.05 },
+  coco: { t: 0.056, rf: 0.055 },
+  ganachebranca: { t: 0.036, rf: 0.045, skirt: 0.012 },
   chantilly: { t: 0.055, rf: 0.06, lip: 0.004 },
   ganache: { t: 0.036, rf: 0.045, skirt: 0.012 },
   glace: { t: 0.032, rf: 0.085, skirt: 0.016 },
   chocolate: { t: 0.048, rf: 0.05, lip: 0.005 },
   mousse: { t: 0.052, rf: 0.07 },
   naked: { t: 0, rf: 0.04 },
+  vulcao: { t: 0, rf: 0.11 }, // sem casca: a quina é a da própria massa, bem arredondada pela fôrma
 };
 
 /**
@@ -328,14 +403,19 @@ const NAKED_OUT = 0.028; // quanto o creme do topo (e o recheio estufado) passam
 
 function tierMetrics(config, R, cover, y0, detail) {
   const type = cover.type;
-  const semi = cover.style === 'seminaked' && type !== 'naked';
-  const naked = type === 'naked' || semi;
-  const n = config.layers.length;
+  // bolo vulcão: uma massa só, de fôrma de furo, sem casca de cobertura (o creme é um lençol à parte)
+  const volcano = config.shape === 'vulcao';
+  const semi = cover.style === 'seminaked' && type !== 'naked' && !volcano;
+  const naked = (type === 'naked' || semi) && !volcano;
+  const n = volcano ? 1 : config.layers.length;
   // camadas finas de massa e recheio quase da mesma espessura (1 unidade = 10 cm): a altura vem do número de
   // camadas. O bolo de 1 camada é o bolo simples, sem recheio: uma massa só, mais alta.
-  const layerH = (n === 1 ? SINGLE_CM : LAYER_CM) / 10;
+  const layerH = (volcano ? VOLCANO_CM : n === 1 ? SINGLE_CM : LAYER_CM) / 10;
   const fillH = FILLING_CM / 10;
-  const { t, rf, lip = 0, skirt = 0 } = naked ? FROST.naked : FROST[type] || FROST.buttercream;
+  const spec = volcano ? FROST.vulcao : naked ? FROST.naked : FROST[type] || FROST.buttercream;
+  const { rf, lip = 0, skirt = 0 } = spec;
+  // fault line: o creme de fora é mais grosso (a faixa de confeitos fica rebaixada dentro dele)
+  const t = spec.t + (!naked && cover.style === 'faultline' ? 0.014 : 0);
   const layerY = [];
   const fillY = [];
   let y = 0;
@@ -348,7 +428,7 @@ function tierMetrics(config, R, cover, y0, detail) {
     }
   }
   const H = y;
-  const tTop = naked ? 0.07 : t + 0.006; // naked: uma camada generosa de creme por cima
+  const tTop = volcano ? 0.024 : naked ? 0.07 : t + 0.006; // naked: uma camada generosa de creme por cima
   const sponge = shapePath(config.shape, R, detail);
   const frost = offsetPath(sponge, naked ? NAKED_OUT : t); // superfície externa (cobertura ou borda do creme)
   const isHeart = config.shape === 'heart';
@@ -361,7 +441,12 @@ function tierMetrics(config, R, cover, y0, detail) {
   for (let i = 0; i < topFlat.n; i++) rMin = Math.min(rMin, Math.hypot(topFlat.x[i] - center.x, topFlat.z[i] - center.z));
   // espatulado e riscado não deixam a coroinha lisa na borda
   const crown = cover.style === 'rustico' || cover.style === 'pente' ? 0 : lip;
-  return { R, type, naked, semi, style: cover.style || 'liso', cover, n, fillIds: config.fillings.slice(), layerH, fillH, t, rf, lip: crown, skirt, detail, tTop, layerY, fillY, H, Ht: H + tTop, y0, sponge, frost, topFlat, center, bounds, rMin, shape: config.shape };
+  // coberturas com relevo de verdade (os picos do merengue): a malha é deslocada pela mesma função que desenha a
+  // textura. k / kTop = quantas vezes o azulejo se repete nas coordenadas da lateral / do topo.
+  const relief = !naked && type === 'merengue' ? { fn: meringueHeight(), amp: 0.062, ampTop: 0.09, zero: 0.16, k: 1.6 / COVER_TILE, kTop: (2.9 * R) / COVER_TILE, capScale: 1 / (2.9 * R) } : null;
+  // a calda deste bolo: quanta, até onde desce e se cobre só a frente (meia-lua)
+  const drip = { k: getDripAmount(config.drip?.amount)?.k ?? 1, len: getDripLength(config.drip?.length)?.k ?? 0.74, half: Boolean(config.drip?.half) };
+  return { R, type, naked, semi, volcano, relief, drip, style: cover.style || 'liso', cover, n, fillIds: config.fillings.slice(), fillAdds: (config.fillAdds || []).slice(), layerH, fillH, t, rf, lip: crown, skirt, detail, tTop, layerY, fillY, H, Ht: H + tTop, y0, sponge, frost, topFlat, center, bounds, rMin, shape: config.shape };
 }
 
 /**
@@ -391,11 +476,13 @@ export function cakeMetrics(config, detail = 1) {
 /* ───────── Superfície varrida ─────────
    profile: [{ d, y, nd, ny }] de baixo para cima (d = deslocamento para fora do contorno).
    Fecha com tampa plana no último ponto quando capTop = true. */
-export function sweep(path, profile, { capTop = false, capBottom = false, uRepeat = 1, vScale = 1, capScale = 0.5, center = { x: 0, z: 0 }, flip = false, wrap = false } = {}) {
+export function sweep(path, profile, { capTop = false, capBottom = false, capRings = 0, uRepeat = 1, vScale = 1, capScale = 0.5, center = { x: 0, z: 0 }, flip = false, wrap = false } = {}) {
   const n = path.n;
   const m = profile.length;
   const cols = n + 1;
-  const capVerts = (capTop ? cols + 1 : 0) + (capBottom ? cols + 1 : 0);
+  // tampa em anéis (da borda para o centro) quando o topo precisa de pontos no meio — relevo deslocado
+  const rings = capRings > 1 ? Array.from({ length: capRings }, (_, r) => 1 - Math.pow(r / capRings, 0.9)) : [1];
+  const capVerts = (capTop ? cols * rings.length + 1 : 0) + (capBottom ? cols + 1 : 0);
   const count = cols * m + capVerts;
   const pos = new Float32Array(count * 3);
   const nor = new Float32Array(count * 3);
@@ -444,24 +531,33 @@ export function sweep(path, profile, { capTop = false, capBottom = false, uRepea
   const cap = (row, up) => {
     const p = profile[row];
     const start = k;
-    for (let i = 0; i < cols; i++) {
-      const ii = i % n;
-      const x = path.x[ii] + path.nx[ii] * p.d;
-      const z = path.z[ii] + path.nz[ii] * p.d;
-      pos.set([x, p.y, z], k * 3);
-      nor.set([0, up ? 1 : -1, 0], k * 3);
-      uv.set([(x - center.x) * capScale + 0.5, (z - center.z) * capScale + 0.5], k * 2);
-      uv1.set([(x - center.x) * capScale + 0.5, (z - center.z) * capScale + 0.5], k * 2);
-      k++;
+    const fs = up ? rings : [1];
+    for (const f of fs) {
+      for (let i = 0; i < cols; i++) {
+        const ii = i % n;
+        const x = center.x + (path.x[ii] + path.nx[ii] * p.d - center.x) * f;
+        const z = center.z + (path.z[ii] + path.nz[ii] * p.d - center.z) * f;
+        pos.set([x, p.y, z], k * 3);
+        nor.set([0, up ? 1 : -1, 0], k * 3);
+        uv.set([(x - center.x) * capScale + 0.5, (z - center.z) * capScale + 0.5], k * 2);
+        uv1.set([(x - center.x) * capScale + 0.5, (z - center.z) * capScale + 0.5], k * 2);
+        k++;
+      }
     }
     pos.set([center.x, p.y, center.z], k * 3);
     nor.set([0, up ? 1 : -1, 0], k * 3);
     uv.set([0.5, 0.5], k * 2);
     uv1.set([0.5, 0.5], k * 2);
     const c = k++;
+    for (let r = 0; r < fs.length - 1; r++) {
+      const outer = start + r * cols;
+      const inner = outer + cols;
+      for (let i = 0; i < n; i++) index.push(inner + i, outer + i + 1, outer + i, inner + i, inner + i + 1, outer + i + 1);
+    }
+    const last = start + (fs.length - 1) * cols;
     for (let i = 0; i < n; i++) {
-      if (up) index.push(c, start + i + 1, start + i);
-      else index.push(c, start + i, start + i + 1);
+      if (up) index.push(c, last + i + 1, last + i);
+      else index.push(c, last + i, last + i + 1);
     }
   };
   if (capTop) cap(m - 1, true);
@@ -479,6 +575,51 @@ export function sweep(path, profile, { capTop = false, capBottom = false, uRepea
   geo.addGroup(0, sideCount, 0);
   if (topCount) geo.addGroup(sideCount, topCount, 1);
   if (index.length > sideCount + topCount) geo.addGroup(sideCount + topCount, index.length - sideCount - topCount, 0);
+  // como a malha está organizada (quem desloca os pontos depois precisa saber)
+  geo.userData.layout = { cols, rows: m, capStart: cols * m, capRings: capTop ? rings.length : 0 };
+  return geo;
+}
+
+/**
+ * Desloca a casca de cobertura pelo relevo dela (m.relief): cada ponto anda ao longo da própria normal o quanto
+ * a função de altura mandar — a mesma função que desenha a textura, então relevo e cor (o tostado) coincidem.
+ * Na lateral valem as coordenadas da lateral; no topo, as do topo; na quina, uma passa para a outra aos poucos
+ * (a borda do topo e o fim da lateral ocupam o mesmo lugar e precisam andar juntos).
+ */
+function applyRelief(geo, m, profile, sideRows) {
+  const { cols, rows, capStart, capRings } = geo.userData.layout;
+  const rl = m.relief;
+  const pos = geo.attributes.position;
+  const nor = geo.attributes.normal;
+  const uv = geo.attributes.uv;
+  const topH = (x, z) => rl.fn(((x - m.center.x) * rl.capScale + 0.5) * rl.kTop, ((z - m.center.z) * rl.capScale + 0.5) * rl.kTop);
+  for (let k = 0; k < pos.count; k++) {
+    let d;
+    if (k >= capStart) d = rl.ampTop * (topH(pos.getX(k), pos.getZ(k)) - rl.zero);
+    else {
+      const j = k % rows;
+      const side = rl.amp * (0.45 + 0.55 * smoothstep(0, 0.045, profile[j].y)) * (rl.fn(uv.getX(k) * rl.k, uv.getY(k) * rl.k) - rl.zero);
+      if (j < sideRows) d = side;
+      else {
+        const f = (j - sideRows + 1) / (rows - sideRows);
+        d = side + (rl.ampTop * (topH(pos.getX(k), pos.getZ(k)) - rl.zero) - side) * smoothstep(0, 1, f);
+      }
+    }
+    pos.setXYZ(k, pos.getX(k) + nor.getX(k) * d, pos.getY(k) + nor.getY(k) * d, pos.getZ(k) + nor.getZ(k) * d);
+  }
+  geo.computeVertexNormals();
+  // costuras: a primeira coluna e a última, e a borda do topo com o fim da lateral, dividem a mesma normal
+  const weld = (a, b) => {
+    const x = nor.getX(a) + nor.getX(b);
+    const y = nor.getY(a) + nor.getY(b);
+    const z = nor.getZ(a) + nor.getZ(b);
+    const l = Math.hypot(x, y, z) || 1;
+    nor.setXYZ(a, x / l, y / l, z / l);
+    nor.setXYZ(b, x / l, y / l, z / l);
+  };
+  for (let j = 0; j < rows; j++) weld(j, (cols - 1) * rows + j);
+  for (let r = 0; r < capRings; r++) weld(capStart + r * cols, capStart + r * cols + cols - 1);
+  for (let i = 0; i < cols; i++) weld(i * rows + rows - 1, capStart + i);
   return geo;
 }
 
@@ -491,6 +632,8 @@ function filletUp(profile, d, yTop, r, steps = 7) {
 
 /** Casca de cobertura: lateral reta, quina arredondada e topo plano. */
 export function buildFrosting(m) {
+  if (m.style === 'faultline') return buildFaultFrosting(m);
+  if (m.style === 'babados') return buildRuffleFrosting(m);
   const profile = [];
   if (m.skirt) {
     // cobertura despejada: uma barra arredondada de calda se acumula no pé do bolo
@@ -502,6 +645,13 @@ export function buildFrosting(m) {
     // logo acima da barra a lateral volta a ser reta (sem esta linha, a parede inteira herdaria a inclinação da barra)
     profile.push({ d: m.t, y: k * 2.6 + 0.006, nd: 1, ny: 0 });
   } else profile.push({ d: m.t, y: 0, nd: 1, ny: 0 });
+  if (m.relief) {
+    // relevo de verdade: a lateral ganha uma linha a cada 1,3 cm (2 cm no celular) para os picos terem onde nascer
+    const top = m.Ht - m.rf;
+    const rows = Math.max(3, Math.round(top / (m.detail < 1 ? 0.02 : 0.013)));
+    for (let i = 1; i < rows; i++) profile.push({ d: m.t, y: (top * i) / rows, nd: 1, ny: 0 });
+  }
+  const sideRows = profile.length;
   filletUp(profile, m.t, m.Ht + m.lip, m.rf, m.detail < 1 ? 6 : 8);
   if (m.lip) {
     // coroinha da espátula: sobe um fio na borda e se desfaz em direção ao centro do topo
@@ -513,6 +663,12 @@ export function buildFrosting(m) {
     ].forEach(([inset, k]) => profile.push({ d: edge - inset, y: m.Ht + m.lip * k, nd: 0.12, ny: 1 }));
   }
   const uRepeat = Math.max(2, Math.round(m.frost.length / 1.6));
+  if (m.relief) {
+    // (contorno com metade a mais de pontos: os picos têm uns 3 cm e precisam de 4 ou 5 pontos cada)
+    const dense = resamplePath(m.sponge, Math.round(m.sponge.n * 1.5));
+    const geo = sweep(dense, profile, { capTop: true, capRings: m.detail < 1 ? 6 : 9, uRepeat, vScale: 1 / 1.6, capScale: 1 / (2.9 * m.R), center: m.center, wrap: true });
+    return applyRelief(geo, m, profile, sideRows);
+  }
   return sweep(m.sponge, profile, { capTop: true, uRepeat, vScale: 1 / 1.6, capScale: 1 / (2.9 * m.R), center: m.center, wrap: true });
 }
 
@@ -588,7 +744,7 @@ export function buildSponge(m, i) {
     { d: 0, y: y0 + rb, nd: 1, ny: 0 },
     { d: 0.0025, y: (y0 + y1) / 2, nd: 1, ny: 0 }, // leve barriga no meio
   ];
-  const steps = m.detail < 1 ? 4 : 6;
+  const steps = m.detail < 1 ? (farCake(m) ? 2 : 4) : 6;
   for (let k = 0; k <= steps; k++) {
     const a = (k / steps) * (Math.PI / 2);
     profile.push({ d: -rt + rt * Math.cos(a), y: y1 - rt + rt * Math.sin(a), nd: Math.cos(a), ny: Math.sin(a) });
@@ -621,7 +777,7 @@ export function buildFillingBand(m, i) {
   const mid = (y0 + y1) / 2;
   const half = (y1 - y0) / 2 + 0.005;
   const bulge = m.semi ? 0.004 : BAND_BULGE;
-  const steps = m.detail < 1 ? 7 : 10;
+  const steps = m.detail < 1 ? (farCake(m) ? 4 : 7) : 10;
   const profile = [{ d: -0.03, y: y0 - 0.004, nd: 0, ny: -1 }];
   for (let k = 0; k <= steps; k++) {
     const a = -Math.PI / 2 + (k / steps) * Math.PI;
@@ -758,23 +914,47 @@ export function buildScrapeCoat(m) {
    onde não há, mergulha para dentro da cobertura e some. As gotas se fundem à borda como líquido. */
 const HIDDEN = -0.006; // calda mais de 0,6 mm para dentro da cobertura: não se vê
 
-/** Até onde a gota mais comprida da calda desce na lateral de um andar, medido do começo da quina do topo (m.Ht − m.rf). */
+/**
+ * Até onde a gota mais comprida da calda desce na lateral de um andar, medido do começo da quina do topo
+ * (m.Ht − m.rf). O comprimento escolhido (curta · média · longa) vem em m.drip.len; a longa chega quase ao pé.
+ */
 export function dripReach(m) {
-  return Math.min((m.Ht - m.rf) * 0.74, 0.66);
+  const len = m.drip?.len ?? 0.74;
+  const side = m.Ht - m.rf;
+  if (len >= 0.99) return Math.max(0.1, side - 0.03);
+  return Math.min(side * len, 0.66 * (len / 0.74));
 }
 
+/** Para onde a meia-lua da calda fica virada: a frente do bolo na vista padrão (ângulo no plano do chão). */
+const HALF_FRONT = Math.atan2(Math.cos((26 * Math.PI) / 180), Math.sin((26 * Math.PI) / 180));
+
+/**
+ * A calda. m.drip = { k: quanta (0,55 pouca · 1 média · 1,7 farta), len: até onde desce, half: meia-lua }.
+ * Na meia-lua a calda cobre só o lado da frente: no topo vira uma poça em crescente e, na lateral, as gotas
+ * param onde a poça acaba.
+ */
 export function buildDrip(m, seed = 1) {
   const d0 = m.naked ? NAKED_OUT + 0.002 : m.t; // no naked a calda assenta no creme do topo
   const rf = m.rf;
   const yTop = m.Ht;
   const sideH = yTop - rf;
   const r = rng(seed);
+  const amount = m.drip?.k ?? 1;
+  const half = Boolean(m.drip?.half);
   const outer = offsetPath(m.sponge, d0);
-  const lod = m.detail < 1 ? 2.1 : 1; // no celular a malha da calda tem ~1/4 dos triângulos
+  // no celular a malha da calda tem ~1/4 dos triângulos; em bolo de 3 andares (cada andar pequeno na tela), menos ainda
+  // (r5-junta3d: o GG — 30 cm ou mais no andar de baixo — também é visto de longe)
+  const far = (m.stack?.length || 1) >= 3 || (m.base?.R || m.R) > 1.3;
+  const lod = m.detail < 1 ? (far ? 3 : 2.1) : far ? 1.2 : 1;
   const ds = 0.0115 * lod;
   const cols = Math.max(96, Math.round(outer.length / ds));
   const col = resamplePath(outer, cols);
   const L = col.length;
+  // meia-lua: 1 onde há calda, 0 onde não há (com uma passagem macia nas duas pontas do crescente)
+  const maskOf = (x, z) => (half ? smoothstep(-0.22, 0.2, Math.cos(Math.atan2(z - m.center.z, x - m.center.x) - HALF_FRONT)) : 1);
+  const mask = new Float32Array(cols);
+  for (let i = 0; i < cols; i++) mask[i] = maskOf(col.x[i], col.z[i]);
+  const maskAtS = (sx) => mask[Math.min(cols - 1, Math.max(0, Math.round((sx / L) * cols) % cols))];
 
   // sorteio das gotas: a maioria curta, algumas longas — como calda de verdade
   const maxLen = dripReach(m);
@@ -783,19 +963,23 @@ export function buildDrip(m, seed = 1) {
   while (s < L - 0.07) {
     // de verdade: umas poucas gotas compridas, muitas médias e algumas que mal saem da borda
     const kind = r();
-    const long = kind < 0.3;
+    const long = kind < (amount > 1.3 ? 0.44 : 0.3);
     const len = maxLen * (long ? 0.55 + r() * 0.45 : kind < 0.78 ? 0.22 + r() * 0.3 : 0.1 + r() * 0.1);
-    drips.push({ s, w: 0.023 + r() * 0.014 + (long ? 0.006 : 0), len: Math.max(0.075, len) });
-    s += 0.1 + r() * 0.2;
+    const w = 0.023 + r() * 0.014 + (long ? 0.006 : 0);
+    const step = (0.1 + r() * 0.2) / amount;
+    if (maskAtS(s) > 0.6) drips.push({ s, w, len: Math.max(0.075, len * (0.5 + 0.5 * maskAtS(s))) });
+    s += Math.max(step, w * 2.1);
   }
   const lipPhase = [r() * TAU, r() * TAU, r() * TAU];
-  const lipAt = (x) => 0.03 + 0.012 * Math.sin((x / L) * TAU * 7 + lipPhase[0]) + 0.008 * Math.sin((x / L) * TAU * 17 + lipPhase[1]) + 0.005 * Math.sin((x / L) * TAU * 31 + lipPhase[2]);
+  const lipBase = 0.03 + 0.012 * Math.max(0, amount - 1);
+  const lipAt = (x) => lipBase + 0.012 * Math.sin((x / L) * TAU * 7 + lipPhase[0]) + 0.008 * Math.sin((x / L) * TAU * 17 + lipPhase[1]) + 0.005 * Math.sin((x / L) * TAU * 31 + lipPhase[2]);
 
-  const t0 = 0.017;
+  const t0 = 0.017 + 0.003 * Math.max(0, amount - 1);
   const dv = 0.012 * lod;
   const F = 5;
+  const T = half ? 2 : 0; // meia-lua: duas linhas a mais no topo (a beira de dentro da poça)
   const rowsSide = Math.ceil((maxLen + 0.05) / dv);
-  const rows = 1 + F + rowsSide;
+  const rows = T + 1 + F + rowsSide;
   const vertCount = (cols + 1) * rows + 1;
   const pos = new Float32Array(vertCount * 3);
   const depth = new Float32Array(vertCount); // quanto cada ponto da lateral fica para fora (+) ou para dentro (−) da cobertura
@@ -807,8 +991,8 @@ export function buildDrip(m, seed = 1) {
   // onde não há calda o lençol mergulha até sumir. No naked ele parte de 3 mm fora da massa (assenta no creme do
   // topo), então precisa mergulhar mais: até 3 mm para dentro da massa, que é torta e recua aqui e ali.
   const floor = m.naked ? -(d0 + 0.03) : -0.03;
-  const thickness = (sx, v, near) => {
-    let sd = v - lipAt(sx);
+  const thickness = (sx, v, near, mk) => {
+    let sd = v - (lipAt(sx) * mk - (1 - mk) * 0.06);
     let bulb = 0;
     for (const dr of near) {
       let dsx = Math.abs(sx - dr.s);
@@ -825,10 +1009,13 @@ export function buildDrip(m, seed = 1) {
     return (0.017 + 0.019 * bulb) * Math.sin((Math.PI / 2) * Math.min(1, -sd / 0.028));
   };
 
+  const poolW = Math.max(0.12, m.rMin * 0.62);
+  const poolPhase = r() * TAU;
   let k = 0;
   for (let i = 0; i <= cols; i++) {
     const ii = i % cols;
     const sx = col.s[ii];
+    const mk = mask[ii];
     const near = drips.filter((dr) => {
       let dsx = Math.abs(sx - dr.s);
       if (dsx > L / 2) dsx = L - dsx;
@@ -838,21 +1025,33 @@ export function buildDrip(m, seed = 1) {
     const pz = col.z[ii];
     const nx = col.nx[ii];
     const nz = col.nz[ii];
-    const tSide0 = thickness(sx, 0, near);
-    // linha 0: borda da "poça" no topo
-    pos.set([px - nx * rf, yTop + t0, pz - nz * rf], k * 3);
+    const tSide0 = thickness(sx, 0, near, mk);
+    const on = smoothstep(0, 0.45, mk); // quanto a calda "existe" nesta coluna
+    const lift = t0 * on - 0.004 * (1 - on); // sem calda, o lençol fica um fio abaixo da cobertura
+    if (half) {
+      // a beira de dentro da poça: um crescente de borda irregular, que afina até sumir
+      const inset = rf + poolW * mk * (0.86 + 0.14 * Math.sin((sx / L) * TAU * 3 + poolPhase));
+      pos.set([px - nx * inset, yTop - 0.003, pz - nz * inset], k * 3);
+      k++;
+      const mid = Math.max(rf, inset - 0.022);
+      pos.set([px - nx * mid, yTop + lift, pz - nz * mid], k * 3);
+      k++;
+    }
+    // borda da "poça" no topo
+    pos.set([px - nx * rf, yTop + lift, pz - nz * rf], k * 3);
     k++;
     for (let f = 1; f <= F; f++) {
       const a = (f / F) * (Math.PI / 2);
       // lábio macio: a calda engrossa um pouco ao dobrar a quina do topo
-      const th = t0 + (tSide0 - t0) * smoothstep(0, 1, f / F) + 0.005 * Math.sin((Math.PI * f) / F);
+      const full = t0 + (tSide0 - t0) * smoothstep(0, 1, f / F) + 0.005 * Math.sin((Math.PI * f) / F);
+      const th = full * on - 0.01 * (1 - on);
       const off = -rf + (rf + th) * Math.sin(a);
       pos.set([px + nx * off, yTop - rf + (rf + th) * Math.cos(a), pz + nz * off], k * 3);
       k++;
     }
     for (let j = 1; j <= rowsSide; j++) {
       const v = j * dv;
-      const th = thickness(sx, v, near);
+      const th = thickness(sx, v, near, mk);
       pos.set([px + nx * th, Math.max(0.004, sideH - v), pz + nz * th], k * 3);
       depth[k] = th;
       k++;
@@ -864,15 +1063,17 @@ export function buildDrip(m, seed = 1) {
   // no naked só some o que entrou bem na massa (ela recua até uns 2,3 mm; o véu de creme é meio transparente)
   const hidden = m.naked ? -(d0 + 0.026) : HIDDEN;
   for (let i = 0; i < cols; i++) {
+    // meia-lua: nas colunas sem calda nada é desenhado
+    if (half && mask[i] < 0.001 && mask[(i + 1) % cols] < 0.001) continue;
     for (let j = 0; j < rows - 1; j++) {
       const a = i * rows + j;
       const b = (i + 1) * rows + j;
       // onde não há calda o lençol mergulha na cobertura: esses quadrados nunca aparecem e ficam de fora
       // (entre as gotas é a maior parte da malha; quem tem um canto à vista continua inteiro)
-      if (j > F && depth[a] < hidden && depth[b] < hidden && depth[a + 1] < hidden && depth[b + 1] < hidden) continue;
+      if (j > F + T && depth[a] < hidden && depth[b] < hidden && depth[a + 1] < hidden && depth[b + 1] < hidden) continue;
       index.push(a, b, a + 1, b, b + 1, a + 1);
     }
-    index.push(centerIndex, (i + 1) * rows, i * rows);
+    if (!half) index.push(centerIndex, (i + 1) * rows, i * rows);
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -890,6 +1091,9 @@ export function buildDrip(m, seed = 1) {
     nor.setXYZ(a, x / l, y / l, z / l);
     nor.setXYZ(b, x / l, y / l, z / l);
   }
+  // r5-cena: como a malha está organizada e onde fica cada gota, para a animação da calda escorrendo
+  // (vértice = coluna × rows + linha; linhas: `top` da poça, 1 da borda, `fillet` da quina e `rowsSide` da lateral)
+  geo.userData.drip = { cols, rows, top: T, fillet: F, rowsSide, dv, sideH, yTop, L, colS: Array.from(col.s), maxLen, drips: drips.map((d) => ({ s: d.s, w: d.w, len: d.len })) };
   return geo;
 }
 
@@ -1093,34 +1297,67 @@ export function buildCutFaces(m, { thetaA, thetaB, drip = false, seed = 1 }) {
           jt.push([rr, y0 + Math.max(0.006, thick) * Math.min(1, (r1 - rr) / 0.05 + 0.25), 1]);
         }
         jam[i].push(polyGeometry([...jb, ...jt.reverse()], basis, { uvScale: UV, lift: 0.0018 }));
-        // pedaços da fruta mergulhados no creme: fatias de morango de pé, ou framboesas
-        const cell = fruit.pieces === 'framboesa' ? 0.5 : 0;
-        const hh = Math.min(0.13, m.fillH * (fruit.pieces === 'framboesa' ? 0.62 : 0.84));
-        let rr = 0.1 + wob() * 0.1;
-        while (rr < rs - 0.1) {
-          const ww = hh * (fruit.pieces === 'framboesa' ? 1.05 : 0.86 + wob() * 0.2);
-          const yc = y0 + m.fillH * (0.54 + (wob() - 0.5) * 0.12);
-          const tilt = (wob() - 0.5) * 0.5;
+      }
+      // pedaços mergulhados no creme — os do próprio recheio (fatias de morango de pé, nozes, biscoito…) e os do
+      // adicional escolhido para este recheio. Cada pedaço é um quadradinho com o desenho dele (looks.js).
+      [fruit?.pieces, getFillAdd(m.fillAdds?.[i])?.pieces].forEach((id, pass) => {
+        const spec = PIECES[id];
+        if (!spec) return;
+        const hh = Math.min(0.13, m.fillH * spec.h);
+        const lift = 0.0026 + pass * 0.0006; // o adicional fica um fio à frente (nunca "pisca" contra o outro)
+        let rr = 0.08 + wob() * 0.1 + pass * hh * 0.7;
+        while (rr < rs - 0.09) {
+          const ww = hh * (spec.w[0] + wob() * (spec.w[1] - spec.w[0]));
+          const yc = y0 + m.fillH * (spec.lift + (wob() - 0.5) * (spec.spread ?? 0.12));
+          const tilt = (wob() - 0.5) * spec.tilt;
           const flipU = wob() < 0.5;
+          const cell = pieceCell(spec.cells[Math.floor(wob() * spec.cells.length) % spec.cells.length]);
           const base = bits.pos.length / 3;
           [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([sx, sy]) => {
-            // canto do quadradinho, girado de leve no plano do corte
+            // canto do quadradinho, girado no plano do corte
             const lx = (sx * ww) / 2;
             const ly = (sy * hh) / 2;
             const px = rr + lx * Math.cos(tilt) - ly * Math.sin(tilt);
             const py = yc + lx * Math.sin(tilt) + ly * Math.cos(tilt);
-            bits.pos.push(basis.ox + basis.ux * px + basis.nx * 0.0026, py, basis.oz + basis.uz * px + basis.nz * 0.0026);
+            bits.pos.push(basis.ox + basis.ux * px + basis.nx * lift, py, basis.oz + basis.uz * px + basis.nz * lift);
             bits.nor.push(basis.nx, 0, basis.nz);
-            bits.uv.push(cell + ((flipU ? -sx : sx) * 0.5 + 0.5) * 0.5, sy * 0.5 + 0.5);
+            bits.uv.push(cell.u0 + ((flipU ? -sx : sx) * 0.5 + 0.5) * cell.du, cell.v0 + (sy * 0.5 + 0.5) * cell.dv);
           });
           if (basis.winding > 0) bits.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
           else bits.idx.push(base, base + 2, base + 1, base, base + 3, base + 2);
-          rr += ww * (1.25 + wob() * 0.9);
+          rr += ww * (spec.gap[0] + wob() * (spec.gap[1] - spec.gap[0]));
         }
-      }
+      });
     });
 
-    if (!m.naked) {
+    if (!m.naked && m.relief) {
+      // cobertura com relevo: a seção acompanha os picos — o mesmo deslocamento da casca, medido nesta direção
+      const rl = m.relief;
+      const spot = raySpot(m.sponge, m.center.x, m.center.z, theta);
+      const uSide = (spot.s / m.sponge.length) * Math.max(2, Math.round(m.frost.length / 1.6)) * rl.k;
+      const sideD = (y) => rl.amp * (0.45 + 0.55 * smoothstep(0, 0.045, y)) * (rl.fn(uSide, (y / 1.6) * rl.k) - rl.zero);
+      const topD = (rr) => rl.ampTop * (rl.fn((ux * rr * rl.capScale + 0.5) * rl.kTop, (uz * rr * rl.capScale + 0.5) * rl.kTop) - rl.zero);
+      const pts = [[rs, 0]];
+      const sideTop = m.Ht - m.rf;
+      for (let k = 0; k <= 14; k++) {
+        const y = (sideTop * k) / 14;
+        pts.push([rf + sideD(y), y]);
+      }
+      const edge = rf - m.rf;
+      const dA = sideD(sideTop);
+      const dB = topD(edge);
+      for (let k = 1; k <= 6; k++) {
+        const a = (k / 6) * (Math.PI / 2);
+        const d = dA + (dB - dA) * smoothstep(0, 1, k / 6);
+        pts.push([edge + (m.rf + d) * Math.cos(a), sideTop + (m.rf + d) * Math.sin(a)]);
+      }
+      for (let k = 1; k <= 18; k++) {
+        const rr = edge * (1 - k / 18);
+        pts.push([rr, m.Ht + topD(rr)]);
+      }
+      pts.push([0, m.H], [rs, m.H]);
+      frost.push(polyGeometry(pts, basis, { uvScale: UV, lift: 0.0006 }));
+    } else if (!m.naked) {
       const pts = [
         [rs, 0],
         [rf, 0],
@@ -1218,11 +1455,82 @@ function slab(path, yTop, thick, bevel = 0.012, capScale = 0.21) {
  */
 export function buildStand(m, base = 'boleira') {
   const b = m.bounds;
-  const round = m.shape === 'round' || m.shape === 'heart' || m.shape === 'hex';
+  const round = m.shape === 'round' || m.shape === 'heart' || m.shape === 'hex' || m.shape === 'flor' || m.shape === 'vulcao';
+  const oval = m.shape === 'oval';
   const low = m.detail < 1;
-  const outline = (margin) => (round ? circlePath(b.maxR + margin, low ? 80 : 128) : roundedRectPath(b.hx + margin, b.hz + margin, Math.min(b.hx, b.hz) * 0.42 + margin * 0.5));
-  const reach = (margin) => (round ? b.maxR + margin : Math.hypot(b.hx + margin, b.hz + margin) * 0.92);
+  const outline = (margin) =>
+    round
+      ? circlePath(b.maxR + margin, low ? 80 : 128)
+      : oval
+        ? ellipsePath(b.hx + margin, b.hz + margin, low ? 88 : 128)
+        : roundedRectPath(b.hx + margin, b.hz + margin, Math.min(b.hx, b.hz) * 0.42 + margin * 0.5);
+  const reach = (margin) => (round ? b.maxR + margin : oval ? b.hx + margin : Math.hypot(b.hx + margin, b.hz + margin) * 0.92);
   const shade = (margin) => (round ? { x: b.maxR + margin, z: b.maxR + margin } : { x: b.hx + margin, z: b.hz + margin });
+
+  if (base === 'tabua') {
+    // tábua de servir: retângulo de ripas com uma alça arredondada de um lado
+    const mx = 0.3;
+    const mz = 0.2;
+    const hx = b.hx + mx;
+    const hz = b.hz + mz;
+    const thick = 0.07;
+    const scale = 0.48 / (hx + 0.2);
+    const board = slab(roundedRectPath(hx, hz, 0.07), -0.002, thick, 0.014, scale);
+    const handle = slab(roundedRectPath(0.24, Math.min(0.2, hz * 0.34), 0.1), -0.002, thick, 0.014, scale);
+    handle.translate(hx + 0.17, 0, 0);
+    return { parts: [{ geo: board, mat: 'plank' }, { geo: handle, mat: 'plank' }], floorY: -0.002 - thick, plateRadius: Math.hypot(hx + 0.2, hz) * 0.94, standHeight: thick, shade: { x: b.hx + mx - 0.03, z: b.hz + mz - 0.03 } };
+  }
+  if (base === 'caixa') {
+    // caixinha do bentô: bandeja quadrada de papel kraft, o papel-manteiga sob o bolo e a tampa aberta atrás
+    const hw = b.maxR + 0.2;
+    const wall = 0.28;
+    const tray = (hgt) => {
+      const path = roundedRectPath(hw, hw, 0.06);
+      const walls = sweep(path, [
+        { d: -0.02, y: -0.022, nd: 0.4, ny: -0.9 },
+        { d: 0, y: -0.014, nd: 1, ny: -0.2 },
+        { d: 0.03, y: hgt, nd: 1, ny: -0.1 },
+        { d: 0.026, y: hgt + 0.004, nd: 0, ny: 1 },
+        { d: 0.018, y: hgt, nd: -1, ny: 0.1 },
+        { d: -0.012, y: -0.008, nd: -1, ny: 0.1 },
+      ]);
+      const floor = slab(roundedRectPath(hw - 0.006, hw - 0.006, 0.055), -0.008, 0.014, 0.003);
+      return [walls, floor];
+    };
+    const parts = tray(wall).map((geo) => ({ geo, mat: 'kraft' }));
+    // tampa: uma bandeja igual, presa pela beira de trás e aberta (um pouco além de em pé)
+    const open = (104 * Math.PI) / 180;
+    const hinge = new THREE.Matrix4().makeTranslation(0, wall + 0.004, -(hw + 0.03));
+    const turn = new THREE.Matrix4().makeRotationX(-open);
+    const back = new THREE.Matrix4().makeTranslation(0, -(wall + 0.004), hw + 0.03);
+    const lidH = wall * 0.72;
+    // fechada, a tampa é a bandeja de cabeça para baixo, com a beira dela sobre a beira da de baixo
+    const flip = new THREE.Matrix4().makeScale(1, -1, 1).premultiply(new THREE.Matrix4().makeTranslation(0, wall + 0.004 + lidH, 0));
+    const lid = new THREE.Matrix4().multiplyMatrices(hinge, turn).multiply(back).multiply(flip);
+    tray(lidH).forEach((geo) => {
+      geo.applyMatrix4(lid);
+      geo.computeVertexNormals();
+      parts.push({ geo, mat: 'kraft' });
+    });
+    // papel-manteiga: um quadrado atravessado, com as pontas aparecendo
+    const paper = slab(roundedRectPath(b.maxR + 0.1, b.maxR + 0.1, 0.02), -0.0012, 0.004, 0.001);
+    paper.rotateY(Math.PI / 4);
+    parts.push({ geo: paper, mat: 'paper', cast: false });
+    const lidTop = wall + (2 * hw + 0.06) * Math.sin(open);
+    const lidBack = -(hw + 0.03) + (2 * hw + 0.06) * Math.cos(open);
+    return {
+      parts,
+      floorY: -0.022,
+      plateRadius: hw * 1.36,
+      standHeight: wall,
+      shade: { x: b.maxR + 0.1, z: b.maxR + 0.1 },
+      // pontos a mais que precisam caber no quadro (o alto da tampa aberta)
+      points: [
+        [-hw, lidTop, lidBack],
+        [hw, lidTop, lidBack],
+      ],
+    };
+  }
 
   if (base === 'madeira') {
     const margin = 0.26;
@@ -1251,11 +1559,11 @@ export function buildStand(m, base = 'boleira') {
     const geo = slab(outline(margin), -0.002, thick, 0.007, 0.4 / (Math.max(b.hx, b.hz, b.maxR * (round ? 1 : 0)) + margin));
     return { parts: [{ geo, mat: 'marble' }], floorY: -0.002 - thick, plateRadius: reach(margin), standHeight: thick, shade: shade(margin - 0.03) };
   }
-  if (base === 'dourada' || base === 'prateada') {
+  if (base === 'dourada' || base === 'prateada' || base === 'preta') {
     const margin = 0.14;
     const thick = 0.11;
     const geo = slab(cleanOffset(m.frost, margin), -0.002, thick, 0.01);
-    return { parts: [{ geo, mat: base === 'dourada' ? 'goldfoil' : 'silver' }], floorY: -0.002 - thick, plateRadius: b.maxR + margin, standHeight: thick, shade: { x: (round ? b.maxR : b.hx) + margin - 0.02, z: (round ? b.maxR : b.hz) + margin - 0.02 } };
+    return { parts: [{ geo, mat: base === 'dourada' ? 'goldfoil' : base === 'prateada' ? 'silver' : 'blackboard' }], floorY: -0.002 - thick, plateRadius: b.maxR + margin, standHeight: thick, shade: { x: (round ? b.maxR : b.hx) + margin - 0.02, z: (round ? b.maxR : b.hz) + margin - 0.02 } };
   }
 
   const margin = 0.2 + m.R * 0.07;
@@ -1285,10 +1593,15 @@ export function buildStand(m, base = 'boleira') {
   const board = sweep(m.sponge, boardProfile);
   const rho = Math.min(b.hx, b.hz) + margin;
   const yTop = top - 0.056;
-  const parts = [{ geo: plate, mat: 'porcelain' }, { geo: rim, mat: 'gold', cast: false }];
-  // o disco dourado sob o bolo aparece nos bolos cobertos; no naked a massa assenta direto no prato
-  if (m.naked) board.dispose();
-  else parts.push({ geo: board, mat: 'gold', cast: false });
+  // boleira de vidro: a mesma forma, transparente e sem o filete dourado (sob o bolo vai um disco branco)
+  const glass = base === 'vidro';
+  const body = glass ? 'glass' : 'porcelain';
+  const parts = [{ geo: plate, mat: body, cast: !glass }];
+  if (glass) rim.dispose();
+  else parts.push({ geo: rim, mat: 'gold', cast: false });
+  // o disco dourado sob o bolo aparece nos bolos cobertos; no naked e no vulcão a massa assenta direto no prato
+  if (m.naked || m.volcano) board.dispose();
+  else parts.push({ geo: board, mat: glass ? 'paper' : 'gold', cast: false });
 
   if (base === 'prato') {
     // prato baixo: só um anel de apoio por baixo
@@ -1297,7 +1610,7 @@ export function buildStand(m, base = 'boleira') {
       [new THREE.Vector2(0, yTop - hs), new THREE.Vector2(rho * 0.5, yTop - hs), new THREE.Vector2(rho * 0.54, yTop - hs * 0.5), new THREE.Vector2(rho * 0.52, yTop + 0.004)].reverse(),
       low ? 44 : 72,
     );
-    parts.push({ geo: ring, mat: 'porcelain' });
+    parts.push({ geo: ring, mat: body });
     return { parts, floorY: yTop - hs, plateRadius: reach(margin), standHeight: hs + 0.07, shade: shade(margin - 0.035) };
   }
 
@@ -1315,6 +1628,498 @@ export function buildStand(m, base = 'boleira') {
   ]);
   const pts = curve.getPoints(low ? 26 : 44);
   pts.push(new THREE.Vector2(0, yTop - hs));
-  parts.push({ geo: new THREE.LatheGeometry(pts.reverse(), low ? 44 : 72), mat: 'porcelain' });
+  parts.push({ geo: new THREE.LatheGeometry(pts.reverse(), low ? 44 : 72), mat: body, cast: !glass });
   return { parts, floorY: yTop - hs, plateRadius: reach(margin), standHeight: hs + 0.07, shade: shade(margin - 0.035) };
+}
+
+/* ───────── Estilos de cobertura com forma própria ─────────
+   A cobertura lisa é uma casca varrida; estes três mudam a própria malha: a fault line (creme mais grosso acima
+   e abaixo de uma faixa rebaixada, com as beiras irregulares), os babados (saias sobrepostas, onduladas na
+   beira) e o bolo de rosetas (a casca lisa por baixo e uma roseta de bico por cima de cada pedaço dela). */
+
+/** Altura (do pé do andar) do meio da faixa da fault line. */
+export const faultMid = (m) => (m.Ht - m.rf) * 0.52;
+const FAULT_STEP = 0.016; // quanto a faixa de confeitos fica para dentro do creme de fora
+
+/**
+ * Fault line: a lateral em três trechos — creme grosso, faixa rebaixada (onde vão os confeitos), creme grosso —
+ * com as duas beiras subindo e descendo como creme rasgado. As beiras usam a mesma função da textura
+ * (looks.js → faultEdges), então o dourado pintado cai exatamente no degrau.
+ */
+export function buildFaultFrosting(m) {
+  const out = m.t;
+  const inn = m.t - FAULT_STEP;
+  const mid = faultMid(m);
+  const lo = -FAULT_HALF / 10;
+  const hi = FAULT_HALF / 10;
+  const profile = [
+    { d: out, y: 0, nd: 1, ny: 0 },
+    { d: out, y: mid + lo - 0.004, nd: 1, ny: 0.3 },
+    { d: inn, y: mid + lo + 0.004, nd: 1, ny: 0.3 },
+    { d: inn, y: mid + hi - 0.004, nd: 1, ny: -0.3 },
+    { d: out, y: mid + hi + 0.004, nd: 1, ny: -0.3 },
+  ];
+  filletUp(profile, m.t, m.Ht + m.lip, m.rf, m.detail < 1 ? 6 : 8);
+  const path = resamplePath(m.sponge, Math.round(m.sponge.n * (m.detail < 1 ? 1.5 : 2)));
+  const uRepeat = Math.max(2, Math.round(m.frost.length / 1.6));
+  const geo = sweep(path, profile, { capTop: true, uRepeat, vScale: 1 / 1.6, capScale: 1 / (2.9 * m.R), center: m.center, wrap: true });
+  const { cols, rows } = geo.userData.layout;
+  const pos = geo.attributes.position;
+  const uv = geo.attributes.uv;
+  const edges = faultEdges(5 + (m.index || 0));
+  for (let i = 0; i < cols; i++) {
+    const u = uv.getX(i * rows);
+    const dLo = edges.lo(u) / 10 - lo;
+    const dHi = edges.hi(u) / 10 - hi;
+    for (let j = 1; j <= 4; j++) {
+      const k = i * rows + j;
+      pos.setY(k, pos.getY(k) + (j <= 2 ? dLo : dHi));
+    }
+    // a textura lê a altura de verdade de cada ponto (o azulejo vai do pé a 16 cm)
+    for (let j = 0; j < rows; j++) uv.setY(i * rows + j, pos.getY(i * rows + j) / 1.6);
+  }
+  return renormal(geo, cols, rows);
+}
+
+/**
+ * Babados: saias de creme sobrepostas de baixo para cima (bico pétala), cada uma presa na parede em cima e
+ * solta embaixo, com a beira ondulada. Uma onda a cada 3 cm; a de cada saia é desencontrada da saia vizinha.
+ */
+export function buildRuffleFrosting(m) {
+  const t = m.t;
+  const sideTop = m.Ht - m.rf - 0.002;
+  const count = Math.max(2, Math.round(sideTop / 0.185));
+  const fh = sideTop / count;
+  const waves = Math.max(8, Math.round(m.frost.length / 0.24));
+  const per = m.detail < 1 ? 6 : 8;
+  const path = resamplePath(m.sponge, waves * per);
+  const flare = 0.024;
+  const profile = [{ d: t, y: 0, nd: 1, ny: 0 }];
+  const kind = [0]; // por linha do perfil: quanto ela ondula (0 = presa na parede … 1 = beira solta)
+  const skirt = [0];
+  for (let f = 0; f < count; f++) {
+    const yb = f * fh + 0.004;
+    const yt = (f + 1) * fh + fh * 0.2; // a raiz de cada saia some por baixo da saia de cima
+    // por baixo da beira (volta até a parede), beira solta, corpo e raiz
+    profile.push({ d: t + 0.003, y: yb + 0.012, nd: 0.2, ny: -1 });
+    kind.push(0);
+    skirt.push(f);
+    for (const s of m.detail < 1 ? [1, 0.55, 0] : [1, 0.72, 0.4, 0]) {
+      profile.push({ d: t + 0.004 + flare * Math.pow(s, 1.35), y: yb + (Math.min(yt, sideTop) - yb) * (1 - s), nd: 1, ny: 0.5 });
+      kind.push(s);
+      skirt.push(f);
+    }
+  }
+  const body = profile.length;
+  filletUp(profile, t, m.Ht + m.lip, m.rf, m.detail < 1 ? 6 : 8);
+  const geo = sweep(path, profile, { capTop: true, uRepeat: Math.max(2, Math.round(m.frost.length / 1.6)), vScale: 1 / 1.6, capScale: 1 / (2.9 * m.R), center: m.center, wrap: true });
+  const { cols, rows } = geo.userData.layout;
+  const pos = geo.attributes.position;
+  const r = seeded(911 + (m.index || 0) * 7);
+  const phase = Array.from({ length: count }, () => r() * TAU);
+  for (let i = 0; i < cols; i++) {
+    const ii = i % path.n;
+    const turn = (ii / path.n) * TAU * waves;
+    for (let j = 1; j < body; j++) {
+      const s = kind[j];
+      if (!s) continue;
+      const a = turn + phase[skirt[j]];
+      const amp = Math.pow(s, 1.4);
+      const out = 0.0095 * amp * Math.sin(a) + 0.003 * amp * Math.sin(a * 2.3 + 1);
+      const k = i * rows + j;
+      pos.setXYZ(k, pos.getX(k) + path.nx[ii] * out, pos.getY(k) + 0.006 * amp * Math.cos(a), pos.getZ(k) + path.nz[ii] * out);
+    }
+  }
+  return renormal(geo, cols, rows);
+}
+
+/**
+ * Uma roseta de bico leve (bico 1M), para o bolo coberto de rosetas: um cordão de 5 gomos enrolado em espiral
+ * do miolo para fora. Fica de pé no eixo y, com a base em y = 0 e uns 3,2 cm de diâmetro. A sombra dos gomos
+ * e do miolo vai pintada nos vértices.
+ */
+export function rosetteCoatGeometry(detail = 1, far = false) {
+  // far = bolo com muitas rosetas (andares, tamanhos grandes): cada uma fica pequena na tela e usa a malha leve
+  const nu = detail < 1 ? (far ? 10 : 14) : far ? 16 : 24;
+  const nv = detail < 1 ? (far ? 5 : 6) : far ? 6 : 8;
+  const turns = 1.8;
+  const R = 0.117;
+  const rr = 0.043;
+  const lobes = 5;
+  const P = new THREE.Vector3();
+  const A = new THREE.Vector3();
+  const B = new THREE.Vector3();
+  const T = new THREE.Vector3();
+  const N = new THREE.Vector3();
+  const UP = new THREE.Vector3(0, 1, 0);
+  const at = (t, out) => {
+    const ang = t * turns * TAU;
+    const tuck = smoothstep(0.86, 1, t);
+    const rad = 0.008 + (R - 0.008) * Math.pow(t, 0.92) - 0.02 * tuck;
+    return out.set(rad * Math.cos(ang), rr * 0.86 * (1 + 0.42 * Math.pow(1 - t, 1.6)) * (0.45 + 0.55 * smoothstep(0, 0.1, t)) - rr * 0.35 * tuck, rad * Math.sin(ang));
+  };
+  const count = (nu + 1) * nv;
+  const pos = new Float32Array(count * 3);
+  const col = new Float32Array(count * 3);
+  let k = 0;
+  for (let i = 0; i <= nu; i++) {
+    const u = i / nu;
+    at(u, P);
+    at(Math.min(1, u + 0.004), A);
+    at(Math.max(0, u - 0.004), B);
+    T.copy(A).sub(B).normalize();
+    N.copy(UP).addScaledVector(T, -UP.dot(T)).normalize();
+    B.crossVectors(T, N);
+    const nose = Math.pow(smoothstep(0, 0.09, u), 0.6);
+    const end = u > 0.84 ? Math.pow(Math.max(0, 1 - (u - 0.84) / 0.16), 0.8) : 1;
+    for (let j = 0; j < nv; j++) {
+      const a0 = (j / nv) * TAU;
+      const a = a0 + u * turns * TAU * 0.9;
+      const g = Math.pow(Math.abs(Math.cos((lobes * a0) / 2)), 0.7);
+      const rad = rr * nose * end * (1 - 0.4 * (1 - g));
+      const x = P.x + B.x * rad * Math.cos(a) + N.x * rad * Math.sin(a) * 0.92;
+      const y = Math.max(0, P.y + B.y * rad * Math.cos(a) + N.y * rad * Math.sin(a) * 0.92);
+      const z = P.z + B.z * rad * Math.cos(a) + N.z * rad * Math.sin(a) * 0.92;
+      pos.set([x, y, z], k * 3);
+      const tone = (0.5 + 0.5 * g) * (0.58 + 0.42 * smoothstep(-0.6, 0.45, Math.sin(a))) * (0.8 + 0.2 * smoothstep(0, 0.3, u));
+      col.fill(tone, k * 3, k * 3 + 3);
+      k++;
+    }
+  }
+  const index = [];
+  for (let i = 0; i < nu; i++) {
+    for (let j = 0; j < nv; j++) {
+      const j2 = (j + 1) % nv;
+      const a = i * nv + j;
+      const b = (i + 1) * nv + j;
+      const c = i * nv + j2;
+      const d = (i + 1) * nv + j2;
+      index.push(a, c, b, b, c, d);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setIndex(index);
+  geo.computeVertexNormals();
+  // (se as faces saíram para dentro, vira)
+  const nor = geo.attributes.normal;
+  let outward = 0;
+  for (let i = 0; i < count; i++) outward += nor.getY(i) * (pos[i * 3 + 1] - rr * 0.5);
+  if (outward < 0) {
+    const idx = geo.index.array;
+    for (let i = 0; i < idx.length; i += 3) {
+      const tmp = idx[i + 1];
+      idx[i + 1] = idx[i + 2];
+      idx[i + 2] = tmp;
+    }
+    geo.computeVertexNormals();
+  }
+  return geo;
+}
+
+/**
+ * Onde vai cada roseta do bolo de rosetas: fileiras desencontradas na lateral e anéis no topo, da borda para o
+ * centro. → [{ x, y, z, nx, ny, nz, scale, spin, rad }]  (posição do pé da roseta, a direção para onde ela aponta,
+ * a escala sobre a roseta de 3,2 cm e o giro em torno do próprio eixo; y é medido do pé do andar)
+ */
+export function rosetteSpots(m) {
+  const r = seeded(613 + (m.index || 0) * 31 + Math.round(m.R * 100));
+  const size = 0.4; // 4 cm de diâmetro
+  const scale = size / 0.32;
+  const out = [];
+  const p = {};
+  const sideH = m.Ht - 0.015;
+  const rows = Math.max(1, Math.round(sideH / (size * 0.8)));
+  const stepY = sideH / rows;
+  const L = m.frost.length;
+  const perRow = Math.max(6, Math.round(L / (size * 0.84)));
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < perRow; i++) {
+      pathAt(m.frost, ((i + (j % 2 ? 0.5 : 0)) / perRow) * L, p);
+      out.push({ x: p.x, y: (j + 0.5) * stepY, z: p.z, nx: p.nx, ny: 0, nz: p.nz, scale: scale * Math.max(0.9, Math.min(1.12, stepY / (size * 0.8))) * (0.97 + r() * 0.06), spin: r() * TAU, rad: size / 2 });
+    }
+  }
+  // topo: anéis da borda para dentro; o de fora pende um pouco para fora, fechando a quina
+  let inset = size * 0.34;
+  // r5-junta3d: num contorno com reentrâncias (flor, coração) o anel recuado pode degenerar quando o recuo passa
+  // do que a reentrância deixa — cada roseta só entra se cair dentro do topo, à distância certa da beira
+  const onTop = (x, z, d) => pointInPath(m.frost, x, z) && distToPath(m.frost, x, z) >= d * 0.9;
+  for (let ring = 0; ring < 12; ring++) {
+    const path = cleanOffset(m.frost, -inset);
+    const b = pathBounds(path);
+    if (Math.min(b.hx, b.hz) < size * 0.42 || path.length < size * 2.2 || path.length > m.frost.length) break;
+    const count = Math.max(3, Math.round(path.length / (size * 0.84)));
+    let placed = 0;
+    for (let i = 0; i < count; i++) {
+      pathAt(path, ((i + (ring % 2 ? 0.5 : 0)) / count) * path.length, p);
+      if (!onTop(p.x, p.z, inset)) continue;
+      placed++;
+      const lean = ring === 0 ? 0.42 : 0;
+      out.push({ x: p.x, y: m.Ht - (ring === 0 ? 0.012 : 0), z: p.z, nx: p.nx * lean, ny: 1, nz: p.nz * lean, scale: scale * (0.97 + r() * 0.06), spin: r() * TAU, rad: size / 2 });
+    }
+    if (!placed) break;
+    inset += size * 0.8;
+  }
+  // o miolo: uma roseta no centro (ou uma fileira, nos formatos compridos)
+  const last = cleanOffset(m.frost, -Math.max(0, inset - size * 0.8));
+  const lb = pathBounds(last);
+  const cx = (lb.minX + lb.maxX) / 2;
+  const cz = (lb.minZ + lb.maxZ) / 2;
+  const long = Math.max(lb.hx, lb.hz) - Math.min(lb.hx, lb.hz);
+  const extra = Math.max(0, Math.round((long * 2) / (size * 0.9)));
+  for (let i = 0; i <= extra; i++) {
+    const k = extra ? (i / extra - 0.5) * 2 * long : 0;
+    const x = cx + (lb.hx > lb.hz ? k : 0);
+    const z = cz + (lb.hx > lb.hz ? 0 : k);
+    if (Math.min(lb.hx, lb.hz) > size * 0.3 && pointInPath(m.frost, x, z) && out.every((o) => o.ny !== 1 || Math.hypot(o.x - x, o.z - z) > size * 0.62)) out.push({ x, y: m.Ht, z, nx: 0, ny: 1, nz: 0, scale, spin: r() * TAU, rad: size / 2 });
+  }
+  return out;
+}
+
+/* ───────── Bolo vulcão (fôrma de furo) ─────────
+   Uma massa só, alta, com um furo no meio; a cobertura cremosa enche o furo, espalha no topo e desce pela
+   lateral em línguas grossas. Não há casca de cobertura: o que se vê por fora é a própria massa, dourada da fôrma. */
+
+/** Medidas do furo e das quinas do bolo vulcão (tudo em unidades de 10 cm). */
+export function volcanoDims(m) {
+  const Rp = pathBounds(m.sponge).maxR; // raio de fora da massa
+  return { Rp, holeTop: Math.max(0.12, Rp * 0.27), holeBase: Math.max(0.085, Rp * 0.19), rfi: 0.05 };
+}
+
+/** A massa do vulcão: parede de fora, quina arredondada, topo em anel, quina de dentro e a parede do furo. */
+export function buildBundt(m) {
+  const { Rp, holeTop, holeBase, rfi } = volcanoDims(m);
+  const H = m.H;
+  const rf = m.rf;
+  const steps = m.detail < 1 ? 5 : 8;
+  const profile = [
+    { d: -0.012, y: 0, nd: 0.4, ny: -0.9 },
+    { d: 0, y: 0.012, nd: 1, ny: 0 },
+    { d: 0.004, y: H * 0.45, nd: 1, ny: 0 },
+  ];
+  for (let k = 0; k <= steps; k++) {
+    const a = (k / steps) * (Math.PI / 2);
+    profile.push({ d: -rf + rf * Math.cos(a), y: H - rf + rf * Math.sin(a), nd: Math.cos(a), ny: Math.sin(a) });
+  }
+  // o topo sobe um tico no meio do anel (a massa cresce), e desce para dentro do furo
+  const inner = Rp - holeTop - rfi;
+  profile.push({ d: -(rf + inner) / 2, y: H + 0.006, nd: 0, ny: 1 });
+  for (let k = 0; k <= steps; k++) {
+    const a = (k / steps) * (Math.PI / 2);
+    profile.push({ d: -inner - rfi * Math.sin(a), y: H - rfi + rfi * Math.cos(a), nd: -Math.sin(a), ny: Math.cos(a) });
+  }
+  profile.push({ d: -(Rp - holeBase), y: 0.01, nd: -1, ny: 0.1 });
+  const uRepeat = Math.max(3, Math.round(m.sponge.length / 0.62));
+  return sweep(m.sponge, profile, { uRepeat, vScale: 1 / 0.62, center: m.center });
+}
+
+/**
+ * A cobertura do vulcão. m.drip = { k: quanta, len: até onde desce }.
+ * É um lençol só, do centro do furo até a lateral: onde há creme ele fica por fora da massa; onde não há,
+ * mergulha nela e some. A beira do creme é irregular e dela saem línguas — umas ficam no topo, outras dobram
+ * a quina e descem.
+ */
+export function buildVolcanoCream(m, seed = 1) {
+  const { Rp, holeTop } = volcanoDims(m);
+  const rf = m.rf;
+  const H = m.H;
+  const r = rng(seed);
+  const amount = m.drip?.k ?? 1;
+  const reach = m.drip?.len ?? 0.74;
+  const lod = m.detail < 1 ? 2 : 1;
+  const cols = Math.max(72, Math.round(m.sponge.length / (0.013 * lod)));
+  const col = resamplePath(m.sponge, cols);
+  const L = col.length;
+  const flat = Rp - rf - holeTop; // largura do topo plano, do furo até a quina
+  const bend = (Math.PI / 2) * rf; // o caminho pela quina
+  const sideH = H - rf;
+  const sideMax = Math.min(sideH - 0.03, sideH * (reach >= 0.99 ? 0.96 : reach * 1.05));
+  // até onde o creme chega em cada direção, medido a partir da beira do furo (pouca: fica no topo; farta: passa da quina)
+  const base = amount < 0.8 ? flat * 0.52 : amount > 1.3 ? flat + bend + 0.05 : flat + bend * 0.5;
+  const ph = [r() * TAU, r() * TAU, r() * TAU];
+  const lipAt = (x) => base + (0.035 * Math.sin((x / L) * TAU * 3 + ph[0]) + 0.022 * Math.sin((x / L) * TAU * 7 + ph[1]) + 0.012 * Math.sin((x / L) * TAU * 13 + ph[2])) * (amount < 0.8 ? 1.4 : 1);
+  // línguas: largas e gordas, como brigadeiro mole descendo
+  const tongues = [];
+  let s = r() * 0.1;
+  const gap = amount < 0.8 ? 0.34 : amount > 1.3 ? 0.13 : 0.2;
+  while (s < L - 0.06) {
+    const kind = r();
+    const long = kind < (amount > 1.3 ? 0.5 : 0.36);
+    const w = 0.036 + r() * 0.03 + (long ? 0.012 : 0);
+    const down = sideMax * (long ? 0.5 + r() * 0.5 : 0.12 + r() * 0.3);
+    tongues.push({ s, w, len: amount < 0.8 ? flat * (0.75 + r() * 0.35) + (long ? bend + down * 0.5 : 0) : flat + bend + down });
+    s += Math.max(w * 2.2, gap * (0.6 + r() * 0.9));
+  }
+  const K = 0.045;
+  const smin = (a, b) => {
+    const h = Math.max(K - Math.abs(a - b), 0) / K;
+    return Math.min(a, b) - h * h * K * 0.25;
+  };
+  const body = 0.016 + 0.004 * Math.max(0, amount - 1);
+  const thickness = (sx, v, near) => {
+    let sd = v - lipAt(sx);
+    let bulb = 0;
+    for (const t of near) {
+      let dsx = Math.abs(sx - t.s);
+      if (dsx > L / 2) dsx = L - dsx;
+      const end = t.len - t.w;
+      const w = t.w * (0.7 + 0.3 * smoothstep(end - t.w * 3, end - t.w * 0.4, v));
+      const vv = Math.max(0, Math.min(end, v));
+      sd = smin(sd, Math.hypot(dsx, v - vv) - w);
+      const g = Math.exp(-((v - end) ** 2 + dsx * dsx) / (2 * (t.w * 0.9) ** 2));
+      if (g > bulb) bulb = g;
+    }
+    if (sd >= 0) return Math.max(-0.03, -1.2 * sd);
+    return (body + 0.016 * bulb) * Math.sin((Math.PI / 2) * Math.min(1, -sd / 0.034));
+  };
+
+  const P = 3; // anéis da poça dentro do furo
+  const TOPR = Math.max(4, Math.round(flat / (0.016 * lod))); // linhas no topo plano
+  const F = 5;
+  const dv = 0.014 * lod;
+  const SIDE = Math.ceil((sideMax + 0.05) / dv);
+  const rows = P + TOPR + 1 + F + SIDE;
+  const count = (cols + 1) * rows + 1;
+  const pos = new Float32Array(count * 3);
+  const uv = new Float32Array(count * 2);
+  const depth = new Float32Array(count).fill(1);
+  const top = H + 0.006;
+  let k = 0;
+  const put = (x, y, z, u, v, d = 1) => {
+    pos.set([x, y, z], k * 3);
+    uv.set([u, v], k * 2);
+    depth[k] = d;
+    k++;
+  };
+  for (let i = 0; i <= cols; i++) {
+    const ii = i % cols;
+    const sx = col.s[ii];
+    const nx = col.nx[ii];
+    const nz = col.nz[ii];
+    const near = tongues.filter((t) => {
+      let dsx = Math.abs(sx - t.s);
+      if (dsx > L / 2) dsx = L - dsx;
+      return dsx < t.w + 0.12;
+    });
+    const at = (rad, y, d) => put(m.center.x + nx * rad, y, m.center.z + nz * rad, 0.5 + (nx * rad) / 1.6, 0.5 + (nz * rad) / 1.6, d);
+    // a poça: enche o furo, com um leve afundado no meio
+    for (let p = 1; p <= P; p++) {
+      const rad = (holeTop * p) / P;
+      at(rad, top + body - 0.012 * (1 - (rad / holeTop) ** 2), 1);
+    }
+    // topo plano, do furo até o começo da quina
+    for (let j = 1; j <= TOPR; j++) {
+      const v = (flat * j) / TOPR;
+      const th = thickness(sx, v, near);
+      at(holeTop + v, top + th, th);
+    }
+    // quina
+    const th0 = thickness(sx, flat, near);
+    const th1 = thickness(sx, flat + bend, near);
+    for (let f = 0; f <= F; f++) {
+      const a = (f / F) * (Math.PI / 2);
+      const th = th0 + (th1 - th0) * (f / F);
+      const rad = Rp - rf + (rf + th) * Math.sin(a);
+      put(m.center.x + nx * rad, H - rf + (rf + th) * Math.cos(a) + 0.006 * (1 - f / F), m.center.z + nz * rad, sx / 1.6, (H - rf * (f / F)) / 1.6, th);
+    }
+    // lateral
+    for (let j = 1; j <= SIDE; j++) {
+      const v = j * dv;
+      const th = thickness(sx, flat + bend + v, near);
+      const y = Math.max(0.004, sideH - v);
+      put(m.center.x + nx * (Rp + th), y, m.center.z + nz * (Rp + th), sx / 1.6, y / 1.6, th);
+    }
+  }
+  const center = k;
+  put(m.center.x, top + body - 0.012, m.center.z, 0.5, 0.5, 1);
+  const index = [];
+  for (let i = 0; i < cols; i++) {
+    for (let j = 0; j < rows - 1; j++) {
+      const a = i * rows + j;
+      const b = (i + 1) * rows + j;
+      // onde não há creme o lençol está dentro da massa: esses quadrados ficam de fora
+      if (j >= P && depth[a] < -0.004 && depth[b] < -0.004 && depth[a + 1] < -0.004 && depth[b + 1] < -0.004) continue;
+      index.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+    index.push(center, (i + 1) * rows, i * rows);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setAttribute('uv1', new THREE.BufferAttribute(uv.slice(), 2));
+  geo.setIndex(index);
+  geo.computeVertexNormals();
+  const nor = geo.attributes.normal;
+  for (let j = 0; j < rows; j++) {
+    const a = j;
+    const b = cols * rows + j;
+    const x = nor.getX(a) + nor.getX(b);
+    const y = nor.getY(a) + nor.getY(b);
+    const z = nor.getZ(a) + nor.getZ(b);
+    const l = Math.hypot(x, y, z) || 1;
+    nor.setXYZ(a, x / l, y / l, z / l);
+    nor.setXYZ(b, x / l, y / l, z / l);
+  }
+  // um grupo só (o material da lateral da cobertura)
+  geo.addGroup(0, index.length, 0);
+  return geo;
+}
+
+/** O vulcão por dentro: a massa em volta do furo e o furo cheio de cobertura. */
+export function buildVolcanoCut(m, { thetaA, thetaB }) {
+  const { Rp, holeTop, holeBase, rfi } = volcanoDims(m);
+  const H = m.H;
+  const rf = m.rf;
+  const sponge = [];
+  const frost = [];
+  const UV = 1 / 0.62;
+  [
+    { theta: thetaA, side: 1 },
+    { theta: thetaB, side: -1 },
+  ].forEach(({ theta, side }, faceIndex) => {
+    const ux = Math.cos(theta);
+    const uz = Math.sin(theta);
+    const basis = { ox: m.center.x, oz: m.center.z, ux, uz, nx: -uz * side, nz: ux * side, winding: side, uvShift: faceIndex * 0.37 };
+    // a massa: miolo claro, com a casquinha mais escura em toda a volta (onde encostou na fôrma)
+    const crust = 0.72;
+    const pts = [
+      [holeBase, 0.01, crust],
+      [Rp - 0.012, 0, crust],
+      [Rp, 0.012, crust],
+      [Rp + 0.004, H * 0.45, crust],
+    ];
+    for (let k = 0; k <= 6; k++) {
+      const a = (k / 6) * (Math.PI / 2);
+      pts.push([Rp - rf + rf * Math.cos(a), H - rf + rf * Math.sin(a), crust]);
+    }
+    pts.push([(Rp - rf + holeTop + rfi) / 2, H + 0.006, crust]);
+    for (let k = 0; k <= 6; k++) {
+      const a = (k / 6) * (Math.PI / 2);
+      pts.push([holeTop + rfi - rfi * Math.sin(a), H - rfi + rfi * Math.cos(a), crust]);
+    }
+    const outline = polyGeometry(pts, basis, { uvScale: UV });
+    // miolo: o mesmo contorno, encolhido 4 mm para dentro, sem sombra
+    const cx = (Rp + holeBase) / 2;
+    const cy = H / 2;
+    const innerPts = pts.map(([rr, y]) => {
+      const dx = cx - rr;
+      const dy = cy - y;
+      const l = Math.hypot(dx, dy) || 1;
+      return [rr + (dx / l) * 0.03, y + (dy / l) * 0.03, 1];
+    });
+    sponge.push(merge([outline, polyGeometry(innerPts, basis, { uvScale: UV, lift: 0.0008 })]));
+    // a cobertura que enche o furo e a camada dela sobre o topo
+    const cream = [
+      [0, 0.004],
+      [holeBase - 0.002, 0.004],
+    ];
+    for (let k = 6; k >= 0; k--) {
+      const a = (k / 6) * (Math.PI / 2);
+      cream.push([holeTop + rfi - rfi * Math.sin(a) - 0.002, H - rfi + rfi * Math.cos(a)]);
+    }
+    cream.push([Rp - rf, H + 0.005], [Rp - rf - 0.01, H + 0.022], [holeTop, H + 0.022], [0, H + 0.011]);
+    frost.push(polyGeometry(cream, basis, { uvScale: UV, lift: 0.0012 }));
+  });
+  return { sponge: [merge(sponge)], filling: [], jam: [], pieces: null, frost: merge(frost), drip: null };
 }

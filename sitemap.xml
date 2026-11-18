@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A loja usa endereços com "#" (#/cardapio, #/produto/p1): para os buscadores ela é uma página só.
+     Quando cada tela tiver endereço próprio (servidor novo), elas entram aqui. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://brunomoraes2919.github.io/bolab-site/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

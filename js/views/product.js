@@ -22,6 +22,7 @@ import {
 } from '../components.js';
 import { REVIEWS, getProduct, sizesOf, priceOf, isCake, addOns, searchProducts } from '../data/products.js';
 import { CATEGORIES, SITE } from '../data/site.js';
+import { MONTAR } from '../data/montar.js';
 import { cart, schedule } from '../store.js';
 import { goBack } from '../router.js';
 import { receiveContext } from '../shell.js';
@@ -87,7 +88,7 @@ function sizeGroup(p) {
   if (!sizes.length) return '';
   return html`
     <section class="pd-group">
-      ${optionGroupHead('Tamanho', { hint: 'Escolha 1', required: true, done: true, id: 'pd-size-t' })}
+      ${optionGroupHead('Tamanho', { hint: 'Escolha 1', required: true, done: true, id: 'pd-size-t', level: 2 })}
       <div class="pd-sizes" role="radiogroup" aria-labelledby="pd-size-t">
         ${sizes.map(
           (s, i) => html`
@@ -110,7 +111,7 @@ function sizeGroup(p) {
 function noteGroup(cake) {
   return html`
     <section class="pd-group">
-      ${optionGroupHead(cake ? 'Mensagem no bolo ou observação' : 'Alguma observação?', { hint: 'Opcional', id: 'pd-note-t' })}
+      ${optionGroupHead(cake ? 'Mensagem no bolo ou observação' : 'Alguma observação?', { hint: 'Opcional', id: 'pd-note-t', level: 2 })}
       <div class="pd-note">
         <textarea
           class="textarea"
@@ -185,7 +186,10 @@ function reviewsBlock(p) {
   return html`
     <section class="pd-block" id="pd-avaliacoes" aria-labelledby="pd-rev-t">
       <div class="section-head">
-        <h2 class="section-title" id="pd-rev-t">Avaliações</h2>
+        <div>
+          <h2 class="section-title" id="pd-rev-t">Avaliações</h2>
+          ${SITE.demo ? html`<p class="section-sub">Avaliações de exemplo.</p>` : ''}
+        </div>
         <p class="pd-score">${icon('star')}<strong>${avg}</strong><span>${plural(p.reviews, 'avaliação', 'avaliações')}</span></p>
       </div>
       ${own.length
@@ -215,7 +219,7 @@ function notFound() {
         <p>O link pode estar desatualizado. Veja o que está disponível ou monte o seu bolo em 3D.</p>
         <div class="pd-missing__actions">
           <a class="btn" href="#/cardapio">Ver cardápio</a>
-          <a class="btn btn--secondary" href="#/monte-seu-bolo">${icon('cube')} Montar meu bolo em 3D</a>
+          <a class="btn btn--secondary" href="${MONTAR.href}">${icon('cube')} ${MONTAR.button}</a>
         </div>
       </div>
     </div>
@@ -293,11 +297,11 @@ export default {
                 ? html`<div class="pd-block">
                     ${promoBanner({
                       tone: 'stage',
-                      tag: 'Só na BOLAB',
-                      title: 'Quer este bolo do seu jeito?',
-                      text: 'Troque massa, recheio e cobertura em 3D.',
-                      cta: 'Personalizar este bolo',
-                      href: `#/monte-seu-bolo?base=${p.id}`,
+                      tag: MONTAR.tag,
+                      title: MONTAR.productTitle,
+                      text: MONTAR.productLine,
+                      cta: MONTAR.productCta,
+                      href: `${MONTAR.href}?base=${p.id}`,
                       img: 'assets/img/cz-belga.webp',
                       cutout: true,
                     })}

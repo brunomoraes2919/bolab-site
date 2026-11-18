@@ -85,7 +85,7 @@ const MENU = {
   atendimento: { href: '#/atendimento', icon: 'message', title: 'Atendimento' },
 };
 
-/** Grupos de linhas do perfil no celular (no computador o menu lateral faz esse papel). */
+/** Grupos de linhas do perfil no celular (a partir de 768 px o menu lateral faz esse papel). */
 const GROUPS = [
   { title: 'Conta', ids: ['dados', 'enderecos', 'pagamentos'] },
   { title: 'Vantagens', ids: ['cupons', 'indicar'] },
@@ -94,13 +94,13 @@ const GROUPS = [
 
 const SIDE_ORDER = ['pedidos', 'favoritos', 'dados', 'enderecos', 'pagamentos', 'cupons', 'indicar', 'atendimento'];
 
-/** Menu lateral fixo do computador: quem é, para onde ir e a saída. */
+/** Menu lateral fixo (tablet em pé e computador): quem é, para onde ir e a saída. */
 function sideNav(active) {
   const user = auth.user();
   const link = (id, m) =>
     html`<a href="${m.href}" class="${id === active ? 'is-active' : ''}" ${id === active ? html`aria-current="page"` : ''}>${icon(m.icon)}<span>${m.title}</span></a>`;
   return html`
-    <aside class="acc-side only-desktop">
+    <aside class="acc-side acc-wide">
       <div class="acc-side__me">
         <span class="avatar" data-user-initials>${initials(user.name)}</span>
         <div>
@@ -138,7 +138,7 @@ export function bindAccount(root) {
   on(root, 'click', '[data-signout]', async () => {
     const ok = await confirmDialog({
       title: 'Sair da conta?',
-      message: 'Seus pedidos, endereços e favoritos continuam guardados para quando você voltar.',
+      message: 'Seus pedidos, endereços, favoritos e o carrinho continuam guardados para quando você voltar.',
       confirmLabel: 'Sair',
       cancelLabel: 'Continuar na conta',
     });
@@ -246,7 +246,7 @@ function rowDesc(id) {
     enderecos: addr ? `${addr.label}: ${[addr.street, addr.number].filter(Boolean).join(', ')}` : 'Nenhum endereço salvo',
     pagamentos: card ? `${card.brand} final ${card.last4}` : `Pix com ${SITE.pix.discountPct}% OFF ou cartão`,
     cupons: nCoupons ? `${plural(nCoupons, 'cupom disponível', 'cupons disponíveis')}` : 'Nenhum cupom agora',
-    indicar: 'Ganhe R$ 20 a cada indicação',
+    indicar: SITE.demo ? 'Seu código para indicar a BOLAB' : 'Ganhe R$ 20 a cada indicação',
     atendimento: 'Dúvidas e ajuda com o pedido',
   }[id];
 }
@@ -280,7 +280,7 @@ export default {
 
             ${shortcuts()} ${current ? orderCard(current) : ''} ${cakesRail()}
 
-            <div class="acc-groups only-mobile">
+            <div class="acc-groups acc-narrow">
               ${GROUPS.map(
                 (g) => html`
                   <section class="acc-group">
@@ -297,7 +297,7 @@ export default {
               </div>
             </div>
 
-            <section class="acc-group only-desktop">
+            <section class="acc-group acc-wide">
               <h2 class="acc-group__title">Para o próximo pedido</h2>
               <div class="card acc-list">${['enderecos', 'pagamentos', 'cupons'].map(menuRow)}</div>
             </section>

@@ -1,16 +1,50 @@
 {
+  "id": "./",
   "name": "BOLAB — Bolos artesanais",
   "short_name": "BOLAB",
   "description": "Delivery de bolos artesanais. Peça um clássico ou monte o seu em 3D e receba com dia e horário marcados.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#FFFFFF",
   "theme_color": "#FFFFFF",
   "lang": "pt-BR",
+  "dir": "ltr",
+  "categories": ["food", "shopping"],
+  "prefer_related_applications": false,
   "icons": [
     { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Montar bolo em 3D",
+      "short_name": "Montar bolo",
+      "description": "Escolha formato, massa, recheio e decoração e veja o bolo na hora.",
+      "url": "./#/monte-seu-bolo",
+      "icons": [{ "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Cardápio",
+      "short_name": "Cardápio",
+      "description": "Bolos sob encomenda e itens para a festa.",
+      "url": "./#/cardapio",
+      "icons": [{ "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Meus pedidos",
+      "short_name": "Pedidos",
+      "description": "Acompanhe ou repita um pedido.",
+      "url": "./#/pedidos",
+      "icons": [{ "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
+  "screenshots": [
+    { "src": "assets/screens/inicio-celular.jpg", "sizes": "780x1688", "type": "image/jpeg", "form_factor": "narrow", "label": "Início: mais pedidos e entrega com dia e horário marcados" },
+    { "src": "assets/screens/monte-celular.jpg", "sizes": "780x1688", "type": "image/jpeg", "form_factor": "narrow", "label": "Monte seu bolo em 3D" },
+    { "src": "assets/screens/cardapio-celular.jpg", "sizes": "780x1688", "type": "image/jpeg", "form_factor": "narrow", "label": "Cardápio de bolos sob encomenda" },
+    { "src": "assets/screens/inicio-computador.jpg", "sizes": "1280x800", "type": "image/jpeg", "form_factor": "wide", "label": "A loja no computador" }
   ]
 }

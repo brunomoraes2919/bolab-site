@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <!-- O GitHub Pages mostra esta página quando o endereço não existe. Ela leva a pessoa para a
+         loja: /cardapio vira #/cardapio, /produto/p1 vira #/produto/p1, o resto vai para o início.
+         O script abaixo fica em UMA linha e é autorizado pelo código "sha256-…" da política.
+         Se mexer nele, rode  node tools/csp_hash.mjs --gravar  (ele atualiza o código). -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-JB5xl2LUNga/lL2grZ1uLEIwIBAveWqRYCxwfX82Hrs='; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'" />
+    <meta name="referrer" content="same-origin" />
+    <meta name="robots" content="noindex" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Página não encontrada · BOLAB</title>
+    <script>(function(){var s=location.pathname.split('/').filter(Boolean),g=/\.github\.io$/.test(location.hostname),b=g&&s.length?'/'+s[0]+'/':'/',r=(g?s.slice(1):s).join('/'),ok=/^[\w\-\/]{1,80}$/.test(r)&&!/\.[a-z0-9]+$/i.test(r),t=location.origin+b+(ok?'#/'+r:'');document.addEventListener('DOMContentLoaded',function(){var a=document.getElementById('ir');if(a)a.href=t});if(!/[?&]ficar\b/.test(location.search))location.replace(t)})();</script>
+    <style>
+      html { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #f5f5f6; color: #1c1a1b; }
+      body { margin: 0; min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
+      main { max-width: 34ch; text-align: center; }
+      h1 { font-size: 1.5rem; line-height: 1.2; margin: 0 0 12px; }
+      p { margin: 0 0 24px; color: #5f5b5e; line-height: 1.5; }
+      a { display: inline-block; padding: 14px 22px; border-radius: 12px; background: #d12d58; color: #fff; font-weight: 700; text-decoration: none; }
+      a:focus-visible { outline: 3px solid #1c1a1b; outline-offset: 3px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Esta página saiu do forno… e sumiu</h1>
+      <p>Não encontramos o endereço que você abriu. A loja BOLAB continua logo ali.</p>
+      <a id="ir" href="/">Ir para a loja BOLAB</a>
+    </main>
+  </body>
+</html>

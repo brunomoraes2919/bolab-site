@@ -1,0 +1,327 @@
+/* BOLAB — ficha da cozinha (#/cozinha). Tela de trabalho da confeitaria: leitura rápida no
+   celular, com as mãos ocupadas, e uma folha limpa na impressão. Classes .kz-… */
+
+.kz {
+  display: grid;
+  gap: var(--s-3);
+  max-width: 860px;
+  padding-block: var(--s-4) var(--s-10);
+}
+
+.kz-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.kz-head__kicker {
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  font-weight: 700;
+}
+
+.kz-head h1 {
+  font-size: var(--fs-2xl);
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.kz-head__when {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 700;
+}
+
+.kz-head__when svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--action);
+}
+
+.kz-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.kz-actions .btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.kz-empty__t {
+  font-size: var(--fs-lg);
+}
+
+.kz-items,
+.kz-cake {
+  padding: var(--s-4);
+}
+
+.kz-items h2 {
+  margin-bottom: var(--s-2);
+  font-size: var(--fs-md);
+  font-weight: 800;
+}
+
+.kz-items ul {
+  display: grid;
+  gap: 6px;
+  font-size: var(--fs-sm);
+}
+
+.kz-cake__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.kz-cake__head > div {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.kz-cake__n {
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+}
+
+.kz-cake__n strong {
+  color: var(--action-hover);
+}
+
+.kz-cake h2 {
+  font-size: var(--fs-xl);
+  font-weight: 800;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.kz-cake__measures {
+  margin-top: 2px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.kz-cake--bad p {
+  margin-top: var(--s-2);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+/* Chá revelação: a cor só aparece depois de "Mostrar a cor" */
+.kz-reveal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: var(--s-3);
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--fill);
+  font-size: var(--fs-meta);
+}
+
+.kz-reveal > svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+
+.kz-reveal > div {
+  display: grid;
+  flex: 1 1 200px;
+  gap: 2px;
+}
+
+.kz-reveal strong {
+  font-size: var(--fs-sm);
+}
+
+.kz-reveal span {
+  color: var(--text-2);
+}
+
+.kz-reveal.is-on {
+  background: var(--amber-soft);
+  color: #7a4208;
+}
+
+.kz-reveal.is-on span {
+  color: inherit;
+}
+
+/* Linhas da ficha: rótulo em cima, texto embaixo (no computador, lado a lado) */
+.kz-rows {
+  display: grid;
+}
+
+.kz-row {
+  display: grid;
+  gap: 2px;
+  padding-block: var(--s-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.kz-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.kz-row dt {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+
+.kz-row dd {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.kz-row dd ul {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.kz-row dd p + ul {
+  margin-top: 8px;
+}
+
+.kz-sub {
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+}
+
+.kz-sub--deep {
+  margin-left: 16px;
+  color: var(--text-2);
+}
+
+.kz-sub strong {
+  font-weight: 700;
+}
+
+.kz-hex {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.kz-hex i {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+@media (min-width: 720px) {
+  .kz-items,
+  .kz-cake {
+    padding: var(--s-6);
+  }
+
+  .kz-row {
+    grid-template-columns: 180px minmax(0, 1fr);
+    gap: var(--s-4);
+  }
+
+  .kz-row dt {
+    padding-top: 2px;
+    font-size: var(--fs-meta);
+  }
+}
+
+/* ───────── Impressão: só a ficha, preto no branco ───────── */
+@media print {
+  body:has(.kz) {
+    padding: 0;
+    background: #fff;
+  }
+
+  body:has(.kz) .header,
+  body:has(.kz) .subnav,
+  body:has(.kz) .tabbar,
+  body:has(.kz) .cartbar,
+  body:has(.kz) .footer,
+  body:has(.kz) .offline-bar,
+  body:has(.kz) .toast-host,
+  .kz-noprint {
+    display: none !important;
+  }
+
+  .kz {
+    display: block;
+    max-width: none;
+    padding: 0;
+    color: #000;
+  }
+
+  .kz-head {
+    margin-bottom: 10pt;
+  }
+
+  .kz-head h1 {
+    font-size: 18pt;
+  }
+
+  .kz-items,
+  .kz-cake {
+    margin-bottom: 12pt;
+    padding: 10pt 0 0;
+    border-top: 1.5pt solid #000;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /* cada bolo começa em folha nova (menos o primeiro) e uma camada não é partida entre folhas */
+  .kz-cake + .kz-cake {
+    break-before: page;
+  }
+
+  .kz-row,
+  .kz-sub,
+  .kz-reveal {
+    break-inside: avoid;
+  }
+
+  .kz-row dt,
+  .kz-cake__n,
+  .kz-cake__measures,
+  .kz-sub--deep,
+  .kz-reveal span {
+    color: #000;
+  }
+
+  .kz-row dd {
+    font-size: 10.5pt;
+  }
+
+  .kz-reveal,
+  .kz-reveal.is-on {
+    border: 1pt solid #000;
+    background: none;
+    color: #000;
+  }
+}

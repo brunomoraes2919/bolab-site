@@ -34,11 +34,53 @@ function toHtml(v) {
   return esc(v);
 }
 
+/* Endereços dentro de atributos. Escapar o texto não basta em href/src: "javascript:alert(1)"
+   não tem nenhum caractere especial. Por isso, quando um valor ocupa o atributo INTEIRO
+   (href="${x}"), só passam os esquemas abaixo; o resto vira "#" (ou vazio, em src). */
+const LINK_SCHEMES = new Set(['https', 'http', 'mailto', 'tel', 'whatsapp', 'sms']);
+const DATA_IMAGE = /^data:image\/(?:png|jpe?g|webp|gif|avif);base64,/i;
+// O navegador ignora espaços e caracteres de controle no começo e no meio do esquema ("java\tscript:").
+const URL_NOISE = new RegExp(`[\x00-\x20\x7f-\x9f${String.fromCharCode(0x200b)}-${String.fromCharCode(0x200f)}${String.fromCharCode(0x2028, 0x2029, 0xfeff)}]+`, 'g');
+
+/**
+ * safeUrl(valor)          para links: caminhos da loja (#/…, assets/…), https, mailto, tel e WhatsApp
+ * safeUrl(valor, 'src')   para imagens e mídia: caminhos da loja, https, blob: e data:image
+ */
+export function safeUrl(value, kind = 'href') {
+  const s = String(value ?? '');
+  const probe = s.replace(URL_NOISE, '');
+  const m = /^([a-z][a-z0-9+.-]*):/i.exec(probe);
+  if (!m) return s; // sem esquema: endereço relativo, da própria loja
+  const scheme = m[1].toLowerCase();
+  if (kind === 'src') return scheme === 'https' || scheme === 'blob' || DATA_IMAGE.test(probe) ? s : '';
+  return LINK_SCHEMES.has(scheme) ? s : '#';
+}
+
+const URL_ATTR = /(?:^|[\s"'<])(href|src|action|formaction|poster|xlink:href)\s*=\s*["']?$/i;
+const attrKinds = new WeakMap(); // por modelo: `strings` é o mesmo objeto a cada chamada do mesmo html``
+
+function kindsOf(strings) {
+  let kinds = attrKinds.get(strings);
+  if (!kinds) {
+    kinds = strings.map((s) => {
+      const m = URL_ATTR.exec(s);
+      if (!m) return '';
+      const name = m[1].toLowerCase();
+      return name === 'src' || name === 'poster' ? 'src' : 'href';
+    });
+    attrKinds.set(strings, kinds);
+  }
+  return kinds;
+}
+
 export function html(strings, ...vals) {
+  const kinds = kindsOf(strings);
   let out = '';
   strings.forEach((s, i) => {
     out += s;
-    if (i < vals.length) out += toHtml(vals[i]);
+    if (i >= vals.length) return;
+    const v = vals[i];
+    out += kinds[i] && !(v instanceof SafeHtml) ? esc(safeUrl(v, kinds[i])) : toHtml(v);
   });
   return new SafeHtml(out);
 }
@@ -192,12 +234,29 @@ export function setFieldError(form, name, message) {
   if (err) err.textContent = message || '';
   if (message) input.setAttribute('aria-invalid', 'true');
   else input.removeAttribute('aria-invalid');
+  // Leitor de tela: ao focar o campo, a mensagem de erro é lida junto com o rótulo.
+  if (err) {
+    err.id ||= `${input.id || `campo-${name}`}-erro`;
+    const others = (input.getAttribute('aria-describedby') || '').split(/\s+/).filter((id) => id && id !== err.id);
+    const ids = message ? [...others, err.id] : others;
+    if (ids.length) input.setAttribute('aria-describedby', ids.join(' '));
+    else input.removeAttribute('aria-describedby');
+  }
 }
 
 export function clearFieldErrors(form) {
   form.querySelectorAll('.field.is-invalid').forEach((f) => {
     f.classList.remove('is-invalid');
-    f.querySelector('[aria-invalid]')?.removeAttribute('aria-invalid');
+    const input = f.querySelector('[aria-invalid]');
+    input?.removeAttribute('aria-invalid');
+    // a mensagem antiga não pode continuar sendo lida como descrição do campo
+    const err = f.querySelector('.field__error');
+    if (err && input) {
+      err.textContent = '';
+      const ids = (input.getAttribute('aria-describedby') || '').split(/\s+/).filter((id) => id && id !== err.id);
+      if (ids.length) input.setAttribute('aria-describedby', ids.join(' '));
+      else input.removeAttribute('aria-describedby');
+    }
   });
 }
 
@@ -293,7 +352,7 @@ export function toast(message, { type = 'info', action, duration = 3200 } = {}) 
   if (action) {
     const a = document.createElement(action.href ? 'a' : 'button');
     a.textContent = action.label;
-    if (action.href) a.href = action.href;
+    if (action.href) a.href = safeUrl(action.href);
     a.addEventListener('click', () => {
       action.onClick?.();
       close();
@@ -315,6 +374,60 @@ const openOverlays = [];
 
 function lockScroll(lock) {
   document.documentElement.style.overflow = lock ? 'hidden' : '';
+}
+
+/* Com um diálogo aberto, o resto da página fica inerte: o leitor de tela e o teclado não
+   alcançam o que está por baixo (nem todo leitor respeita só o aria-modal). */
+const PAGE_PARTS = '#header, #subnav, #app, #footer, #cartbar, #tabbar, .skip-link';
+let liveDialogs = 0; // diálogos abertos que ainda não começaram a fechar
+function setPageInert(on) {
+  document.querySelectorAll(PAGE_PARTS).forEach((el) => {
+    if (on) el.setAttribute('inert', '');
+    else el.removeAttribute('inert');
+  });
+}
+
+/**
+ * Folha do celular: dá para fechar puxando para baixo pelo "pegador" (o topo da folha), como nos
+ * aplicativos. Puxão curto e rápido também fecha; soltou antes, a folha volta ao lugar.
+ * Só com toque ou caneta, só na folha (não na gaveta nem no modal do computador).
+ */
+const SHEET = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(max-width: 639px)') : null;
+function bindSheetDrag(overlay, el, close) {
+  const GRIP = 64; // altura, a partir do topo da folha, em que o puxão começa
+  let drag = null;
+  el.addEventListener('pointerdown', (ev) => {
+    if (drag || !SHEET?.matches || overlay.classList.contains('overlay--drawer') || ev.pointerType === 'mouse' || !ev.isPrimary) return;
+    const box = el.getBoundingClientRect();
+    if (ev.clientY - box.top > GRIP || ev.target.closest('button, a, input, select, textarea')) return;
+    drag = { id: ev.pointerId, y: ev.clientY, at: performance.now(), dy: 0, height: box.height };
+    el.setPointerCapture?.(ev.pointerId);
+    el.style.transition = 'none';
+  });
+  el.addEventListener('pointermove', (ev) => {
+    if (!drag || ev.pointerId !== drag.id) return;
+    const raw = ev.clientY - drag.y;
+    drag.dy = raw > 0 ? raw : raw * 0.15; // para cima a folha quase não cede
+    el.style.transform = `translateY(${drag.dy}px)`;
+  });
+  const end = (ev) => {
+    if (!drag || ev.pointerId !== drag.id) return;
+    const { dy, at, height } = drag;
+    drag = null;
+    const speed = dy / Math.max(1, performance.now() - at); // px por ms
+    el.style.transition = '';
+    if (ev.type === 'pointerup' && (dy > Math.min(160, height * 0.32) || (dy > 28 && speed > 0.45))) {
+      close(); // a animação de saída parte de onde o dedo deixou a folha
+      return;
+    }
+    el.style.transition = 'transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1)';
+    el.style.transform = '';
+    setTimeout(() => {
+      el.style.transition = '';
+    }, 220);
+  };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
 }
 
 /**
@@ -350,12 +463,17 @@ export function openDialog({ title = '', body = '', footer = '', variant = '', o
     done = true;
     overlay.classList.add('is-leaving');
     document.removeEventListener('keydown', onKey);
+    // A página volta a responder assim que o último diálogo começa a fechar (não só quando some).
+    liveDialogs = Math.max(0, liveDialogs - 1);
+    if (!liveDialogs) setPageInert(false);
     setTimeout(() => {
       overlay.remove();
       const i = openOverlays.indexOf(api);
       if (i >= 0) openOverlays.splice(i, 1);
       if (!openOverlays.length) lockScroll(false);
-      previousFocus?.focus?.();
+      // Devolve o foco a quem abriu o diálogo; se a tela mudou nesse meio-tempo, ao conteúdo.
+      if (previousFocus?.isConnected) previousFocus.focus?.({ preventScroll: true });
+      else if (document.activeElement === document.body) document.getElementById('app')?.focus({ preventScroll: true });
     }, 160);
     onClose?.(result);
     resolve(result);
@@ -396,16 +514,30 @@ export function openDialog({ title = '', body = '', footer = '', variant = '', o
   });
   document.addEventListener('keydown', onKey);
 
-  const api = { el, overlay, close, closed };
+  const api = { el, overlay, close, closed, dismissible };
   openOverlays.push(api);
   document.body.appendChild(overlay);
   lockScroll(true);
+  liveDialogs += 1;
+  setPageInert(true);
+  if (dismissible) bindSheetDrag(overlay, el, close);
   (el.querySelector('[autofocus]') || el).focus({ preventScroll: true });
   return api;
 }
 
 export function closeAllDialogs() {
   [...openOverlays].forEach((d) => d.close());
+}
+
+/**
+ * Botão "voltar" do aparelho (app Android): fecha a folha ou o diálogo que estiver por cima.
+ * → true se havia algo aberto (o "voltar" já foi atendido), false se não havia nada.
+ */
+export function closeTopDialog() {
+  const top = openOverlays[openOverlays.length - 1];
+  if (!top) return false;
+  if (top.dismissible) top.close();
+  return true;
 }
 
 /** Confirmação simples. Resolve true/false. */

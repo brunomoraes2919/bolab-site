@@ -20,7 +20,7 @@ import {
   openDialog,
 } from '../ui.js';
 import { lineThumb, totalsSummary, dayLabel, slotLabel } from '../components.js';
-import { auth, cart, addresses, cards, orders, schedule, prefs, isServedCity } from '../store.js';
+import { auth, cart, addresses, cards, orders, schedule, prefs, store, isServedCity } from '../store.js';
 import { lookupCep } from '../cep.js';
 import { navigate } from '../router.js';
 import { SITE } from '../data/site.js';
@@ -44,6 +44,10 @@ const CORREIOS_CEP = 'https://buscacepinter.correios.com.br/app/endereco/index.p
 const STRIP_DAYS = 14; // dias mostrados na faixa de chips
 const PROGRESS_KEY = 'bolab:checkout'; // sessionStorage: andamento do checkout (nunca dados de cartão)
 const TEST_CARD = { number: '4111 1111 1111 1111', expiry: '12/30', cvv: '123', cpf: '529.982.247-25' };
+/* Sem servidor (SITE.demo) nada é cobrado pela loja: o pagamento é combinado com a BOLAB no WhatsApp.
+   Pedir número de cartão, CVV e CPF que não serão usados seria trabalho à toa e um risco sem motivo,
+   então o formulário do cartão só existe quando houver meio de pagamento de verdade. */
+const ASK_CARD = !SITE.demo;
 
 /* ───────── Estado ─────────
    Fica no módulo: redesenhar a tela (ou sair e voltar) não perde o que já foi preenchido. */
@@ -78,6 +82,15 @@ const fresh = () => ({
 
 let S = fresh();
 let leaving = false; // pedido criado: a tela está só esperando a próxima abrir
+
+/* Dados de cartão nunca ficam esperando na memória: saiu da tela de fechar pedido (ou da conta),
+   o que foi digitado do cartão é apagado. O resto do andamento (endereço, data) continua. */
+function wipeCard() {
+  S.card = fresh().card;
+}
+store.on('auth', () => {
+  if (!auth.isLogged()) S = fresh();
+});
 
 /** Campo do formulário → onde o valor mora no estado. */
 const BIND = {
@@ -707,7 +720,7 @@ function scheduleBody() {
         </button>
       </div>
       ${slotsHtml()}
-      <p class="co-note">${icon('info')}<span>Sob encomenda: pedindo hoje, a primeira data é <strong>${dayLabel(schedule.earliest())}</strong>.</span></p>
+      <p class="co-note">${icon('info')}<span>Sob encomenda: pedindo hoje, a primeira data é <strong>${dayLabel(schedule.earliest())}</strong>.${SITE.demo ? ' O horário vale depois que a BOLAB confirmar pelo WhatsApp.' : ''}</span></p>
       <div class="co-cta">
         <button class="btn btn--lg btn--block co-next" type="submit" id="co-next-2" ${attr('disabled', !ready)}>
           ${ready ? html`Ir para o pagamento${icon('arrow-right')}` : 'Escolha um horário'}
@@ -796,9 +809,22 @@ function newCardForm() {
 }
 
 function cardPanel(total) {
-  const saved = cards.list();
+  const saved = ASK_CARD ? cards.list() : [];
   const parcels = installmentOptions(total);
   if (S.installments > parcels.length) S.installments = parcels.length;
+  if (!ASK_CARD) {
+    return html`
+      <div class="co-pay-panel">
+        <div class="field">
+          <label for="co-installments">Parcelamento</label>
+          <select class="select" id="co-installments" name="installments">
+            ${parcels.map((p) => html`<option value="${p.n}" ${attr('selected', S.installments === p.n)}>${p.n}x de ${money(p.value)} sem juros</option>`)}
+          </select>
+          <div class="field__hint">Você não informa o cartão aqui. A BOLAB combina o pagamento com você pelo WhatsApp.</div>
+        </div>
+      </div>
+    `;
+  }
   return html`
     <div class="co-pay-panel">
       ${saved.length
@@ -838,13 +864,27 @@ function cardPanel(total) {
 }
 
 function pixPanel(pix) {
+  // Sem servidor não existe cobrança nem confirmação automática: o texto diz o que acontece de verdade.
+  const next = SITE.demo
+    ? [html`Depois de fechar, você envia o pedido pelo WhatsApp.`, html`A BOLAB confirma o horário e passa a chave Pix por lá.`]
+    : [html`Na próxima tela mostramos o QR Code e o código copia e cola.`, html`A confirmação sai em segundos e o seu horário fica garantido.`];
   return html`
     <div class="co-pay-panel co-pix">
       <ul>
         <li>${icon('check')}<span>Você paga <strong>${money(pix.total)}</strong> e economiza ${money(pix.pixDiscount)}.</span></li>
-        <li>${icon('check')}<span>Na próxima tela mostramos o QR Code e o código copia e cola.</span></li>
-        <li>${icon('check')}<span>A confirmação sai em segundos e o seu horário fica garantido.</span></li>
+        ${next.map((line) => html`<li>${icon('check')}<span>${line}</span></li>`)}
       </ul>
+    </div>
+  `;
+}
+
+/** Sem servidor: o que acontece com o pagamento, dito antes de a pessoa fechar o pedido. */
+function demoNotice() {
+  if (!SITE.demo) return '';
+  return html`
+    <div class="notice co-demo">
+      ${icon('info')}
+      <div><strong>Nada é cobrado pelo site.</strong> Depois de fechar, você envia o pedido pelo WhatsApp e combina o pagamento com a BOLAB.</div>
     </div>
   `;
 }
@@ -863,7 +903,7 @@ function paymentBody() {
           <span class="option__body co-option__body">
             <span class="co-option__main">
               <span class="option__title co-option__name">Pix <span class="badge badge--green">${SITE.pix.discountPct}% de desconto</span></span>
-              <span class="option__desc">Aprovação na hora</span>
+              <span class="option__desc">${SITE.demo ? 'Chave enviada pela BOLAB no WhatsApp' : 'Aprovação na hora'}</span>
             </span>
             <span class="co-option__price">${money(pix.total)}</span>
           </span>
@@ -886,22 +926,11 @@ function paymentBody() {
         </label>
       </div>
 
-      ${isPix ? pixPanel(pix) : cardPanel(card.total)}
-      ${SITE.demo
-        ? html`
-            <div class="notice notice--amber co-demo">
-              ${icon('info')}
-              <div>
-                <strong>Modo demonstração:</strong> nenhum valor será cobrado.
-                ${!isPix && S.cardId === 'new' ? html`<button class="link" type="button" id="co-fill-test" data-co-fill>Preencher com cartão de teste</button>` : ''}
-              </div>
-            </div>
-          `
-        : ''}
+      ${isPix ? pixPanel(pix) : cardPanel(card.total)} ${demoNotice()}
 
       <div class="co-cta">
         <button class="btn btn--price btn--lg btn--block co-pay" type="submit" id="co-pay" data-co-pay>
-          <span class="btn__label">${icon('lock')}<span data-co-pay-label>${isPix ? 'Pagar com Pix' : 'Pagar'}</span></span>
+          <span class="btn__label">${SITE.demo ? '' : icon('lock')}<span data-co-pay-label>${SITE.demo ? 'Fechar pedido' : isPix ? 'Pagar com Pix' : 'Pagar'}</span></span>
           <span class="btn__price">${money(isPix ? pix.total : card.total)}</span>
         </button>
       </div>
@@ -1008,7 +1037,7 @@ function summaryHtml() {
     </div>
     ${couponIssue}
     <ul class="co-assure">
-      <li>${icon('lock')}<span>Seus dados trafegam em ambiente seguro</span></li>
+      <li>${icon('lock')}<span>${SITE.demo ? 'Seus dados ficam neste aparelho até você enviar o pedido' : 'Seus dados trafegam em ambiente seguro'}</span></li>
       <li>${icon('shield-check')}<span>Cancelamento grátis antes da produção</span></li>
       <li>${icon('message')}<span>Dúvidas? <a class="link" href="#/atendimento">Fale com a gente</a></span></li>
     </ul>
@@ -1417,7 +1446,7 @@ export default {
     on(page, 'click', '[data-co-fill]', () => {
       S.card = { ...S.card, ...TEST_CARD, holder: (S.contact.name || auth.user()?.name || 'Cliente Teste').toUpperCase() };
       paint();
-      toast('Cartão de teste preenchido. Nada será cobrado.', { type: 'success' });
+      toast('Cartão de teste preenchido. Nada é cobrado.', { type: 'success' });
     });
 
     on(page, 'click', '[data-co-policy]', () => {
@@ -1425,9 +1454,9 @@ export default {
         title: 'Política de cancelamento',
         body: html`
           <div class="co-policy">
-            <p><strong>Antes da produção: cancelamento grátis.</strong> Enquanto o seu bolo não começou a ser feito, você cancela direto em “Meus pedidos” e o valor pago volta integralmente.</p>
-            <p><strong>Depois que a produção começa:</strong> os ingredientes já foram separados e usados só para você. Fale com a gente pelo atendimento que encontramos juntos a melhor solução.</p>
-            <p><strong>Garantia BOLAB:</strong> se o seu bolo não chegar perfeito, a gente refaz ou devolve o seu dinheiro.</p>
+            <p><strong>Antes da produção: cancelamento grátis.</strong> Enquanto o seu bolo não começou a ser feito, você cancela em “Meus pedidos”${SITE.demo ? ' e avisa a BOLAB pelo WhatsApp' : ' e o valor pago volta integralmente'}.</p>
+            <p><strong>Depois que a produção começa:</strong> os ingredientes já foram separados e usados só para você. Fale com a BOLAB pelo WhatsApp para ver o que dá para fazer.</p>
+            <p><strong>Algum problema com o pedido?</strong> Fale com a gente pelo WhatsApp: a BOLAB resolve com você.</p>
           </div>
         `,
         footer: html`<button class="btn" type="button" data-dialog-close autofocus>Entendi</button>`,
@@ -1467,20 +1496,22 @@ export default {
 
       let payment = { method: 'pix', paid: false };
       let cardToSave = null;
-      if (S.payment === 'card') {
+      if (S.payment === 'card' && !ASK_CARD) {
+        payment = { method: 'card', installments: S.installments, paid: false }; // a combinar no WhatsApp
+      } else if (S.payment === 'card') {
         if (S.cardId === 'new') {
           if (!applyErrors(form, cardErrors(S.card))) return;
-          payment = { method: 'card', brand: cardBrand(S.card.number), last4: digitsOf(S.card.number).slice(-4), installments: S.installments, paid: true };
+          payment = { method: 'card', brand: cardBrand(S.card.number), last4: digitsOf(S.card.number).slice(-4), installments: S.installments, paid: !SITE.demo };
           if (S.card.save) cardToSave = { number: S.card.number, holder: S.card.holder, expiry: S.card.expiry };
         } else {
           const saved = cards.get(S.cardId);
-          payment = { method: 'card', brand: saved.brand, last4: saved.last4, installments: S.installments, paid: true };
+          payment = { method: 'card', brand: saved.brand, last4: saved.last4, installments: S.installments, paid: !SITE.demo };
         }
       }
 
       S.placing = true;
-      setBusy(true, payment.method === 'card' ? 'Processando pagamento…' : 'Gerando o seu Pix…');
-      await sleep(payment.method === 'card' ? 1500 : 800);
+      setBusy(true, SITE.demo ? 'Fechando o pedido…' : payment.method === 'card' ? 'Processando pagamento…' : 'Gerando o seu Pix…');
+      await sleep(SITE.demo ? 600 : payment.method === 'card' ? 1500 : 800);
       if (!alive) {
         S.placing = false;
         return;
@@ -1521,6 +1552,8 @@ export default {
     return () => {
       alive = false;
       offCart();
+      // Saiu desta tela para outra (não é um simples redesenho): o cartão digitado é apagado.
+      if (!location.hash.startsWith('#/checkout')) wipeCard();
     };
   },
 };

@@ -52,12 +52,12 @@
   margin-top: var(--s-1);
 }
 
-/* Links de texto: a área de toque tem 42 px de altura, mas o desenho continua o de um link comum
+/* Links de texto: a área de toque tem 44 px de altura, mas o desenho continua o de um link comum
    (o respiro extra é compensado por margem negativa, então nada sai do lugar). */
 .auth-textlink {
   display: inline-block;
-  margin: -10px -4px;
-  padding: 10px 4px;
+  margin: -12px -4px;
+  padding: 12px 4px;
   color: var(--action);
   font-size: var(--fs-sm);
   font-weight: 700;
@@ -143,8 +143,8 @@
 }
 
 .auth-terms .auth-textlink {
-  margin-block: -12px;
-  padding-block: 12px;
+  margin-block: -13px;
+  padding-block: 13px; /* linha de 18 px + 26 = 44 px de área de toque */
   font-size: inherit;
 }
 
@@ -507,6 +507,61 @@
   }
 }
 
+/* O menu lateral aparece a partir de 768 px (tablet em pé). Abaixo disso a conta é uma coluna só;
+   .acc-wide e .acc-narrow marcam o que existe só de um lado ou do outro dessa largura. */
+@media (max-width: 767px) {
+  .acc-wide {
+    display: none !important;
+  }
+}
+
+@media (min-width: 768px) {
+  .acc-narrow {
+    display: none !important;
+  }
+}
+
+/* Tablet estreito (600–767 px): uma coluna de leitura no centro, em vez do celular esticado. */
+@media (min-width: 600px) and (max-width: 767px) {
+  .acc,
+  .sup {
+    max-width: calc(640px + var(--gutter) * 2);
+  }
+}
+
+/* Tablet em pé: menu ao lado, conteúdo na largura de um formulário. */
+@media (min-width: 768px) {
+  .acc {
+    padding-block: var(--s-4) var(--s-10);
+  }
+
+  .acc-shell {
+    grid-template-columns: 224px minmax(0, 1fr);
+    gap: var(--s-6);
+    align-items: start;
+  }
+
+  .acc-side {
+    position: sticky;
+    top: calc(var(--header-h) + var(--s-4));
+  }
+
+  /* com o menu ao lado, o "voltar" do título não é preciso */
+  .acc-main > .page-head {
+    padding-top: 0;
+  }
+
+  .acc-main > .page-head .page-head__back {
+    display: none;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 899px) {
+  .sup {
+    max-width: calc(680px + var(--gutter) * 2);
+  }
+}
+
 @media (min-width: 900px) {
   /* De propósito mais estreitas (1080px) que carrinho e checkout: são telas de formulário e leitura. */
   .acc {
@@ -517,25 +572,10 @@
   .acc-shell {
     grid-template-columns: 248px minmax(0, 1fr);
     gap: var(--s-8);
-    align-items: start;
-  }
-
-  .acc-side {
-    position: sticky;
-    top: calc(var(--header-h) + var(--s-4));
   }
 
   .acc-main {
     gap: var(--s-5);
-  }
-
-  /* com o menu ao lado, o "voltar" do título não é preciso */
-  .acc-main > .page-head {
-    padding-top: 0;
-  }
-
-  .acc-main > .page-head .page-head__back {
-    display: none;
   }
 }
 
@@ -643,9 +683,9 @@
 /* botão "Apagar dados" dentro do aviso de demonstração */
 .acc-reset {
   display: block;
-  min-height: 40px;
-  margin-block: 0 -8px;
-  padding-block: 8px;
+  min-height: 44px;
+  margin-block: 0 -10px;
+  padding-block: 10px;
   color: inherit;
   font-weight: 700;
   text-align: left;
@@ -871,12 +911,14 @@
   }
 }
 
-@media (min-width: 900px) {
-  /* no computador, quem é a pessoa já está no topo do menu lateral */
+@media (min-width: 768px) {
+  /* com o menu lateral à vista, quem é a pessoa já está no topo dele */
   .acc-me {
     display: none;
   }
+}
 
+@media (min-width: 900px) {
   .acc-quick {
     gap: var(--s-3);
   }
@@ -1301,7 +1343,7 @@
 button.acc-coupon__code::before {
   content: "";
   position: absolute;
-  inset: -4px 0;
+  inset: -6px 0; /* a borda de 1,5 px não conta: 33 + 12 = 45 */
 }
 
 .acc-coupon__code svg {

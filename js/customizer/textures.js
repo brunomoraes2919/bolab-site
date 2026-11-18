@@ -1,6 +1,7 @@
 // BOLAB — texturas procedurais do personalizador (tudo desenhado em <canvas>, sem arquivos externos).
 import * as THREE from 'three';
 import { LAYER_CM, FILLING_CM } from '../data/customizer.js';
+import { crumbLookCanvas, piecesCanvas } from './looks.js';
 
 /** Gerador pseudoaleatório com semente (mulberry32): o mesmo bolo sempre sai igual. */
 export function rng(seed) {
@@ -19,15 +20,21 @@ export function hashString(text) {
   return h >>> 0;
 }
 
+/**
+ * Um <canvas> de desenho guardado na memória do aparelho, não na placa de vídeo (willReadFrequently). Assim o
+ * desenho sobrevive quando o processo gráfico cai (comum no Android, com o app em segundo plano): na volta, as
+ * texturas são reenviadas a partir dele em vez de voltarem pretas. De quebra, ler os pixels fica mais rápido.
+ */
 function makeCanvas(w, h = w) {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
+  c.getContext('2d', { willReadFrequently: true });
   return c;
 }
 
 /** Ruído de valor 2D que se repete nas bordas (period = nº de células). */
-function tileNoise(period, seed) {
+export function tileNoise(period, seed) {
   const r = rng(seed);
   const grid = new Float32Array(period * period);
   for (let i = 0; i < grid.length; i++) grid[i] = r();
@@ -49,7 +56,7 @@ function tileNoise(period, seed) {
 }
 
 /** Pinta um mapa de alturas (tons de cinza) a partir de uma função f(u, v) → 0…1. */
-function paintHeight(size, f, sizeY = size) {
+export function paintHeight(size, f, sizeY = size) {
   const c = makeCanvas(size, sizeY);
   const ctx = c.getContext('2d');
   const img = ctx.createImageData(size, sizeY);
@@ -66,7 +73,7 @@ function paintHeight(size, f, sizeY = size) {
 }
 
 /** Converte alturas em mapa de normais (convenção do Three.js). */
-function heightToNormal(canvas, strength = 2, wrap = true) {
+export function heightToNormal(canvas, strength = 2, wrap = true) {
   const w = canvas.width;
   const h = canvas.height;
   const src = canvas.getContext('2d').getImageData(0, 0, w, h).data;
@@ -172,7 +179,7 @@ function softHeight(size, seed, pores = false) {
 /* ───────── Massa ───────── */
 
 /** Miolo do bolo: claro, com furinhos de ar. Usado como cor (multiplicada pelo sabor) e relevo. */
-function crumbCanvas(size, seed) {
+export function crumbCanvas(size, seed) {
   const n1 = tileNoise(6, seed);
   const n2 = tileNoise(20, seed + 1);
   const n3 = tileNoise(64, seed + 2);
@@ -374,75 +381,6 @@ function scrapeFilmCanvas(size, seed, n, dense, single) {
   return c;
 }
 
-/**
- * Frutas à mostra no corte de um recheio (atlas 2 × 1, com transparência):
- * esquerda = fatia de morango cortado ao meio (casca vermelha, miolo claro com as fibras) · direita = framboesa.
- */
-function fruitCanvas(size) {
-  const c = makeCanvas(size * 2, size);
-  const g = c.getContext('2d');
-  const r = rng(977);
-  // morango: gota deitada (a fatia fica "de pé" no recheio), ponta para baixo
-  g.save();
-  g.translate(size * 0.5, size * 0.5);
-  const s = size * 0.46;
-  const heart = (k) => {
-    g.beginPath();
-    g.moveTo(0, s * 0.96 * k);
-    g.bezierCurveTo(-s * 1.0 * k, s * 0.35 * k, -s * 0.98 * k, -s * 0.78 * k, -s * 0.34 * k, -s * 0.9 * k);
-    g.bezierCurveTo(-s * 0.12 * k, -s * 0.96 * k, s * 0.12 * k, -s * 0.96 * k, s * 0.34 * k, -s * 0.9 * k);
-    g.bezierCurveTo(s * 0.98 * k, -s * 0.78 * k, s * 1.0 * k, s * 0.35 * k, 0, s * 0.96 * k);
-    g.closePath();
-  };
-  heart(1);
-  g.fillStyle = '#c4182c';
-  g.fill();
-  const flesh = g.createRadialGradient(0, -s * 0.1, 0, 0, 0, s * 0.95);
-  flesh.addColorStop(0, '#ffd2cc');
-  flesh.addColorStop(0.22, '#f58a88');
-  flesh.addColorStop(0.6, '#e0424f');
-  flesh.addColorStop(1, '#c41c2e');
-  heart(0.88);
-  g.fillStyle = flesh;
-  g.fill();
-  // fibras claras do miolo até a casca
-  g.strokeStyle = 'rgba(255,226,220,0.4)';
-  g.lineWidth = size * 0.012;
-  for (let i = 0; i < 16; i++) {
-    const a = (i / 16) * 6.283 + r() * 0.2;
-    g.beginPath();
-    g.moveTo(Math.cos(a) * s * 0.12, -s * 0.1 + Math.sin(a) * s * 0.14);
-    g.lineTo(Math.cos(a) * s * 0.62, -s * 0.02 + Math.sin(a) * s * 0.66);
-    g.stroke();
-  }
-  // miolo oco, claro
-  g.fillStyle = 'rgba(255,244,238,0.85)';
-  g.beginPath();
-  g.ellipse(0, -s * 0.12, s * 0.07, s * 0.2, 0, 0, 6.3);
-  g.fill();
-  g.restore();
-  // framboesa: bagas redondas juntas, vinho
-  g.save();
-  g.translate(size * 1.5, size * 0.5);
-  for (let i = 0; i < 26; i++) {
-    const a = r() * 6.283;
-    const d = Math.sqrt(r()) * size * 0.34;
-    const x = Math.cos(a) * d;
-    const y = Math.sin(a) * d * 0.82;
-    const rad = size * (0.075 + r() * 0.03);
-    const gr = g.createRadialGradient(x - rad * 0.3, y - rad * 0.3, 0, x, y, rad);
-    gr.addColorStop(0, '#ef5f7c');
-    gr.addColorStop(0.5, '#c21d46');
-    gr.addColorStop(1, '#7c0f2c');
-    g.fillStyle = gr;
-    g.beginPath();
-    g.arc(x, y, rad, 0, 6.3);
-    g.fill();
-  }
-  g.restore();
-  return c;
-}
-
 /* ───────── Estilos de acabamento da cobertura ───────── */
 
 /** Riscado no pente: sulcos finos e regulares em volta do bolo. */
@@ -455,16 +393,16 @@ function combHeight(size) {
  * Mapa de normais direto de uma função de altura (sem passar por 8 bits): relevo fino sem "degraus".
  * f(u, v) → altura 0…1, com emenda nas bordas.
  */
-function normalFromHeight(size, f, strength = 2) {
-  const hgt = new Float32Array(size * size);
-  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) hgt[y * size + x] = f(x / size, y / size);
-  const out = makeCanvas(size);
+export function normalFromHeight(size, f, strength = 2, sizeY = size) {
+  const hgt = new Float32Array(size * sizeY);
+  for (let y = 0; y < sizeY; y++) for (let x = 0; x < size; x++) hgt[y * size + x] = f(x / size, y / sizeY);
+  const out = makeCanvas(size, sizeY);
   const ctx = out.getContext('2d');
-  const img = ctx.createImageData(size, size);
-  const at = (x, y) => hgt[((y + size) % size) * size + ((x + size) % size)];
+  const img = ctx.createImageData(size, sizeY);
+  const at = (x, y) => hgt[((y + sizeY) % sizeY) * size + ((x + size) % size)];
   // a inclinação é medida em "alturas por 1/256 do azulejo": o relevo fica igual em qualquer resolução
   const k = (strength * size) / 256;
-  for (let y = 0; y < size; y++) {
+  for (let y = 0; y < sizeY; y++) {
     for (let x = 0; x < size; x++) {
       const dx = (at(x + 1, y) - at(x - 1, y)) * k;
       const dy = (at(x, y + 1) - at(x, y - 1)) * k;
@@ -573,15 +511,15 @@ function rusticHeight(seed) {
   };
 }
 
-const hexRgb = (hex) => {
+export const hexRgb = (hex) => {
   const n = parseInt(String(hex).slice(1), 16) || 0;
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 };
-const rgba = (hex, a) => {
+export const rgba = (hex, a) => {
   const [r, g, b] = hexRgb(hex);
   return `rgba(${r},${g},${b},${a})`;
 };
-const mixRgb = (a, b, k) => {
+export const mixRgb = (a, b, k) => {
   const x = hexRgb(a);
   const y = hexRgb(b);
   return `#${x.map((v, i) => Math.round(v + (y[i] - v) * k).toString(16).padStart(2, '0')).join('')}`;
@@ -986,6 +924,20 @@ function flameCanvas() {
 
 /** Desenhos já calculados nesta sessão (por tamanho): reabrir o personalizador não refaz nenhum. */
 const DRAWN = new Map();
+/** Desenhos que dependem da opção escolhida (o miolo de cada massa): só os últimos ficam guardados. */
+const DRAWN_RECENT = new Map();
+function drawnRecent(key, make, keep = 6) {
+  if (DRAWN_RECENT.has(key)) {
+    const hit = DRAWN_RECENT.get(key);
+    DRAWN_RECENT.delete(key);
+    DRAWN_RECENT.set(key, hit);
+    return hit;
+  }
+  const made = make();
+  DRAWN_RECENT.set(key, made);
+  if (DRAWN_RECENT.size > keep) DRAWN_RECENT.delete(DRAWN_RECENT.keys().next().value);
+  return made;
+}
 
 /**
  * Conjunto de texturas de uma cena. Cada textura é criada na primeira vez que é pedida
@@ -1018,7 +970,26 @@ export function createTextureKit({ aniso = 4, small = false, size = 0 } = {}) {
       const key = `film${n}${dense ? 'd' : ''}`;
       return get(key, () => texture(drawn(key, () => scrapeFilmCanvas(S, 83, n, dense, n === 1)), { srgb: true, aniso }));
     },
-    fruit: () => get('fruit', () => texture(drawn('fruit', () => fruitCanvas(S >= 512 ? 128 : 96)), { repeat: false, srgb: true, aniso })),
+    /** Miolo com desenho (mesclada, formigueiro, confete…): só as últimas massas escolhidas ficam na placa de vídeo. */
+    crumbLook: (flavor) => {
+      const key = `crumbLook:${flavor.id}`;
+      if (!cache.has(key)) {
+        const mine = [...cache.keys()].filter((k) => k.startsWith('crumbLook:'));
+        if (mine.length >= 4) {
+          cache.get(mine[0]).dispose();
+          cache.delete(mine[0]);
+        }
+      }
+      return get(key, () => texture(drawnRecent(`${key}|${S}`, () => crumbLookCanvas(S, flavor)), { srgb: true, aniso }));
+    },
+    /** Pedaços à mostra no corte dos recheios (frutas, castanhas, biscoito): atlas 6 × 3, ver looks.js. */
+    pieces: () => get('pieces', () => texture(drawn('pieces', () => piecesCanvas(S >= 512 ? 128 : 96)), { repeat: false, srgb: true, aniso })),
+    /** Textura feita fora daqui (looks.js), criada uma vez por cena e liberada junto com as outras. */
+    lazy: (key, make) => get(key, make),
+    /** Desenho guardado para a sessão inteira (a chave leva o tamanho das texturas). */
+    drawn: (key, make) => drawn(key, make),
+    size: S,
+    aniso,
     combNormal: () => get('comb', () => texture(drawn('comb', () => heightToNormal(combHeight(S), 3.2)), { aniso })),
     rusticNormal: () => get('rustic', () => texture(drawn('rustic', () => normalFromHeight(S, rusticHeight(57), 1.7)), { aniso })),
     wood: () => get('wood', () => texture(drawn('wood', () => woodCanvas(S)), { repeat: false, srgb: true, aniso })),

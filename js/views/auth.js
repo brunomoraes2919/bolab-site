@@ -104,10 +104,14 @@ const BENEFITS = [
 
 const mounted = new WeakMap(); // root → { setMode, setNext }
 
-/** Só aceitamos caminhos internos como destino depois do login. */
+/**
+ * Destino depois do login. Só vale um caminho da própria loja, escrito com os caracteres que as
+ * rotas usam ("/checkout", "/pedido/BOL-1042?novo=1"); qualquer outra coisa (endereço de outro
+ * site, "javascript:", barras duplas ou invertidas) é ignorada e a pessoa vai para a conta.
+ */
 function safeNext(query) {
   const next = String(query.next || '');
-  return next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/entrar') ? next : '';
+  return /^\/(?!\/)[\w\-/]*(?:\?[\w\-=&%.+]*)?$/.test(next) && !next.startsWith('/entrar') ? next : '';
 }
 
 const fromCheckout = (next) => next.startsWith('/checkout');

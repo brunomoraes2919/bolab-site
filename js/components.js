@@ -19,7 +19,7 @@ export function photo(key, { w = 480, alt, eager = false, cls = '', sizes, prior
     class="${cls}"
     src="${src}"
     srcset="${photoSrcset(key, w)}"
-    sizes="${sizes || `${w}px`}"
+    sizes="${capDensity(sizes || `${w}px`)}"
     alt="${alt ?? photoAlt(key)}"
     style="object-position:${photoFocus(key)}"
     loading="${eager ? 'eager' : 'lazy'}"
@@ -29,9 +29,31 @@ export function photo(key, { w = 480, alt, eager = false, cls = '', sizes, prior
   />`;
 }
 
+/* Celulares têm até 3 pontos de tela por pixel de layout. Foto com 2 já fica nítida, e a de 3
+   pesa mais que o dobro. Em telas assim, `sizes` declara a foto proporcionalmente menor e o
+   navegador baixa o arquivo de ~2x: a foto ocupa o mesmo espaço (quem manda é o CSS). */
+const DENSITY = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+const DENSITY_CAP = 1.9; // um fio abaixo de 2: a foto de 300 px serve o espaço de 152 px sem pular para a de 450
+
+function capDensity(sizes) {
+  if (DENSITY <= DENSITY_CAP + 0.2) return sizes;
+  const k = (DENSITY_CAP / DENSITY).toFixed(3);
+  return String(sizes)
+    .split(',')
+    .map((entry) => {
+      const item = entry.trim();
+      const cut = item.lastIndexOf(')') + 1; // fim da condição "(min-width: …)", quando há
+      const length = item.slice(cut).trim();
+      if (!length) return item;
+      return `${item.slice(0, cut)}${cut ? ' ' : ''}calc(${length} * ${k})`;
+    })
+    .join(', ');
+}
+
 /** Larguras oferecidas ao navegador para uma foto de largura-base w. */
 export function photoSrcset(key, w) {
-  return [w, Math.round(w * 1.5), w * 2].map((x) => `${photoUrl(key, x)} ${x}w`).join(', ');
+  // quatro larguras: a base, uma logo acima (serve as telas um pouco mais largas sem dobrar o peso), 1,5× e 2×
+  return [w, Math.round(w * 1.15), Math.round(w * 1.5), w * 2].map((x) => `${photoUrl(key, x)} ${x}w`).join(', ');
 }
 
 export function mediaFallback(cls = '') {
@@ -41,20 +63,23 @@ export function mediaFallback(cls = '') {
 /** Miniatura de um item do carrinho/pedido (produto do catálogo ou bolo personalizado). */
 export function lineThumb(line, { w = 160 } = {}) {
   if (line.kind === 'custom') {
-    return line.thumb ? html`<img src="${line.thumb}" alt="Seu bolo personalizado" loading="lazy" />` : mediaFallback();
+    // A miniatura é uma imagem gerada no aparelho (data:image); html`` não deixa passar outro tipo de endereço.
+    return line.thumb ? html`<img src="${line.thumb}" alt="Seu bolo personalizado" loading="lazy" decoding="async" data-fallback />` : mediaFallback();
   }
   return photo(line.photo, { w, alt: line.name });
 }
 
 export function rating(value, count) {
   const v = Number(value).toFixed(1).replace('.', ',');
-  return html`<span class="rating" aria-label="Nota ${v} de 5">${icon('star')}${v}${count != null ? html` <span>(${count})</span>` : ''}</span>`;
+  const label = `Nota ${v} de 5${count != null ? `, ${count} ${Number(count) === 1 ? 'avaliação' : 'avaliações'}` : ''}`;
+  // role="img": o leitor de tela diz a frase inteira ("Nota 4,9 de 5, 128 avaliações") em vez de "estrela 4,9 (128)".
+  return html`<span class="rating" role="img" aria-label="${label}">${icon('star')}${v}${count != null ? html` <span>(${count})</span>` : ''}</span>`;
 }
 
 /** Cinco estrelas preenchidas conforme a nota (para avaliações). */
 export function stars(value) {
   const n = Math.round(Number(value));
-  return html`<span class="stars" aria-label="${n} de 5 estrelas">${[1, 2, 3, 4, 5].map((i) => raw(`<span class="${i <= n ? 'is-on' : ''}">★</span>`))}</span>`;
+  return html`<span class="stars" role="img" aria-label="${n} de 5 estrelas">${[1, 2, 3, 4, 5].map((i) => raw(`<span class="${i <= n ? 'is-on' : ''}">★</span>`))}</span>`;
 }
 
 /* ───────── Textos de entrega ───────── */
@@ -141,14 +166,25 @@ function addButton(p, cls = '') {
   return html`<button class="add-btn ${cls}" type="button" data-add-product="${p.id}" aria-label="Adicionar ${p.name} ao carrinho">${icon('plus')}</button>`;
 }
 
+/** Abre e fecha o título de um bloco no nível pedido (2, 3 ou 4): a ordem dos títulos da página
+ *  não pula níveis, que é como quem usa leitor de tela percorre a tela. */
+function heading(level, cls) {
+  const tag = `h${[2, 3, 4].includes(level) ? level : 3}`;
+  return [raw(`<${tag} class="${cls}">`), raw(`</${tag}>`)];
+}
+
 /**
  * Card de produto para grades e carrosséis: foto, selo, nome, "★ 4,9 (128) · Pronto em 24 h",
  * preço ("a partir de" quando há tamanhos) e o "+" redondo.
  * O "+" adiciona direto (data-add-product, tratado em app.js; bolo abre a folha de tamanho).
  *   productCard(p)                      grade (2 colunas no celular)
  *   productCard(p, { compact: true })   carrossel (.rail): foto mais baixa, sem descrição
+ *   productCard(p, { eager: true, priority: true })   só nos primeiros cards da primeira tela: a
+ *                                       foto deles é a maior coisa que a pessoa vê ao abrir a loja
+ *   productCard(p, { level: 2 })        nível do título do nome (padrão 3: card abaixo de um título de seção)
  */
-export function productCard(p, { eager = false, compact = false, sizes } = {}) {
+export function productCard(p, { eager = false, compact = false, sizes, priority = false, level = 3 } = {}) {
+  const [open, close] = heading(level, 'pcard__name');
   return html`
     <article class="pcard ${compact ? 'pcard--compact' : ''}">
       <div class="pcard__media">
@@ -156,13 +192,14 @@ export function productCard(p, { eager = false, compact = false, sizes } = {}) {
           w: compact ? 300 : 420,
           alt: p.name,
           eager,
+          priority,
           sizes: sizes || (compact ? '(min-width: 900px) 224px, 152px' : '(min-width: 1100px) 280px, (min-width: 640px) 31vw, 46vw'),
         })}
         ${cardBadge(p)}
         ${favButton(p.id, { cls: 'pcard__fav' })}
       </div>
       <div class="pcard__body">
-        <h3 class="pcard__name"><a href="#/produto/${p.id}">${p.name}</a></h3>
+        ${open}<a href="#/produto/${p.id}">${p.name}</a>${close}
         ${productMeta(p, { cls: 'pcard__meta' })}
         <p class="pcard__desc">${p.desc}</p>
         <div class="pcard__foot">${priceBlock(p, 'pcard__price')} ${addButton(p, 'pcard__add')}</div>
@@ -175,16 +212,18 @@ export function productCard(p, { eager = false, compact = false, sizes } = {}) {
  * Linha de cardápio (lista): nome, descrição em duas linhas e preço à esquerda; foto à direita
  * com o "+" no canto. Coloque várias dentro de <div class="menu-list">…</div>.
  *   html`<div class="menu-list">${list.map((p) => productRow(p))}</div>`
+ * `level`: nível do título do nome (padrão 3; 2 em lista sem título de seção, 4 abaixo de um subtítulo).
  */
-export function productRow(p, { eager = false, meta = true } = {}) {
+export function productRow(p, { eager = false, meta = true, priority = false, level = 3 } = {}) {
+  const [open, close] = heading(level, 'prow__name');
   return html`
     <article class="prow">
       <div class="prow__body">
-        <h3 class="prow__name"><a href="#/produto/${p.id}">${p.name}</a></h3>
+        ${open}<a href="#/produto/${p.id}">${p.name}</a>${close}
         <p class="prow__desc">${p.desc}</p>
         ${meta ? productMeta(p, { cls: 'prow__meta' }) : ''} ${priceBlock(p, 'prow__price')}
       </div>
-      <div class="prow__media">${photo(p.photo, { w: 220, alt: '', eager, sizes: '(min-width: 900px) 120px, 104px' })} ${addButton(p, 'prow__add')}</div>
+      <div class="prow__media">${photo(p.photo, { w: 220, alt: '', eager, priority, sizes: '(min-width: 900px) 120px, 104px' })} ${addButton(p, 'prow__add')}</div>
     </article>
   `;
 }
@@ -278,12 +317,14 @@ export function priceButton(label, price, { href = '', count = null, cls = '', a
  *   optionGroupHead('Tamanho', { hint: 'Escolha 1', required: true })
  *   optionGroupHead('Velas e toppers', { hint: 'Opcional' })
  * Quando a pessoa escolher, acrescente a classe .is-done (a etiqueta vira um ✓ verde).
+ * `level`: nível do título (padrão 3; 2 quando o grupo vem logo abaixo do título da página).
  */
-export function optionGroupHead(title, { hint = '', required = false, done = false, id = '' } = {}) {
+export function optionGroupHead(title, { hint = '', required = false, done = false, id = '', level = 3 } = {}) {
+  const tag = level === 2 ? 'h2' : 'h3';
   return html`
     <div class="opt-head ${done ? 'is-done' : ''}">
       <div>
-        <h3 class="opt-head__title" ${id ? raw(`id="${id.replace(/[^\w-]/g, '')}"`) : ''}>${title}</h3>
+        ${raw(`<${tag} class="opt-head__title"${id ? ` id="${id.replace(/[^\w-]/g, '')}"` : ''}>`)}${title}${raw(`</${tag}>`)}
         ${hint ? html`<p class="opt-head__hint">${hint}</p>` : ''}
       </div>
       ${required

@@ -4,6 +4,7 @@ import { html, icon, money, on, toast, dateShort } from '../ui.js';
 import { photo, productCard, productRow, sectionHead, chipRow, promoBanner, listRow, stars, dayLabel, slotLabel, lineThumb } from '../components.js';
 import { PRODUCTS, REVIEWS, isCake, ratingSummary, getProduct } from '../data/products.js';
 import { CATEGORIES, SITE } from '../data/site.js';
+import { MONTAR, montarPrice, montarFrom } from '../data/montar.js';
 import { auth, orders } from '../store.js';
 import { receiveContext } from '../shell.js';
 
@@ -11,7 +12,6 @@ const SCORE = ratingSummary();
 const CATS = CATEGORIES.filter((c) => c.id !== 'todos');
 const CAKES = PRODUCTS.filter(isCake).sort((a, b) => Number(b.featured) - Number(a.featured) || b.reviews - a.reviews);
 const ADDONS = PRODUCTS.filter((p) => !isCake(p));
-const CUSTOM_FROM = 69; // preço inicial do bolo montado no 3D
 
 /* Frases curtas para os atalhos de categoria do computador. As descrições de js/data/site.js são
    frases inteiras: no atalho eram cortadas com "…" ("Ingredientes nobres e…"). */
@@ -30,16 +30,13 @@ const STEPS = [
 const FAQ = [
   {
     q: 'Com quanta antecedência preciso pedir?',
-    a: 'A maioria dos bolos fica pronta em 24 h; os decorados e os montados no 3D, em 48 h. Ao fechar o pedido você só vê as datas disponíveis.',
+    a: `Os bolos do cardápio ficam prontos em 24 a 48 h. Os montados em 3D pedem ${MONTAR.prepDays}, conforme o tamanho e a decoração. Ao fechar o pedido você só vê as datas disponíveis.`,
   },
   {
     q: 'Onde vocês entregam e quanto custa?',
     a: `Em ${SITE.region}, por ${money(SITE.shipping.fee)}. Acima de ${brl(SITE.shipping.freeAbove)} a entrega é grátis. Também dá para retirar no ateliê, sem custo.`,
   },
-  {
-    q: 'Como funciona o bolo em 3D?',
-    a: 'Você escolhe formato, andares, massa, recheio, cobertura e decoração e vê o bolo girar na tela. O preço atualiza a cada escolha.',
-  },
+  MONTAR.faq, // a pergunta sobre o bolo em 3D vem de js/data/montar.js
   {
     q: 'Quais são as formas de pagamento?',
     a: `Pix com ${SITE.pix.discountPct}% de desconto ou cartão de crédito em até ${SITE.card.maxInstallments}x sem juros.`,
@@ -74,18 +71,19 @@ function infoChips() {
   return html`<div data-home-info>${chipRow(items.map((it) => ({ ...it, info: true })), { label: 'Entrega e retirada', cls: 'home-info' })}</div>`;
 }
 
-/* Se trocar a imagem do primeiro banner, troque também o arquivo pedido no começo do index.html. */
+/* Se trocar a imagem do primeiro banner, troque também o arquivo pedido em js/boot.js.
+   O texto do primeiro banner (o convite ao personalizador) vem de js/data/montar.js. */
 function promos() {
   // Quem já fez um pedido não pode mais usar o cupom de primeiro pedido: no lugar entra o Pix.
   const returning = auth.isLogged() && orders.list().some((o) => !o.canceled);
   const list = [
     promoBanner({
       tone: 'stage',
-      tag: 'Só na BOLAB',
-      title: 'Monte o seu bolo em 3D',
-      text: `Do seu jeito, a partir de ${brl(CUSTOM_FROM)}.`,
-      cta: 'Montar agora',
-      href: '#/monte-seu-bolo',
+      tag: MONTAR.tag,
+      title: MONTAR.title,
+      text: `${MONTAR.line} ${montarFrom()}`,
+      cta: MONTAR.cta,
+      href: MONTAR.href,
       img: 'assets/img/cz-morango.webp',
       cutout: true,
       eager: true,
@@ -93,7 +91,6 @@ function promos() {
     returning
       ? promoBanner({
           tone: 'action',
-          tag: 'Pagamento',
           title: `${SITE.pix.discountPct}% OFF pagando no Pix`,
           text: 'Aprovação na hora.',
           cta: 'Ver cardápio',
@@ -102,7 +99,6 @@ function promos() {
         })
       : promoBanner({
           tone: 'action',
-          tag: 'Primeiro pedido',
           title: '10% OFF no 1º pedido',
           text: 'Toque para copiar o cupom.',
           code: 'BOLAB10',
@@ -110,7 +106,6 @@ function promos() {
         }),
     promoBanner({
       tone: 'green',
-      tag: 'Entrega',
       title: `Entrega grátis acima de ${brl(SITE.shipping.freeAbove)}`,
       text: `Em ${SITE.region}.`,
       cta: 'Ver cardápio',
@@ -145,9 +140,9 @@ function categories() {
     <nav class="cats" aria-label="Categorias">
       <ul class="cats__row">
         ${tile({
-          href: '#/monte-seu-bolo',
-          label: 'Monte o seu',
-          desc: 'Em 3D, do seu jeito',
+          href: MONTAR.href,
+          label: MONTAR.short,
+          desc: MONTAR.shortDesc,
           cls: 'cat--3d',
           media: html`<img src="assets/img/cz-festa.webp" alt="" width="760" height="760" decoding="async" />`,
         })}
@@ -217,7 +212,7 @@ function orderAgain() {
     <section class="section home-sec" aria-labelledby="again-t">
       <div class="container">
         ${sectionHead('Peça de novo', { href: '#/pedidos', label: 'Meus pedidos', id: 'again-t' })}
-        <div class="rail rail--grid again">
+        <div class="rail rail--grid rail--grid-md again">
           ${list.map((o) => {
             const first = o.items[0];
             const more = o.items.length - 1;
@@ -246,29 +241,36 @@ function bestSellers() {
     <section class="section home-sec" aria-labelledby="best-t">
       <div class="container">
         ${sectionHead('Mais pedidos', { href: '#/cardapio', id: 'best-t' })}
-        <div class="rail rail--grid best">${CAKES.slice(0, 6).map((p, i) => productCard(p, { compact: true, eager: i < 3 }))}</div>
+        <div class="rail rail--grid rail--grid-md best">${CAKES.slice(0, 6).map((p, i) => productCard(p, { compact: true, eager: i < 3, priority: i < 2 }))}</div>
       </div>
     </section>
   `;
 }
 
-/* ───────── Faixa do personalizador 3D ───────── */
+/* ───────── Faixa do personalizador 3D ─────────
+   O convite grande do início. Os textos vêm de js/data/montar.js (um lugar só para a loja toda);
+   aqui fica só o desenho: palco escuro, os bolos do próprio personalizador e as etapas em fila.
+   Os três bolos são inspirações novas (MONTAR.stage); as miniaturas deles têm 760 px, como pede o palco. */
 function customizerBanner() {
-  const cake = (name, cls) => html`<img class="cz3d__cake ${cls}" src="assets/img/${name}.webp" alt="" width="760" height="760" loading="lazy" decoding="async" />`;
+  const cake = (id, cls) => html`<img class="cz3d__cake ${cls}" src="assets/img/cz-${id}.webp" alt="" width="760" height="760" loading="lazy" decoding="async" />`;
   return html`
-    <section class="section home-sec" aria-label="Personalizador 3D">
+    <section class="section home-sec" aria-label="${MONTAR.name}">
       <div class="container">
-        <a class="cz3d" href="#/monte-seu-bolo">
+        <a class="cz3d" href="${MONTAR.href}">
           <span class="cz3d__copy">
-            <span class="cz3d__tag">${icon('cube')} Só na BOLAB</span>
-            <strong class="cz3d__title">Monte o seu bolo em 3D</strong>
-            <span class="cz3d__text">Formato, massa, recheio e cobertura. O bolo gira na tela e o preço muda a cada escolha.</span>
+            <span class="cz3d__tag">${icon('cube')} ${MONTAR.tag}</span>
+            <strong class="cz3d__title">${MONTAR.title}</strong>
+            <span class="cz3d__text">${MONTAR.text}</span>
             <span class="cz3d__foot">
-              <span class="btn btn--white btn--sm cz3d__btn">Montar agora ${icon('chevron-right')}</span>
-              <span class="cz3d__price">a partir de <strong>${brl(CUSTOM_FROM)}</strong></span>
+              <span class="btn btn--white btn--sm cz3d__btn">${MONTAR.cta} ${icon('chevron-right')}</span>
+              <span class="cz3d__price">a partir de <strong>${montarPrice()}</strong></span>
             </span>
           </span>
-          <span class="cz3d__stage" aria-hidden="true">${cake('cz-belga', 'cz3d__cake--c')} ${cake('cz-limao', 'cz3d__cake--b')} ${cake('cz-naked', 'cz3d__cake--a')}</span>
+          <span class="cz3d__stage" aria-hidden="true">${cake(MONTAR.stage.c, 'cz3d__cake--c')} ${cake(MONTAR.stage.b, 'cz3d__cake--b')} ${cake(MONTAR.stage.a, 'cz3d__cake--a')}</span>
+          <span class="cz3d__steps">
+            <span class="sr-only">Etapas: </span>
+            ${MONTAR.steps.map((step, i) => html`<span class="cz3d__step">${i ? icon('chevron-right') : ''}${step}</span>`)}
+          </span>
         </a>
       </div>
     </section>
@@ -290,7 +292,7 @@ function menuPreview() {
                   <h3 class="menu-group__title">${g.c.label} <span>${g.list.length}</span></h3>
                   <a class="section-link" href="#/cardapio?cat=${g.c.id}" aria-label="Ver todos: ${g.c.label}">Ver todos${icon('chevron-right')}</a>
                 </div>
-                <div class="menu-list">${g.list.slice(0, 4).map((p) => productRow(p))}</div>
+                <div class="menu-list">${g.list.slice(0, 4).map((p) => productRow(p, { level: 4 }))}</div>
               </div>
             `,
           )}
@@ -308,7 +310,7 @@ function addOnsRail() {
     <section class="section home-sec" aria-labelledby="festa-t">
       <div class="container">
         ${sectionHead('Complete a festa', { href: '#/cardapio?cat=acess', id: 'festa-t', sub: 'Chegam junto com o bolo.' })}
-        <div class="rail rail--grid addons">${ADDONS.map((p) => productCard(p, { compact: true }))}</div>
+        <div class="rail rail--grid rail--grid-md addons">${ADDONS.map((p) => productCard(p, { compact: true }))}</div>
       </div>
     </section>
   `;
@@ -322,10 +324,13 @@ function reviews() {
     <section class="section home-sec" aria-labelledby="rev-t">
       <div class="container">
         <div class="section-head">
-          <h2 class="section-title" id="rev-t">Avaliações</h2>
+          <div>
+            <h2 class="section-title" id="rev-t">Avaliações</h2>
+            ${SITE.demo ? html`<p class="section-sub">Avaliações de exemplo.</p>` : ''}
+          </div>
           <p class="score">${icon('star')}<strong>${SCORE.avg}</strong><span>${SCORE.countLabel} avaliações</span></p>
         </div>
-        <div class="rail rail--grid reviews">
+        <div class="rail rail--grid rail--grid-md reviews">
           ${list.map((r) => {
             const product = getProduct(r.productId);
             return html`

@@ -7,8 +7,40 @@
 // (só o que mudou — ver morph) e, no outro, o bolo. Nada pesado roda dentro do toque.
 //
 // Entradas pelo endereço:  ?bolo=<id salvo>  ·  ?base=<id do produto>  ·  ?linha=<id da linha do carrinho>
-// (esta última abre o bolo que já está no carrinho para editar; o botão final vira "Salvar alterações").
+// (esta última abre o bolo que já está no carrinho para editar; o botão final vira "Salvar alterações")
+// ·  ?c=<texto>  abre exatamente o bolo descrito no texto (js/customizer/share.js): o link que o cliente
+// compartilha e o que o confeiteiro usa para ver o bolo do pedido.
+//
+// O que não se faz de verdade em confeitaria é corrigido a cada mudança (js/customizer/rules.js → enforceRules),
+// com um aviso que explica; alertas e dicas aparecem no painel. Tudo o que acontece é avisado ao barramento
+// do ateliê (js/atelier/bus.js), no quadro seguinte ao toque.
 import { html, raw, icon, money, dateLong, on, toast, openDialog, confirmDialog, debounce, confetti } from '../ui.js';
+import { bus } from '../atelier/bus.js';
+import { diffConfig } from '../atelier/diff.js';
+import { copyText } from '../ui.js';
+import { rulesForStep, rulesOf, enforceRules, applyFix } from '../customizer/rules.js';
+import { encodeConfig, decodeConfig } from '../customizer/share.js';
+import {
+  activeOf,
+  isVolcano,
+  FLAVOR_GROUPS,
+  FILLING_GROUPS,
+  FINISH_GROUPS,
+  FILL_ADDS,
+  SOAKS,
+  TRIMS,
+  DRIP_AMOUNTS,
+  DRIP_LENGTHS,
+  DRIP_METAL_PRICE,
+  METAL_COLORS,
+  REVEAL_COLORS,
+  REVEAL_PRICE,
+  getSoak,
+  getFillAdd,
+  getTrim,
+  getRevealColor,
+} from '../data/customizer.js';
+import { VOLCANO_COVERS } from '../customizer/pricing.js';
 import { qtyStepper } from '../components.js';
 import { cart, savedCakes, prefs, schedule } from '../store.js';
 import { navigate } from '../router.js';
@@ -46,6 +78,7 @@ import {
   MAX_LAYERS,
   MAX_DECORS,
   MAX_CANDLES,
+  MAX_PLACED,
   MESSAGE_MAX,
   MESSAGE_PRICE,
   DRIP_PRICE,
@@ -78,20 +111,29 @@ import {
   coversOf,
   decorOptions,
   scriptRoom,
+  placedGroups,
 } from '../customizer/pricing.js';
 import { PRESETS, OCCASIONS, COLOR_PALETTES, applyPalette, getPreset, presetForProduct, randomConfig } from '../customizer/presets.js';
-import { createCakeScene } from '../customizer/engine.js';
+// r5-tela: o motor 3D — e o que só ele usa (looks, decor2, party, quality, OrbitControls, RoomEnvironment: uns
+// 375 KB) — não segura mais a primeira tela. O arquivo é pedido já (o roteador pede junto com esta tela, em
+// paralelo), mas o painel de opções aparece sem esperar por ele; startScene() espera o motor chegar.
+const engineLoad = import('../customizer/engine.js');
+engineLoad.catch(() => {}); // a falha é tratada em startScene (cai no desenho 2D)
 import { decorNotes } from '../customizer/decor.js';
 import { BACKDROPS, BACKDROP_AUTO, getBackdrop, resolveBackdrop, backdropCss } from '../customizer/backdrop.js';
 import { drawCake2D, thumb2D } from '../customizer/fallback.js';
+// r5-decor: cardápio de bicos, decorações, velas, mensagens, topos e temas; módulos de peças sob demanda
+import { pipingPlaces, CANDLE_PALETTES, PLAQUE_SHAPES, TOPPER_STYLES, TOPPER_FINISHES, DOODLES, THEMES, getTheme, getCandleStyle, isActive, DECOR_COLOR_NAMES } from '../data/customizer-decor.js';
+import { applyTheme, pipingPriceOf } from '../customizer/pricing.js';
+import { warmDecorModules } from '../customizer/kit.js';
 
 const STEPS = [
-  { id: 'formato', label: 'Formato', title: 'Formato e tamanho', sub: 'Comece pela base: o formato e quantas fatias você precisa.' },
-  { id: 'massa', label: 'Massa', title: 'Escolha a massa', sub: 'Quantas camadas e qual sabor em cada uma.' },
+  { id: 'formato', label: 'Formato', title: 'Formato e tamanho', sub: 'Todo bolo começa pela fôrma: o formato e quantas fatias você precisa.' },
+  { id: 'massa', label: 'Massa', title: 'Hora da massa', sub: 'Quantas camadas e qual sabor em cada uma.' },
   { id: 'recheio', label: 'Recheio', title: 'Agora, o recheio', sub: 'O que vai entre uma camada e outra.' },
-  { id: 'cobertura', label: 'Cobertura', title: 'Cobertura', sub: 'O tipo, a cor, o estilo e, se quiser, aquela calda escorrendo.' },
-  { id: 'acabamento', label: 'Acabamento', title: 'Acabamento', sub: 'O confeitado de bico que contorna o bolo.' },
-  { id: 'decoracao', label: 'Decoração', title: 'Decoração', sub: 'Os toques finais: enfeites, velas, mensagem e topo.' },
+  { id: 'cobertura', label: 'Cobertura', title: 'Mão na espátula', sub: 'O tipo, a cor, o estilo e, se quiser, aquela calda escorrendo.' },
+  { id: 'acabamento', label: 'Acabamento', title: 'Saco de confeitar', sub: 'O confeitado de bico que contorna o bolo.' },
+  { id: 'decoracao', label: 'Decoração', title: 'Os toques finais', sub: 'Enfeites, velas, mensagem e topo. Dá até para colocar peça por peça, com o dedo.' },
   { id: 'resumo', label: 'Resumo', title: 'Seu bolo está pronto', sub: 'Confira e peça: a gente começa a fazer assim que você fechar o pedido.' },
 ];
 const STEP_INDEX = Object.fromEntries(STEPS.map((s, i) => [s.id, i]));
@@ -144,6 +186,9 @@ const art = (body, { vb = 48, sw = 2.4 } = {}) =>
 const SOFT = 'fill="currentColor" fill-opacity=".14"';
 
 const SHAPE_ART = {
+  oval: art(`<ellipse cx="24" cy="24" rx="20" ry="13.500" ${SOFT}/>`),
+  flor: art(`<path d="M37.400 16.200A8.500 8.500 0 0 1 37.400 31.800 8.500 8.500 0 0 1 24 39.500 8.500 8.500 0 0 1 10.600 31.800 8.500 8.500 0 0 1 10.600 16.200 8.500 8.500 0 0 1 24 8.500 8.500 8.500 0 0 1 37.400 16.200Z" ${SOFT}/>`),
+  vulcao: art(`<circle cx="24" cy="24" r="17" ${SOFT}/><circle cx="24" cy="24" r="5.500"/><path d="M24 7v6M36 12l-3.500 4.500M12 12l3.500 4.500"/>`),
   hex: art(`<path d="M14 7h20l10 17-10 17H14L4 24Z" ${SOFT}/>`),
   round: art(`<circle cx="24" cy="24" r="16" ${SOFT}/>`),
   square: art(`<rect x="9" y="9" width="30" height="30" rx="7" ${SOFT}/>`),
@@ -195,6 +240,17 @@ const DECOR_ART = {
   topo: ico(`<path d="m12 2.500 2.100 4.300 4.700.7-3.400 3.300.8 4.700-4.200-2.200-4.200 2.200.8-4.700-3.400-3.300 4.700-.7Z" ${SOFT}/><path d="M12 13.300v8.200"/>`),
 };
 
+// r5-decor: miniaturas prontas (fotos do próprio 3D, geradas por tools/cz_thumbs.mjs em assets/img/cz/).
+// Por baixo fica o desenho a traço: se a foto faltar, é ele que aparece.
+const pic = (kind, id, fallback) =>
+  html`<span class="cz-opt__art cz-opt__art--pic">${fallback || DECOR_ART.generic}<img src="assets/img/cz/${kind}-${id}.webp" alt="" loading="lazy" decoding="async" width="96" height="96" /></span>`;
+const SEARCH_ICON = ico('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.800-3.800"/>');
+/** Sem acento e em minúsculas (busca do painel). */
+const plainText = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+/** Nome de uma cor de decoração (as metalizadas, as de fita e as pastel têm nome próprio). */
+const tintName = (hex) => (colorName(hex) === 'Cor personalizada' && DECOR_COLOR_NAMES[String(hex).toLowerCase()]) || colorName(hex);
+const decorSwatches = (hexes) => hexes.map((hex) => ({ hex, name: tintName(hex) }));
+
 const ICON = {
   ruler: ico(`<path d="M3 17 17 3l4 4L7 21Z"/><path d="m7.500 12.500 2 2M10.500 9.500l2 2M13.500 6.500l2 2"/>`),
   redo: ico(`<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.300L21 13"/>`),
@@ -203,6 +259,14 @@ const ICON = {
   slice: ico(`<circle cx="9" cy="7" r="2"/><path d="M7.200 7.900 3 11v9c0 .6.4 1 1 1h16c.6 0 1-.4 1-1v-9c0-2-3-6-7-8l-3.600 2.600"/><path d="M16 13H3"/><path d="M16 17H3"/>`),
   spin: ico(`<path d="M16.500 7.500C15.600 4.200 14 2 12 2 9.200 2 7 6.500 7 12s2.200 10 5 10c.3 0 .7-.1 1-.2"/><path d="m15.200 13.700 3.800 1.900-1.900 3.800"/><path d="M19 15.600c-1.800.9-4.300 1.400-7 1.400-5.500 0-10-2.200-10-5s4.500-5 10-5c4.800 0 8.900 1.700 9.800 4"/>`),
   swipe: ico(`<polyline points="18 8 22 12 18 16"/><polyline points="6 8 2 12 6 16"/><line x1="2" x2="22" y1="12" y2="12"/>`),
+  // r5-tela: modo rápido, modo ateliê, tirar uma peça, vídeo e encomendas (jogo)
+  bolt: ico(`<path d="M13 2 4.500 13.500H11l-1 8.500 8.500-11.500H12Z" ${SOFT}/>`),
+  atelier: ico(`<path d="m12 3 1.900 5.100L19 10l-5.100 1.900L12 17l-1.900-5.100L5 10l5.100-1.900Z" ${SOFT}/><path d="M19 15v4M17 17h4M5 3v3M3.500 4.500h3"/>`),
+  minus: ico(`<path d="M5 12h14"/>`),
+  film: ico(`<rect x="3" y="4" width="18" height="16" rx="3" ${SOFT}/><path d="m10 9 5 3-5 3Z"/>`),
+  card: ico(`<rect x="4" y="3" width="16" height="18" rx="3" ${SOFT}/><circle cx="12" cy="10" r="3"/><path d="M8 17h8"/>`),
+  finger: ico(`<path d="M9 11V5.500a1.500 1.500 0 0 1 3 0V11"/><path d="M12 10.500V9a1.500 1.500 0 0 1 3 0v2"/><path d="M15 11v-.5a1.500 1.500 0 0 1 3 0V15a6 6 0 0 1-6 6h-1.200a5 5 0 0 1-4-2L4 15.500a1.500 1.500 0 0 1 2.400-1.800L9 16" ${SOFT}/>`),
+  ticket: ico(`<path d="M4 8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4Z" ${SOFT}/><path d="M14 6v12" stroke-dasharray="2 2.500"/>`),
 };
 
 /* ───────── Cor livre (matiz, saturação e brilho ↔ código da cor) ───────── */
@@ -261,6 +325,7 @@ function tipFor(stepId, c) {
     if (n === 1) return 'Com uma camada só, é o bolo simples: uma massa alta, sem recheio. Para o corte ficar bonito, a gente indica 3 camadas.';
     if (n === 2) return 'Duas camadas finas de massa e um recheio generoso no meio: um bolo baixo, ótimo para o café.';
     if (n === 4) return 'Quatro camadas finas e três recheios: aquele bolo alto de vitrine, com uns 13 cm. Fica lindo com calda escorrendo.';
+    if (isVolcano(c)) return 'Vulcão pede massa fofa e úmida: cenoura com brigadeiro é o clássico; chocolate com cobertura branca fica lindo no contraste.';
     const tips = {
       baunilha: 'A baunilha é coringa: combina com qualquer recheio, dos frutados aos de chocolate.',
       chocolate: 'Nossa massa de chocolate leva cacau 70%. Com brigadeiro ou framboesa, não tem erro.',
@@ -269,7 +334,7 @@ function tipFor(stepId, c) {
       limao: 'A massa de limão é levinha. Com recheio de limão ou de coco, fica bem refrescante.',
       morango: 'A massa de morango tem um rosa lindo. Com recheio de ninho, lembra morango com leite.',
     };
-    return tips[main] || tips.baunilha;
+    return tips[main] || `${getFlavor(main).name}: ${getFlavor(main).craft}`;
   }
   if (stepId === 'recheio') {
     if (n === 1) return 'Uma camada a mais já garante um recheio generoso. Dá para mudar o número de camadas quando quiser.';
@@ -285,7 +350,8 @@ function tipFor(stepId, c) {
       coco: 'Coco com massa de chocolate vira prestígio. Com massa de limão, fica surpreendente.',
       framboesa: 'A framboesa é levemente ácida e faz um par elegante com chocolate.',
     };
-    return n > 2 ? `${tips[f] || ''} Com ${n} camadas, você pode alternar dois recheios.`.trim() : tips[f] || tips.brigadeiro;
+    const tip = tips[f] || `${getFilling(f).name}: ${getFilling(f).craft}`;
+    return n > 2 ? `${tip} Com ${n} camadas, você pode alternar dois recheios.` : tip;
   }
   if (stepId === 'cobertura') {
     if (c.drip.on) return 'A calda fica mais bonita quando contrasta com a cobertura: escura no bolo claro, clara no bolo escuro.';
@@ -298,7 +364,8 @@ function tipFor(stepId, c) {
       mousse: 'A mousse tem acabamento aveludado e sabor suave. Combina com tons pastel.',
       naked: 'No naked, a massa e o recheio aparecem. Capriche nas frutas ou nas flores por cima.',
     };
-    return tips[c.covering.type];
+    if (isVolcano(c)) return 'No vulcão a cobertura vai morna, para escorrer devagar. Com granulado por cima, é o bolo de festa de quintal.';
+    return tips[c.covering.type] || `${getCovering(c.covering.type).name}: ${getCovering(c.covering.type).craft}`;
   }
   if (stepId === 'acabamento') {
     const tips = {
@@ -432,16 +499,92 @@ function stepHead(i) {
 
 const ordinal = (n) => `${n}ª`;
 
+/* ───────── Listas grandes: mais pedidos primeiro, grupos, busca e "ver todos" ─────────
+   Com dezenas de opções por lista, o painel abre só nas mais pedidas (mais a que já está no bolo e as últimas que
+   a pessoa usou); os grupos, a busca e "ver todos" ficam a um toque. */
+const plain = (s) =>
+  String(s)
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
+const found = (item, q) => plain(`${item.name} ${item.desc || ''} ${(item.tags || []).join(' ')}`).includes(q);
+
+/**
+ * key = lista ('flavor' | 'filling' | 'covering' | 'finish') · items = o que está à venda (e o que já está no bolo) ·
+ * groups = abas · picked = ids escolhidos agora · card(item) = o cartão · noun = "recheios" · label = nome da lista
+ */
+function browser({ key, items, groups = [], picked = [], ui, card, grid = 'cz-grid cz-grid--2', noun, label }) {
+  const q = plain(ui.search[key] || '').trim();
+  const tabs = [{ id: 'pop', name: 'Mais pedidos' }, ...groups.filter((g) => items.some((x) => x.group === g.id)), { id: 'all', name: `Todos · ${items.length}` }];
+  const tab = tabs.some((t) => t.id === ui.tabs[key]) ? ui.tabs[key] : 'pop';
+  const long = items.length > 12;
+  const searching = Boolean(ui.searchOpen[key]) || Boolean(q); // a busca abre no lugar das abas (um toque na lupa)
+  let shown;
+  if (q) shown = items.filter((x) => found(x, q));
+  else if (tab === 'pop' && long) {
+    const recent = (ui.recent[key] || []).filter((id) => items.some((x) => x.id === id)).slice(0, 2);
+    const ids = new Set([...picked, ...recent, ...items.filter((x) => x.popular).map((x) => x.id)]);
+    shown = items.filter((x) => ids.has(x.id));
+  } else if (tab === 'all' || tab === 'pop') shown = items;
+  else shown = items.filter((x) => x.group === tab);
+  const grouped = !q && tab === 'all' && long && groups.length > 0;
+  return html`
+    ${long && searching
+      ? html`<div class="cz-find" data-k="find:${key}">
+          ${icon('search')}
+          <input type="search" enterkeyhint="search" autocomplete="off" spellcheck="false" aria-label="Buscar ${noun}" placeholder="Buscar ${noun}" value="${ui.search[key] || ''}" data-field="search.${key}" />
+          <button type="button" class="cz-find__x" data-act="find-close" data-value="${key}" aria-label="Fechar a busca">${icon('x')}</button>
+        </div>`
+      : ''}
+    ${long && !searching
+      ? html`<div class="cz-chips cz-chips--scroll cz-tabs" role="group" aria-label="Grupos de ${noun}" data-k="tabs:${key}">
+          <button type="button" class="cz-chip cz-chip--icon" data-act="find" data-value="${key}" aria-label="Buscar ${noun}" title="Buscar ${noun}" data-k="tab:${key}:busca">${icon('search')}</button>
+          ${tabs.map((t) => html`<button type="button" class="cz-chip ${t.id === tab ? 'is-on' : ''}" aria-pressed="${t.id === tab ? 'true' : 'false'}" data-set="tab.${key}" data-value="${t.id}" data-k="tab:${key}:${t.id}">${t.name}</button>`)}
+        </div>`
+      : ''}
+    <div class="${grid}" role="radiogroup" aria-label="${label}" data-k="grid:${key}">
+      ${grouped
+        ? groups
+            .filter((g) => items.some((x) => x.group === g.id))
+            .map((g) => html`<h4 class="cz-grouphead" data-k="gh:${key}:${g.id}">${g.name}</h4>${items.filter((x) => x.group === g.id).map(card)}`)
+        : shown.map(card)}
+    </div>
+    ${q && !shown.length ? html`<p class="cz-note cz-none" data-k="none:${key}">Não achamos “${ui.search[key].trim()}” em ${noun}. Tente outra palavra.</p>` : ''}
+    ${long && !q && tab === 'pop' && shown.length < items.length
+      ? html`<button type="button" class="cz-linkbtn cz-linkbtn--solid cz-all" data-set="tab.${key}" data-value="all" data-k="all:${key}">Ver todos os ${items.length} ${noun} ${icon('chevron-down')}</button>`
+      : ''}
+  `;
+}
+
+/** Avisos e dicas das regras de confeiteiro para a etapa (js/customizer/rules.js). No máximo duas dicas por vez. */
+function rulesBox(stepId, c) {
+  const all = rulesForStep(c, stepId);
+  const rules = [...all.filter((r) => r.level === 'alerta'), ...all.filter((r) => r.level === 'dica').slice(0, 2)];
+  if (!rules.length) return '';
+  return html`<div class="cz-rules" data-k="rules:${stepId}">
+    ${rules.map(
+      (r) => html`<div class="cz-rule cz-rule--${r.level}" role="note" data-k="rule:${r.code}">
+        <span class="cz-rule__icon">${icon(r.level === 'alerta' ? 'alert' : 'info')}</span>
+        <p><span class="sr-only">${r.level === 'alerta' ? 'Atenção: ' : 'Dica: '}</span>${r.text}</p>
+        ${r.fix ? html`<button type="button" class="cz-linkbtn cz-rule__fix" data-act="fix" data-value="${r.code}">${r.fix.label}</button>` : ''}
+      </div>`,
+    )}
+  </div>`;
+}
+
 /* ───────── Etapas ───────── */
 function stepFormato(c, ui) {
   const price = priceOf(billOf(c).config);
   const min = minPrice();
   const tiers = c.tiers || 1;
+  const volcano = isVolcano(c);
+  const bento = c.size === 'bento';
   const occasions = OCCASIONS.filter((o) => PRESETS.some((p) => p.occasion === o.id));
   const list = ui.occasion ? PRESETS.filter((p) => p.occasion === ui.occasion) : PRESETS;
   const custom = tiers > 1 || c.height !== 'padrao' || c.base !== 'boleira';
   const open = ui.structOpen ?? custom;
-  const brief = [tiers > 1 ? `${tiers} andares` : '1 andar', `altura ${HEIGHTS.find((h) => h.id === c.height).name.toLowerCase()}`, BASES.find((b) => b.id === c.base).name.toLowerCase()].join(' · ');
+  const brief = [tiers > 1 ? `${tiers} andares` : '1 andar', volcano ? 'fôrma de furo' : `altura ${HEIGHTS.find((h) => h.id === c.height).name.toLowerCase()}`, BASES.find((b) => b.id === c.base).name.toLowerCase()].join(' · ');
+  const bases = activeOf(BASES, c.base).filter((b) => !b.only || b.only === c.size);
   return html`
     <p class="cz-anchor">
       ${price > min
@@ -474,16 +617,16 @@ function stepFormato(c, ui) {
     </section>
 
     <section class="cz-sec">
-      <div class="cz-sec__head"><h3>Formato</h3></div>
-      <div class="cz-grid cz-grid--5" role="radiogroup" aria-label="Formato do bolo">
-        ${SHAPES.map((sh) =>
+      <div class="cz-sec__head"><h3>Formato</h3><span class="cz-sec__note">${SHAPES.find((s) => s.id === c.shape).desc}</span></div>
+      <div class="cz-rail cz-rail--shapes" role="radiogroup" aria-label="Formato do bolo">
+        ${activeOf(SHAPES, c.shape).map((sh) =>
           optCard({
             set: 'shape',
             value: sh.id,
             on: c.shape === sh.id,
             name: sh.name,
             price: priceTag(deltaOf(c, sh.price)),
-            artwork: html`<span class="cz-opt__art">${SHAPE_ART[sh.id]}</span>`,
+            artwork: html`<span class="cz-opt__art">${SHAPE_ART[sh.id] || SHAPE_ART.round}</span>`,
             tile: true,
           }),
         )}
@@ -492,17 +635,18 @@ function stepFormato(c, ui) {
 
     <section class="cz-sec">
       <div class="cz-sec__head"><h3>Tamanho</h3><span class="cz-sec__note">${sizeOf(c).hint}</span></div>
-      <div class="cz-grid cz-grid--3" role="radiogroup" aria-label="Tamanho do bolo">
-        ${SIZES.map((sz) => {
-          const as = { ...c, size: sz.id };
+      <div class="cz-rail cz-rail--sizes" role="radiogroup" aria-label="Tamanho do bolo">
+        ${activeOf(SIZES, c.size).map((sz) => {
+          // o cartão mostra o bolo que a pessoa levaria nesse tamanho (o bentô, por exemplo, é sempre de um andar)
+          const as = enforceRules({ ...c, size: sz.id, base: sz.id === 'bento' && c.base === 'boleira' ? 'caixa' : c.base }).config;
           return optCard({
             set: 'size',
             value: sz.id,
             on: c.size === sz.id,
-            name: tiers > 1 ? `${diametersOf(as)[0]} cm na base` : sz.diameter,
+            name: (as.tiers || 1) > 1 ? `${diametersOf(as)[0]} cm na base` : sz.diameter,
             desc: servesText(as),
             price: html`<span class="cz-opt__price"><b>${money(priceOf(as))}</b></span>`,
-            artwork: html`<span class="cz-opt__big">${sz.label}</span>`,
+            artwork: html`<span class="cz-opt__big ${sz.label.length > 1 ? 'cz-opt__big--word' : ''}">${sz.label}</span>`,
             tile: true,
           });
         })}
@@ -516,44 +660,55 @@ function stepFormato(c, ui) {
       </button>
       ${open
         ? html`<div class="cz-morebody">
-            <span class="cz-sub__label">Andares</span>
-            ${segmented('tiers', String(tiers), TIER_OPTIONS.map((t) => ({ id: String(t.n), name: t.name })), 'Quantos andares')}
-            <p class="cz-note">${tiers > 1 ? `Diâmetros de ${diametersOf(c).join(', ')} cm, ${heightCmOf(c)} cm de altura · rende ${servesText(c)}.` : 'Com mais andares o bolo de baixo cresce e rende muito mais fatias.'}</p>
-            <span class="cz-sub__label">Altura${tiers > 1 ? ' de cada andar' : ''}</span>
-            ${segmented('height', c.layers.length === 1 ? '' : c.height, HEIGHTS, 'Altura do bolo')}
-            <p class="cz-note">${c.layers.length === 1
-              ? 'Bolo simples: uma massa só, sem recheio, com uns 5 cm de altura.'
-              : `${HEIGHTS.find((h) => h.id === c.height).desc.split(' · ')[0]}${tiers > 1 ? ' em cada andar' : ''}: ${heightCmOf(c)} cm de altura. A massa e o recheio têm sempre a mesma espessura; o bolo cresce em camadas.`}</p>
+            ${volcano || bento
+              ? html`<p class="cz-note" data-k="struct:fixed">${volcano ? 'O vulcão é um bolo só: uma massa alta, de fôrma de furo, com uns 8 cm de altura.' : 'O bentô é um mini bolo de um andar só.'}</p>`
+              : html`<span class="cz-sub__label">Andares</span>
+                  ${segmented('tiers', String(tiers), TIER_OPTIONS.map((t) => ({ id: String(t.n), name: t.name })), 'Quantos andares')}
+                  <p class="cz-note">${tiers > 1 ? `Diâmetros de ${diametersOf(c).join(', ')} cm, ${heightCmOf(c)} cm de altura · rende ${servesText(c)}.` : 'Com mais andares o bolo de baixo cresce e rende muito mais fatias.'}</p>`}
+            ${volcano
+              ? ''
+              : html`<span class="cz-sub__label">Altura${tiers > 1 ? ' de cada andar' : ''}</span>
+                  ${segmented('height', c.layers.length === 1 ? '' : c.height, HEIGHTS, 'Altura do bolo')}
+                  <p class="cz-note">${c.layers.length === 1
+                    ? 'Bolo simples: uma massa só, sem recheio, com uns 5 cm de altura.'
+                    : `${HEIGHTS.find((h) => h.id === c.height).desc.split(' · ')[0]}${tiers > 1 ? ' em cada andar' : ''}: ${heightCmOf(c)} cm de altura. A massa e o recheio têm sempre a mesma espessura; o bolo cresce em camadas.`}</p>`}
             <span class="cz-sub__label">Base</span>
             <div class="cz-chips" role="radiogroup" aria-label="Base do bolo">
-              ${BASES.map((b) => chip('base', b.id, c.base === b.id, b.name, { swatch: b.swatch, note: b.price ? `+ ${brl(b.price)}` : '' }))}
+              ${bases.map((b) => chip('base', b.id, c.base === b.id, b.name, { swatch: b.swatch, note: b.price ? `+ ${brl(b.price)}` : '' }))}
             </div>
           </div>`
         : ''}
     </section>
 
+    ${rulesBox('formato', c)}
     ${tipBox('formato', c, ui.tipOpen)}
   `;
 }
 
+/** Amostra da massa: uma cor, ou duas (mesclada). */
+const crumbSwatch = (f) => html`<i class="cz-swatch cz-swatch--crumb ${f.color2 ? 'cz-swatch--duo' : ''}" style="--c:${f.color}${f.color2 ? `;--c2:${f.color2}` : ''}"></i>`;
+
 function stepMassa(c, ui) {
   const n = c.layers.length;
+  const volcano = isVolcano(c);
   const each = ui.flavorMode === 'each' && n > 1;
   const active = each ? Math.min(ui.layer, n - 1) : n - 1;
   const current = c.layers[active];
   const per = !each && n > 1 ? 'por camada' : '';
   return html`
-    <section class="cz-sec">
-      <div class="cz-row">
-        <div class="cz-row__text">
-          <strong>Camadas de massa</strong>
-          <span>${n === 1 ? 'Bolo simples, sem recheio · uns 5 cm de altura' : `${n} massas e ${n - 1} ${n - 1 === 1 ? 'recheio' : 'recheios'} · ${heightCmOf({ ...c, tiers: 1 })} cm de altura`}</span>
-        </div>
-        ${qtyStepper(n, { min: 1, max: MAX_LAYERS, id: 'layers' })}
-      </div>
-    </section>
+    ${volcano
+      ? html`<p class="cz-note cz-note--warn" data-k="massa:vulcao">O vulcão é uma massa só, assada na fôrma de furo. Escolha o sabor: a cobertura que enche o furo fica na próxima etapa.</p>`
+      : html`<section class="cz-sec" data-k="massa:camadas">
+          <div class="cz-row">
+            <div class="cz-row__text">
+              <strong>Camadas de massa</strong>
+              <span>${n === 1 ? 'Bolo simples, sem recheio · uns 5 cm de altura' : `${n} massas e ${n - 1} ${n - 1 === 1 ? 'recheio' : 'recheios'} · ${heightCmOf({ ...c, tiers: 1 })} cm de altura`}</span>
+            </div>
+            ${qtyStepper(n, { min: 1, max: c.size === 'bento' ? 3 : MAX_LAYERS, id: 'layers' })}
+          </div>
+        </section>`}
 
-    <section class="cz-sec">
+    <section class="cz-sec" data-k="massa:modo">
       ${n > 1 ? segmented('flavorMode', each ? 'each' : 'all', [{ id: 'all', name: 'Um só sabor' }, { id: 'each', name: 'Um por camada' }], 'Como escolher o sabor da massa') : ''}
       ${each
         ? html`<div class="cz-stack" role="radiogroup" aria-label="Camada que você está editando">
@@ -562,7 +717,7 @@ function stepMassa(c, ui) {
                 const f = getFlavor(id);
                 const where = i === n - 1 ? ' (topo)' : i === 0 ? ' (base)' : '';
                 return html`<button type="button" class="cz-layer ${i === active ? 'is-on' : ''}" role="radio" aria-checked="${i === active ? 'true' : 'false'}" data-set="layer" data-value="${i}" data-k="layer:${i}">
-                  <i class="cz-swatch cz-swatch--crumb" style="--c:${f.color}"></i>
+                  ${crumbSwatch(f)}
                   <span>${ordinal(i + 1)} camada${where}</span>
                   <strong>${f.name}</strong>
                   ${icon(i === active ? 'edit' : 'chevron-right')}
@@ -573,12 +728,19 @@ function stepMassa(c, ui) {
         : ''}
     </section>
 
-    <section class="cz-sec">
+    <section class="cz-sec" data-k="massa:sabor">
       <div class="cz-sec__head">
         <h3>${each ? `Sabor da ${ordinal(active + 1)} camada` : 'Sabor da massa'}</h3>
       </div>
-      <div class="cz-grid cz-grid--2" role="radiogroup" aria-label="Sabor da massa">
-        ${FLAVORS.map((f) =>
+      ${browser({
+        key: 'flavor',
+        items: activeOf(FLAVORS, c.layers),
+        groups: FLAVOR_GROUPS,
+        picked: each ? [current] : [...new Set(c.layers)],
+        ui,
+        noun: 'massas',
+        label: 'Sabor da massa',
+        card: (f) =>
           optCard({
             set: 'flavor',
             value: f.id,
@@ -586,10 +748,18 @@ function stepMassa(c, ui) {
             name: f.name,
             desc: f.desc,
             price: priceTag(deltaOf(c, f.price), per),
-            artwork: html`<i class="cz-swatch cz-swatch--crumb" style="--c:${f.color}"></i>`,
+            artwork: crumbSwatch(f),
           }),
-        )}
+      })}
+    </section>
+
+    <section class="cz-sec" data-k="massa:calda">
+      <div class="cz-sec__head"><h3>Calda de molhar <span class="cz-optional">(opcional)</span></h3></div>
+      <div class="cz-chips" role="radiogroup" aria-label="Calda de molhar a massa">
+        ${chip('soak', '', !c.soak, 'Sem calda')}
+        ${activeOf(SOAKS, c.soak).map((s) => chip('soak', s.id, c.soak === s.id, s.name, { note: `+ ${brl(deltaOf(c, s.price))}` }))}
       </div>
+      <p class="cz-note">${getSoak(c.soak)?.desc || 'Pincelada em cada camada, deixa a massa mais úmida.'}</p>
     </section>
   `;
 }
@@ -597,6 +767,14 @@ function stepMassa(c, ui) {
 function stepRecheio(c, ui) {
   const gaps = c.fillings.length;
   if (!gaps) {
+    if (isVolcano(c)) {
+      return html`<div class="cz-empty">
+        <span class="cz-empty__art">${icon('layers')}</span>
+        <h3>O vulcão não leva recheio</h3>
+        <p>No lugar do recheio, a cobertura cremosa enche o furo do bolo e transborda. Você escolhe o sabor dela na próxima etapa.</p>
+        <button type="button" class="btn" data-act="next">Escolher a cobertura ${icon('arrow-right')}</button>
+      </div>`;
+    }
     return html`<div class="cz-empty">
       <span class="cz-empty__art">${icon('layers')}</span>
       <h3>Bolo de uma camada não leva recheio</h3>
@@ -609,18 +787,21 @@ function stepRecheio(c, ui) {
   const active = each ? Math.min(ui.gap, gaps - 1) : gaps - 1;
   const current = c.fillings[active];
   const per = !each && gaps > 1 ? 'por camada' : '';
+  const add = c.fillAdds[active] || '';
+  const sameAdd = c.fillAdds.every((x) => x === c.fillAdds[0]);
   return html`
-    <section class="cz-sec">
+    <section class="cz-sec" data-k="recheio:modo">
       ${gaps > 1 ? segmented('fillMode', each ? 'each' : 'all', [{ id: 'all', name: 'Um só recheio' }, { id: 'each', name: 'Um por camada' }], 'Como escolher o recheio') : ''}
       ${each
         ? html`<div class="cz-stack" role="radiogroup" aria-label="Recheio que você está editando">
             ${c.fillings
               .map((id, i) => {
                 const f = getFilling(id);
+                const extra = getFillAdd(c.fillAdds[i]);
                 return html`<button type="button" class="cz-layer cz-layer--fill ${i === active ? 'is-on' : ''}" role="radio" aria-checked="${i === active ? 'true' : 'false'}" data-set="gap" data-value="${i}" data-k="gap:${i}">
-                  <i class="cz-swatch" style="--c:${f.color}"></i>
+                  <i class="cz-swatch" style="--c:${f.cream || f.color}"></i>
                   <span>Entre a ${ordinal(i + 1)} e a ${ordinal(i + 2)} camada</span>
-                  <strong>${f.name}</strong>
+                  <strong>${f.name}${extra ? ` + ${extra.name.toLowerCase()}` : ''}</strong>
                   ${icon(i === active ? 'edit' : 'chevron-right')}
                 </button>`;
               })
@@ -629,12 +810,19 @@ function stepRecheio(c, ui) {
         : ''}
     </section>
 
-    <section class="cz-sec">
+    <section class="cz-sec" data-k="recheio:sabor">
       <div class="cz-sec__head">
         <h3>${each ? `Recheio entre a ${ordinal(active + 1)} e a ${ordinal(active + 2)} camada` : 'Sabor do recheio'}</h3>
       </div>
-      <div class="cz-grid cz-grid--2" role="radiogroup" aria-label="Sabor do recheio">
-        ${FILLINGS.map((f) =>
+      ${browser({
+        key: 'filling',
+        items: activeOf(FILLINGS, c.fillings),
+        groups: FILLING_GROUPS,
+        picked: each ? [current] : [...new Set(c.fillings)],
+        ui,
+        noun: 'recheios',
+        label: 'Sabor do recheio',
+        card: (f) =>
           optCard({
             set: 'filling',
             value: f.id,
@@ -642,10 +830,35 @@ function stepRecheio(c, ui) {
             name: f.name,
             desc: f.desc,
             price: priceTag(deltaOf(c, f.price), per),
-            artwork: html`<i class="cz-swatch ${f.gloss > 0.5 ? 'cz-swatch--gloss' : 'cz-swatch--satin'}" style="--c:${f.color}"></i>`,
+            artwork: html`<i class="cz-swatch ${f.gloss > 0.5 ? 'cz-swatch--gloss' : 'cz-swatch--satin'} ${f.cream ? 'cz-swatch--duo' : ''}" style="--c:${f.cream || f.color}${f.cream ? `;--c2:${f.color}` : ''}"></i>`,
           }),
-        )}
+      })}
+    </section>
+
+    <section class="cz-sec" data-k="recheio:adicional">
+      <div class="cz-sec__head"><h3>Adicional no recheio <span class="cz-optional">(opcional)</span></h3></div>
+      <div class="cz-chips" role="radiogroup" aria-label="Adicional no recheio">
+        ${chip('fillAdd', '', each ? !add : c.fillAdds.every((x) => !x), 'Sem adicional')}
+        ${activeOf(FILL_ADDS, c.fillAdds).map((a) => chip('fillAdd', a.id, each ? add === a.id : sameAdd && c.fillAdds[0] === a.id, a.name, { swatch: a.swatch, note: `+ ${brl(deltaOf(c, a.price))}` }))}
       </div>
+      <p class="cz-note">${gaps > 1 && !each ? 'Pedaços que aparecem no corte, em todos os recheios. Para um só, escolha “Um por camada”.' : 'Pedaços que aparecem no corte, no meio do creme.'}</p>
+    </section>
+
+    <section class="cz-sec" data-k="recheio:revelacao">
+      <button type="button" class="cz-switch" role="switch" aria-checked="${c.reveal.on ? 'true' : 'false'}" data-act="reveal-toggle" data-k="reveal:toggle">
+        <span class="cz-switch__knob"></span>
+        <span class="cz-opt__body">
+          <span class="cz-opt__name">Chá revelação <span class="cz-optional">(opcional)</span></span>
+          <span class="cz-opt__desc">O recheio vai tingido de rosa ou azul e só aparece no corte</span>
+        </span>
+        <span class="cz-opt__price"><b>+ ${money(REVEAL_PRICE)}</b></span>
+      </button>
+      ${c.reveal.on
+        ? html`<div class="cz-sub cz-secret" data-k="reveal:secret">
+            <p class="cz-secret__state">${icon('lock')}<span><strong>${ui.revealSet ? 'Cor escolhida, em segredo' : 'Falta escolher a cor'}</strong>${ui.revealSet ? 'Ela não aparece aqui, no resumo nem no pedido: só a confeitaria fica sabendo.' : 'Escolha longe de quem não pode saber: a cor não aparece em nenhum outro lugar.'}</span></p>
+            <button type="button" class="btn btn--secondary btn--sm" data-act="reveal-color">${icon(ui.revealSet ? 'edit' : 'lock')} ${ui.revealSet ? 'Trocar a cor em segredo' : 'Escolher a cor em segredo'}</button>
+          </div>`
+        : ''}
     </section>
   `;
 }
@@ -654,14 +867,21 @@ const FINISH_SWATCH = { brilhante: 'cz-swatch--gloss', espelhado: 'cz-swatch--gl
 
 function stepCobertura(c, ui) {
   const tiers = c.tiers || 1;
+  const volcano = isVolcano(c);
   const each = tiers > 1 && ui.tierMode === 'each' && Array.isArray(c.tierCover);
   const ti = each ? Math.min(ui.tier, tiers - 1) : tiers - 1;
   const cov = each ? c.tierCover[ti] : c.covering;
   const naked = cov.type === 'naked';
   const fin = getFinish(cov.style);
-  const dripList = ui.moreDrip || !DRIP_COLORS.includes(c.drip.color) ? COLORS : COLORS.filter((x) => DRIP_COLORS.includes(x.hex));
+  const kind = getCovering(cov.type);
+  const metalHexes = METAL_COLORS.map((x) => x.hex);
+  const dripBase = c.drip.metal ? [...METAL_COLORS, ...COLORS.filter((x) => DRIP_COLORS.includes(x.hex))] : COLORS.filter((x) => DRIP_COLORS.includes(x.hex));
+  const dripList = ui.moreDrip || !(DRIP_COLORS.includes(c.drip.color) || (c.drip.metal && metalHexes.includes(c.drip.color))) ? [...(c.drip.metal ? METAL_COLORS : []), ...COLORS] : dripBase;
+  const covers = activeOf(COVERINGS, coversOf(c).map((x) => x.type)).filter((k) => !volcano || VOLCANO_COVERS.includes(k.id));
+  const styles = activeOf(FINISHES, cov.style).filter((f) => finishAllowed(cov.type, f.id));
+  const hiddenStyles = FINISHES.length - styles.length;
   return html`
-    <section class="cz-sec">
+    <section class="cz-sec" data-k="cob:paletas">
       <div class="cz-sec__head"><h3>Paletas prontas</h3><span class="cz-sec__note">Recolorem o bolo inteiro</span></div>
       <div class="cz-pals" role="group" aria-label="Paletas prontas">
         ${COLOR_PALETTES.map(
@@ -673,7 +893,7 @@ function stepCobertura(c, ui) {
     </section>
 
     ${tiers > 1
-      ? html`<section class="cz-sec">
+      ? html`<section class="cz-sec" data-k="cob:andares">
           ${segmented('tierMode', each ? 'each' : 'all', [{ id: 'all', name: 'Igual em todos' }, { id: 'each', name: 'Uma por andar' }], 'Cobertura dos andares')}
           ${each
             ? html`<div class="cz-stack" role="radiogroup" aria-label="Andar que você está editando">
@@ -693,10 +913,16 @@ function stepCobertura(c, ui) {
         </section>`
       : ''}
 
-    <section class="cz-sec">
-      <div class="cz-sec__head"><h3>Tipo de cobertura</h3></div>
-      <div class="cz-grid cz-grid--2" role="radiogroup" aria-label="Tipo de cobertura">
-        ${COVERINGS.map((k) =>
+    <section class="cz-sec" data-k="cob:tipo">
+      <div class="cz-sec__head"><h3>${volcano ? 'Cobertura que transborda' : 'Tipo de cobertura'}</h3></div>
+      ${browser({
+        key: 'covering',
+        items: covers,
+        picked: [cov.type],
+        ui,
+        noun: 'coberturas',
+        label: 'Tipo de cobertura',
+        card: (k) =>
           optCard({
             set: 'covering',
             value: k.id,
@@ -706,70 +932,105 @@ function stepCobertura(c, ui) {
             price: priceTag(deltaOf(c, k.price)),
             artwork: html`<i class="cz-swatch ${FINISH_SWATCH[k.finish] || ''}" style="--c:${ui.colorChosen || cov.type === k.id ? cov.color : k.defaultColor}"></i>`,
           }),
-        )}
-      </div>
+      })}
     </section>
 
-    <section class="cz-sec">
+    <section class="cz-sec" data-k="cob:cor">
       <div class="cz-sec__head"><h3>${naked ? 'Cor do creme do topo' : 'Cor da cobertura'}</h3></div>
       ${colorPicker('coveringColor', cov.color, COLORS, naked ? 'Cor do creme do topo' : 'Cor da cobertura')}
     </section>
 
-    <section class="cz-sec">
-      <div class="cz-sec__head"><h3>Estilo da cobertura</h3><span class="cz-sec__note">${fin.desc}</span></div>
-      <div class="cz-fins" role="radiogroup" aria-label="Estilo da cobertura">
-        ${FINISHES.map((f) => {
-          const ok = finishAllowed(cov.type, f.id);
-          return html`<button type="button" class="cz-fin ${cov.style === f.id ? 'is-on' : ''} ${ok ? '' : 'is-off'}" role="radio" aria-checked="${cov.style === f.id ? 'true' : 'false'}" ${ok ? '' : raw('disabled')} data-set="finish" data-value="${f.id}" data-k="finish:${f.id}">
-            <i class="cz-fin__art cz-fin__art--${f.id}" style="--c:${cov.color};--c2:${cov.color2}"></i>
-            <span>${f.name}</span>
-            <small>${f.price ? `+ ${brl(deltaOf(c, f.price))}` : 'incluso'}</small>
-          </button>`;
-        })}
-      </div>
-      ${fin.two
-        ? html`<div class="cz-sub">
-            <span class="cz-sub__label">Segunda cor</span>
-            ${colorPicker('color2', cov.color2, COLORS, 'Segunda cor da cobertura')}
-          </div>`
-        : ''}
-    </section>
+    ${volcano
+      ? html`<section class="cz-sec" data-k="cob:vulcao">
+          <div class="cz-sec__head"><h3>Quanto transborda</h3></div>
+          <div class="cz-sub cz-sub--flat">
+            <span class="cz-sub__label">Quantidade</span>
+            ${segmented('dripAmount', c.drip.amount, DRIP_AMOUNTS.map((a) => ({ id: a.id, name: a.price ? `${a.name} · + ${brl(deltaOf(c, a.price))}` : a.name })), 'Quanta cobertura')}
+            <span class="cz-sub__label">Até onde desce</span>
+            ${segmented('dripLength', c.drip.length, DRIP_LENGTHS, 'Até onde a cobertura desce')}
+          </div>
+        </section>`
+      : html`<section class="cz-sec" data-k="cob:estilo">
+          <div class="cz-sec__head"><h3>Estilo da cobertura</h3><span class="cz-sec__note">${fin.desc}</span></div>
+          ${browser({
+            key: 'finish',
+            items: styles,
+            groups: FINISH_GROUPS,
+            picked: [cov.style],
+            ui,
+            grid: 'cz-fins',
+            noun: 'estilos',
+            label: 'Estilo da cobertura',
+            card: (f) => html`<button type="button" class="cz-fin ${cov.style === f.id ? 'is-on' : ''}" role="radio" aria-checked="${cov.style === f.id ? 'true' : 'false'}" data-set="finish" data-value="${f.id}" data-k="finish:${f.id}">
+              <i class="cz-fin__art cz-fin__art--${f.id}" style="--c:${cov.color};--c2:${cov.color2};--c3:${getTrim(cov.trim)?.swatch || '#c79a62'}"></i>
+              <span>${f.name}</span>
+              <small>${f.price ? `+ ${brl(deltaOf(c, f.price))}` : 'incluso'}</small>
+            </button>`,
+          })}
+          ${hiddenStyles > 0 ? html`<p class="cz-note" data-k="estilo:nota">${naked ? 'O naked não leva estilo: a massa e o recheio são o acabamento.' : `Aqui só aparecem os estilos que se fazem em ${kind.name.toLowerCase()}.`}</p>` : ''}
+          ${fin.two
+            ? html`<div class="cz-sub" data-k="estilo:cor2">
+                <span class="cz-sub__label">Segunda cor</span>
+                ${colorPicker('color2', cov.color2, COLORS, 'Segunda cor da cobertura')}
+              </div>`
+            : ''}
+          ${fin.trim
+            ? html`<div class="cz-sub" data-k="estilo:confeito">
+                <span class="cz-sub__label">Confeito</span>
+                <div class="cz-chips" role="radiogroup" aria-label="Confeito do estilo">
+                  ${activeOf(TRIMS, cov.trim).map((t) => chip('trim', t.id, cov.trim === t.id, t.name, { swatch: t.swatch, note: `+ ${brl(deltaOf(c, t.price))}` }))}
+                </div>
+              </div>`
+            : ''}
+        </section>
 
-    <section class="cz-sec">
-      <button type="button" class="cz-switch" role="switch" aria-checked="${c.drip.on ? 'true' : 'false'}" data-act="drip" data-k="drip:toggle">
-        <span class="cz-switch__knob"></span>
-        <span class="cz-opt__body">
-          <span class="cz-opt__name">Calda escorrendo <span class="cz-optional">(opcional)</span></span>
-          <span class="cz-opt__desc">Aquele efeito de calda descendo pela borda</span>
-        </span>
-        <span class="cz-opt__price"><b>+ ${money(deltaOf(c, DRIP_PRICE))}</b></span>
-      </button>
-      ${c.drip.on
-        ? html`<div class="cz-sub">
-            <span class="cz-sub__label">Cor da calda</span>
-            ${colorPicker('dripColor', c.drip.color, dripList, 'Cor da calda')}
-            ${dripList.length < COLORS.length ? html`<button type="button" class="cz-linkbtn cz-linkbtn--inset" data-act="more-drip">${icon('palette')} Ver todas as cores</button>` : ''}
-          </div>`
-        : ''}
-    </section>
+        <section class="cz-sec" data-k="cob:calda">
+          <button type="button" class="cz-switch" role="switch" aria-checked="${c.drip.on ? 'true' : 'false'}" data-act="drip" data-k="drip:toggle">
+            <span class="cz-switch__knob"></span>
+            <span class="cz-opt__body">
+              <span class="cz-opt__name">Calda escorrendo <span class="cz-optional">(opcional)</span></span>
+              <span class="cz-opt__desc">Aquele efeito de calda descendo pela borda</span>
+            </span>
+            <span class="cz-opt__price"><b>+ ${money(deltaOf(c, DRIP_PRICE))}</b></span>
+          </button>
+          ${c.drip.on
+            ? html`<div class="cz-sub" data-k="drip:opcoes">
+                <span class="cz-sub__label">Cor da calda</span>
+                ${colorPicker('dripColor', c.drip.color, dripList, 'Cor da calda')}
+                ${dripList.length < COLORS.length ? html`<button type="button" class="cz-linkbtn cz-linkbtn--inset" data-act="more-drip">${icon('palette')} Ver todas as cores</button>` : ''}
+                <span class="cz-sub__label">Quantidade</span>
+                ${segmented('dripAmount', c.drip.amount, DRIP_AMOUNTS.map((a) => ({ id: a.id, name: a.price ? `${a.name} · + ${brl(deltaOf(c, a.price))}` : a.name })), 'Quantidade de calda')}
+                <span class="cz-sub__label">Comprimento das gotas</span>
+                ${segmented('dripLength', c.drip.length, DRIP_LENGTHS, 'Comprimento das gotas')}
+                <div class="cz-chips cz-chips--toggles" role="group" aria-label="Mais opções da calda">
+                  <button type="button" class="cz-chip ${c.drip.half ? 'is-on' : ''}" aria-pressed="${c.drip.half ? 'true' : 'false'}" data-act="drip-half" data-k="drip:half"><span>Meia-lua</span><small>só de um lado</small></button>
+                  <button type="button" class="cz-chip ${c.drip.metal ? 'is-on' : ''}" aria-pressed="${c.drip.metal ? 'true' : 'false'}" data-act="drip-metal" data-k="drip:metal"><i class="cz-chip__sw cz-chip__sw--metal"></i><span>Dourada ou metálica</span><small>+ ${brl(deltaOf(c, DRIP_METAL_PRICE))}</small></button>
+                </div>
+              </div>`
+            : ''}
+        </section>`}
   `;
 }
 
 function stepAcabamento(c) {
   const pip = getPiping(c.piping.style);
   const none = pip.id === 'liso';
+  const places = pipingPlaces(pip.id);
+  const shop = PIPINGS.filter((x) => isActive(x) || x.id === pip.id);
+  // os mais pedidos primeiro; os demais, na ordem do cardápio
+  const list = [...shop.filter((x) => x.popular), ...shop.filter((x) => !x.popular)];
   return html`
     <section class="cz-sec">
       <div class="cz-sec__head"><h3>Estilo do bico</h3><span class="cz-sec__note">${pip.desc}</span></div>
       <div class="cz-grid cz-grid--3" role="radiogroup" aria-label="Estilo do acabamento">
-        ${PIPINGS.map((x) =>
+        ${list.map((x) =>
           optCard({
             set: 'pipingStyle',
             value: x.id,
             on: c.piping.style === x.id,
             name: x.name,
-            price: priceTag(deltaOf(c, x.price)),
-            artwork: html`<span class="cz-opt__art">${PIPING_ART[x.id]}</span>`,
+            price: priceTag(deltaOf(c, x.id === pip.id ? pipingPriceOf(c) : x.price)),
+            artwork: pic('p', x.id, PIPING_ART[x.id] || PIPING_ART.bolinhas),
             tile: true,
           }),
         )}
@@ -780,10 +1041,14 @@ function stepAcabamento(c) {
       : html`
           ${pip.combo
             ? html`<p class="cz-note">O conjunto vintage já vem completo: conchas no topo e na base, guirlandas na lateral e um lacinho em cada encontro.</p>`
-            : html`<section class="cz-sec">
-                <div class="cz-sec__head"><h3>Onde aplicar</h3></div>
-                ${segmented('pipingWhere', c.piping.where, PIPING_PLACES, 'Onde aplicar o acabamento')}
-              </section>`}
+            : pip.side
+              ? html`<p class="cz-note" data-k="piping:side">Este bico toma a lateral do bolo, com uma borda de bolinhas no topo. As decorações da lateral dão lugar a ele.</p>`
+              : html`<section class="cz-sec">
+                  <div class="cz-sec__head"><h3>Onde aplicar</h3>${c.piping.where === 'cobre' ? html`<span class="cz-sec__note" data-k="piping:cobre">Preenche o topo em volta das decorações</span>` : ''}</div>
+                  <div class="cz-chips" role="radiogroup" aria-label="Onde aplicar o acabamento">
+                    ${PIPING_PLACES.filter((x) => places.includes(x.id)).map((x) => chip('pipingWhere', x.id, c.piping.where === x.id, x.name))}
+                  </div>
+                </section>`}
           <section class="cz-sec">
             <div class="cz-sec__head"><h3>Cor do acabamento</h3></div>
             ${colorPicker('pipingColor', c.piping.color, COLORS, 'Cor do acabamento')}
@@ -800,7 +1065,7 @@ function notesOf(c) {
   if (notesMemo.key === key && notesMemo.value) return notesMemo.value;
   try {
     const n = decorNotes(c) || {};
-    const value = { adapted: Boolean(n.adapted), messages: Array.isArray(n.messages) ? n.messages : [], unfit: Array.isArray(n.unfit) ? n.unfit : [], unfitIds: Array.isArray(n.unfitIds) ? n.unfitIds : [], fit: n.fit && typeof n.fit === 'object' ? n.fit : {} };
+    const value = { adapted: Boolean(n.adapted), messages: Array.isArray(n.messages) ? n.messages : [], unfit: Array.isArray(n.unfit) ? n.unfit : [], unfitIds: Array.isArray(n.unfitIds) ? n.unfitIds : [], fit: n.fit && typeof n.fit === 'object' ? n.fit : {}, placed: Array.isArray(n.placed) ? n.placed : [] };
     notesMemo = { key, value };
     return value;
   } catch (err) {
@@ -825,6 +1090,7 @@ function billOf(c) {
   const removed = [];
   const lowered = new Map();
   let candles = null;
+  let placedOut = 0; // r5-decor: peças colocadas à mão que não couberam (não cobradas)
   try {
     for (let i = 0; i < 16; i++) {
       const notes = notesOf(cur);
@@ -835,6 +1101,7 @@ function billOf(c) {
       removed.push(...stepBill.removed);
       stepBill.lowered.forEach((l) => lowered.set(l.id, { id: l.id, from: lowered.get(l.id)?.from || l.from, to: l.to }));
       if (stepBill.candles) candles = { from: candles?.from || stepBill.candles.from, to: stepBill.candles.to };
+      placedOut += stepBill.placedOut || 0;
       cur = stepBill.config;
     }
   } catch (err) {
@@ -849,35 +1116,51 @@ function billOf(c) {
     removed: gone,
     lowered: [...lowered.values()].filter((l) => !gone.includes(l.id)),
     candles: gone.includes('velas') ? null : candles,
+    placedOut,
     changed: cur !== c,
   };
   billMemo = { key, value };
   return value;
 }
 
-/** Ajustes de uma decoração escolhida: arranjo, fartura e cor (ou, nas velas, o tipo e o número). */
+/** Ajustes de uma decoração escolhida: tipo, arranjo, fartura e cor (ou, nas velas, o estilo, as cores e quantas). */
 function decorAdjust(c, id) {
   const d = getDecor(id);
   if (id === 'velas') {
-    const st = c.decor.candleStyle;
+    const st = getCandleStyle(c.decor.candleStyle) || CANDLE_STYLES[0];
     return html`<div class="cz-adjust cz-adjust--below" data-cz-candles data-k="adjustbox:velas">
       <span class="cz-sub__label">Velas: de que tipo?</span>
-      ${segmented('candleStyle', st, CANDLE_STYLES, 'Tipo de vela')}
-      ${st === 'classica'
+      <div class="cz-chips" role="radiogroup" aria-label="Tipo de vela">
+        ${CANDLE_STYLES.filter((x) => isActive(x) || x.id === st.id).map((x) => chip('candleStyle', x.id, st.id === x.id, x.name, { note: x.price ? `+ ${brl(x.price)}` : '' }))}
+      </div>
+      ${st.count
         ? html`<div class="cz-row cz-row--gap">
-            <div class="cz-row__text"><strong>Quantas velas?</strong><span>De 1 a ${MAX_CANDLES}, coloridas e listradas</span></div>
+            <div class="cz-row__text"><strong>Quantas velas?</strong><span>De 1 a ${MAX_CANDLES} · ${st.desc.charAt(0).toLowerCase()}${st.desc.slice(1)}</span></div>
             ${qtyStepper(c.decor.candles, { min: 1, max: MAX_CANDLES, id: 'candles' })}
           </div>`
-        : st === 'numero'
+        : st.id === 'numero'
           ? html`<div class="cz-field cz-field--inline">
               <label for="cz-number">Qual número?</label>
               <input class="input" id="cz-number" type="text" inputmode="numeric" maxlength="3" placeholder="Ex.: 30" value="${c.decor.number}" data-field="number" autocomplete="off" enterkeyhint="done" />
             </div>`
-          : html`<p class="cz-note">Uma vela vulcão no centro: acende e solta estrelinhas na hora do parabéns.</p>`}
+          : html`<p class="cz-note" data-k="candle:note">${st.id === 'letras' ? 'Oito velinhas douradas que escrevem PARABÉNS, uma chama em cada letra.' : 'Uma vela vulcão no centro: acende e solta estrelinhas na hora do parabéns.'}</p>`}
+      ${st.colors
+        ? html`<span class="cz-sub__label">Cores das velas</span>
+            <div class="cz-chips cz-chips--scroll" role="radiogroup" aria-label="Cores das velas">
+              ${CANDLE_PALETTES.map((x) => chip('candlePalette', x.id, c.decor.candlePalette === x.id, x.name, { swatch: x.hexes[0] }))}
+            </div>`
+        : ''}
     </div>`;
   }
   const o = decorOptions(c, id);
   return html`<div class="cz-adjust" data-k="adjustbox:${id}">
+    <div class="cz-adjust__head"><strong>${d.name}</strong><span>${d.craft || d.desc}</span></div>
+    ${d.kinds
+      ? html`<span class="cz-sub__label">Tipo</span>
+          <div class="cz-chips" role="radiogroup" aria-label="Tipo de ${d.name}">
+            ${d.kinds.map((k) => chip(`decorKind.${id}`, k.id, o.kind === k.id, k.name))}
+          </div>`
+      : ''}
     ${d.arrs.length > 1
       ? html`<span class="cz-sub__label">Como arrumar</span>
           <div class="cz-chips" role="radiogroup" aria-label="Arranjo de ${d.name}">
@@ -890,16 +1173,54 @@ function decorAdjust(c, id) {
       : ''}
     ${d.colors
       ? html`<span class="cz-sub__label">Cor</span>
-          ${colorPicker(`decorColor.${id}`, o.color, swatches(DECOR_COLORS[d.colors]), `Cor de ${d.name}`)}`
+          ${colorPicker(`decorColor.${id}`, o.color, decorSwatches(DECOR_COLORS[d.colors]), `Cor de ${d.name}`)}`
       : ''}
   </div>`;
 }
 
+/**
+ * r5-tela — "Uma a uma, com o dedo": a peça que está na mão, as que já foram para o bolo e as saídas por botão
+ * (colocar onde couber, tirar uma, tirar todas) para quem usa teclado ou leitor de tela.
+ */
+function handBox(c, armed) {
+  const groups = placedGroups(c);
+  const total = c.decor.placed.length;
+  const d = armed ? getDecor(armed) : null;
+  return html`<div class="cz-hand" data-k="hand:box">
+    <p class="cz-hand__lead" data-k="hand:lead">
+      ${d
+        ? html`<strong>${d.name}</strong> na mão. Toque no bolo, onde quiser: ${money(d.unit)} cada.`
+        : total >= MAX_PLACED
+          ? `O bolo já tem ${MAX_PLACED} peças colocadas à mão, que é o limite. Tire uma para trocar.`
+          : 'Escolha uma peça abaixo e toque no bolo para colocar. Arraste para mudar de lugar, toque nela para tirar.'}
+    </p>
+    ${d
+      ? html`<div class="cz-hand__acts" data-k="hand:acts">
+          <button type="button" class="btn btn--soft btn--sm" data-act="place-auto" ${total >= MAX_PLACED ? raw('disabled') : ''}>${icon('plus')} Colocar onde couber</button>
+          <button type="button" class="cz-linkbtn" data-act="place-done">Soltar a peça</button>
+        </div>`
+      : ''}
+    ${groups.length
+      ? html`<div class="cz-picked" role="group" aria-label="Peças colocadas à mão: ${total} de ${MAX_PLACED}" data-k="hand:placed">
+          ${groups.map(
+            (g) => html`<span class="cz-pick" data-k="placed:${g.id}">
+              <span class="cz-pick__main cz-pick__main--static">${g.name} × ${g.n}<small>${money(g.unit * g.n)}</small></span>
+              <button type="button" class="cz-pick__x" data-act="place-remove" data-value="${g.id}" aria-label="Tirar uma peça de ${g.name} (${g.n} no bolo)">${ICON.minus}</button>
+            </span>`,
+          )}
+          <button type="button" class="cz-linkbtn" data-act="place-clear" data-k="placed:clear">Tirar todas</button>
+        </div>`
+      : ''}
+  </div>`;
+}
+
+/** Abas da etapa: "Mais pedidos", "Recentes" (se houver) e os grupos do cardápio. */
+const DECOR_TABS = [{ id: 'populares', name: 'Mais pedidos' }, { id: 'recentes', name: 'Recentes' }, ...DECOR_GROUPS];
+
 function stepDecoracao(c, ui) {
   const items = c.decor.items;
   const full = items.length >= MAX_DECORS;
-  const group = DECOR_GROUPS.some((g) => g.id === ui.decorGroup) ? ui.decorGroup : 'frutas';
-  const adjustable = (d) => d.qty || d.colors || d.arrs.length > 1 || d.id === 'velas';
+  const adjustable = (d) => d.qty || d.colors || d.kinds || d.arrs.length > 1 || d.id === 'velas';
   // as velas têm o painel delas logo abaixo das opções (aparece ao escolher, como sempre foi)
   const open = items.includes(ui.decorOpen) && ui.decorOpen !== 'velas' && adjustable(getDecor(ui.decorOpen)) ? ui.decorOpen : null;
   const bico = c.decor.messageMode === 'bico';
@@ -908,13 +1229,81 @@ function stepDecoracao(c, ui) {
   const notes = notesOf(bill.config); // o que foi reorganizado para caber, no bolo que aparece na tela
   const billNotes = billPreview(bill); // e o que ficou de fora dele
   const noScript = bill.removed.includes('escrita');
+  // o que está à venda (uma peça desligada continua aparecendo se já estiver neste bolo)
+  // r5-tela: "uma a uma, com o dedo" — as mesmas abas e a mesma busca, só com as peças que têm preço por unidade
+  const byHand = ui.decorHow === 'mao';
+  const armed = byHand && getDecor(ui.armed)?.unit ? ui.armed : null;
+  const shop = DECORS.filter((d) => (byHand ? d.unit > 0 && isActive(d) : isActive(d) || items.includes(d.id)));
+  const recent = (ui.decorRecent || []).map((id) => shop.find((d) => d.id === id)).filter(Boolean);
+  const tabs = DECOR_TABS.filter((t) => t.id !== 'recentes' || recent.length);
+  const group = tabs.some((t) => t.id === ui.decorGroup) ? ui.decorGroup : 'populares';
+  const query = plainText(ui.decorQuery).trim();
+  const listOf = (tab) => (tab === 'populares' ? shop.filter((d) => d.popular) : tab === 'recentes' ? recent : shop.filter((d) => d.group === tab));
+  const found = query ? shop.filter((d) => plainText(`${d.name} ${d.desc} ${(d.tags || []).join(' ')} ${DECOR_GROUPS.find((g) => g.id === d.group)?.name || ''}`).includes(query)) : [];
+  const handCard = (d, where) => html`<button
+      type="button"
+      class="cz-opt cz-opt--pic cz-opt--hand ${armed === d.id ? 'is-on' : ''}"
+      aria-pressed="${armed === d.id ? 'true' : 'false'}"
+      data-act="decor"
+      data-value="${d.id}"
+      data-k="${where}:${d.id}"
+    >
+      ${pic('d', d.id, DECOR_ART[d.id])}
+      <span class="cz-opt__body">
+        <span class="cz-opt__name">${d.name}</span>
+        <span class="cz-opt__desc">${d.desc}</span>
+        <span class="cz-opt__price"><b>${money(d.unit)}</b> <small>cada${ui.sideIds?.has(d.id) ? ' · topo ou lateral' : ''}</small></span>
+      </span>
+      <span class="cz-opt__check">${ICON.finger}</span>
+    </button>`;
+  const card = (d, where) => {
+    if (byHand) return handCard(d, where);
+    const isOn = items.includes(d.id);
+    const free = isOn && bill.removed.includes(d.id); // escolhida, mas não coube: não é cobrada
+    const q = isOn && d.qty ? QUANTITIES.find((x) => x.id === decorOptions(free ? c : bill.config, d.id).qty).mult : 1;
+    return html`<button
+      type="button"
+      class="cz-opt cz-opt--pic ${isOn ? 'is-on' : ''} ${full && !isOn ? 'is-off' : ''}"
+      role="checkbox"
+      aria-checked="${isOn ? 'true' : 'false'}"
+      data-act="decor"
+      data-value="${d.id}"
+      data-k="${where}:${d.id}"
+    >
+      ${pic('d', d.id, DECOR_ART[d.id])}
+      <span class="cz-opt__body">
+        <span class="cz-opt__name">${d.name}</span>
+        <span class="cz-opt__desc">${d.desc}</span>
+        <span class="cz-opt__price"><b>${free ? 'não cobrado' : `+ ${money(deltaOf(c, d.price * q, d.scales))}`}</b></span>
+      </span>
+      <span class="cz-opt__check">${icon('check')}</span>
+    </button>`;
+  };
+  const theme = getTheme(c.decor.theme);
   return html`
+    <section class="cz-sec">
+      <div class="cz-sec__head">
+        <h3>Temas prontos</h3>
+        <span class="cz-sec__note">${theme ? `Partiu de “${theme.name}”` : 'Um toque, e depois você ajusta'}</span>
+      </div>
+      <div class="cz-themes" role="group" aria-label="Temas prontos">
+        ${THEMES.filter(isActive).map(
+          (t) => html`<button type="button" class="cz-theme ${c.decor.theme === t.id ? 'is-on' : ''}" data-act="theme" data-value="${t.id}" data-k="theme:${t.id}" aria-pressed="${c.decor.theme === t.id ? 'true' : 'false'}" title="${t.desc}">
+            <span class="cz-theme__pic"><i style="--a:${t.colors[0]};--b:${t.colors[1]};--c:${t.colors[2]}"></i><img src="assets/img/cz/t-${t.id}.webp" alt="" loading="lazy" decoding="async" width="120" height="120" /></span>
+            <span class="cz-theme__name">${t.name}</span>
+          </button>`,
+        )}
+      </div>
+    </section>
+
     <section class="cz-sec">
       <div class="cz-sec__head">
         <h3>Decorações <span class="cz-optional">(opcional)</span></h3>
         ${items.length ? html`<button type="button" class="cz-linkbtn" data-act="clear-decor" data-k="decor:clear">Tirar todas</button>` : html`<span class="cz-sec__note" data-k="decor:max">Combine até ${MAX_DECORS}</span>`}
       </div>
-      <div class="cz-picked" role="group" aria-label="Decorações escolhidas: ${items.length} de ${MAX_DECORS}">
+      ${segmented('decorHow', byHand ? 'mao' : 'arranjo', [{ id: 'arranjo', name: 'Arranjos prontos' }, { id: 'mao', name: 'Uma a uma, com o dedo' }], 'Como colocar as decorações')}
+      ${byHand ? handBox(c, armed) : ''}
+      <div class="cz-picked" role="group" aria-label="Decorações escolhidas: ${items.length} de ${MAX_DECORS}" ${byHand ? raw('hidden') : ''}>
         ${items.length
           ? items.map((id) => {
               const d = getDecor(id);
@@ -922,7 +1311,7 @@ function stepDecoracao(c, ui) {
               // escolhida, mas sem lugar neste bolo: a etiqueta avisa (o motivo e a saída estão no aviso logo abaixo)
               const out = bill.removed.includes(id);
               return html`<span class="cz-pick ${open === id ? 'is-on' : ''} ${out ? 'is-out' : ''}" data-k="pick:${id}">
-                <button type="button" class="cz-pick__main" data-act="adjust" data-value="${id}" ${can ? (id === 'velas' ? '' : raw(`aria-expanded="${open === id ? 'true' : 'false'}"`)) : raw('disabled')} aria-label="${can ? (id === 'velas' ? 'Ajustar as velas: tipo e quantidade' : `Ajustar ${d.name}: arranjo, quantidade e cor`) : d.name}${out ? ' (não coube neste bolo, não cobrado)' : ''}">
+                <button type="button" class="cz-pick__main" data-act="adjust" data-value="${id}" ${can ? (id === 'velas' ? '' : raw(`aria-expanded="${open === id ? 'true' : 'false'}"`)) : raw('disabled')} aria-label="${can ? (id === 'velas' ? 'Ajustar as velas: tipo, cores e quantidade' : `Ajustar ${d.name}: arranjo, quantidade e cor`) : d.name}${out ? ' (não coube neste bolo, não cobrado)' : ''}">
                   ${d.name}${out ? html`<span class="cz-pick__out">Não coube neste bolo · não cobrado</span>` : ''}${can ? icon('sliders') : ''}
                 </button>
                 <button type="button" class="cz-pick__x" data-act="decor" data-value="${id}" aria-label="Tirar ${d.name}">${icon('x')}</button>
@@ -933,32 +1322,25 @@ function stepDecoracao(c, ui) {
       ${notes.messages.length || billNotes.length
         ? html`<div class="cz-note cz-note--warn cz-note--list" role="status" data-k="decor:notes">${[...notes.messages, ...billNotes].map((m) => html`<p>${m}</p>`)}</div>`
         : ''}
-      ${open ? decorAdjust(c, open) : ''}
-      <div class="cz-chips cz-chips--scroll cz-tabs" role="radiogroup" aria-label="Tipos de decoração">
-        ${DECOR_GROUPS.map((g) => chip('decorGroup', g.id, group === g.id, g.name, { note: String(items.filter((id) => getDecor(id).group === g.id).length || '') }))}
+      ${open && !byHand ? decorAdjust(c, open) : ''}
+      <label class="cz-search" data-k="decor:search">
+        <span class="cz-search__icon">${SEARCH_ICON}</span>
+        <input class="cz-search__input" type="search" placeholder="Buscar entre ${shop.length} ${byHand ? 'peças' : 'decorações'}" value="${ui.decorQuery || ''}" data-cz-search autocomplete="off" enterkeyhint="search" aria-label="Buscar decoração" />
+      </label>
+      <div class="cz-chips cz-chips--scroll cz-tabs" role="radiogroup" aria-label="Tipos de decoração" data-k="decor:tabs" ${query ? raw('hidden') : ''}>
+        ${tabs.map((g) => chip('decorGroup', g.id, group === g.id, g.name, { note: DECOR_GROUPS.some((x) => x.id === g.id) ? String(items.filter((id) => getDecor(id).group === g.id).length || '') : '' }))}
       </div>
-      ${DECOR_GROUPS.map(
-        // todos os grupos ficam montados; só o da aba escolhida aparece (trocar de aba não refaz nada)
-        (g) => html`<div class="cz-grid cz-grid--2" role="group" aria-label="${g.name}: ${items.length} de ${MAX_DECORS} decorações escolhidas" data-k="group:${g.id}" ${g.id === group ? '' : raw('hidden')}>
-          ${DECORS.filter((d) => d.group === g.id).map((d) => {
-            const isOn = items.includes(d.id);
-            const free = isOn && bill.removed.includes(d.id); // escolhida, mas não coube: não é cobrada
-            const q = isOn && d.qty ? QUANTITIES.find((x) => x.id === decorOptions(free ? c : bill.config, d.id).qty).mult : 1;
-            return optCard({
-              act: 'decor',
-              value: d.id,
-              on: isOn,
-              name: d.name,
-              desc: d.desc,
-              price: html`<span class="cz-opt__price"><b>${free ? 'não cobrado' : `+ ${money(deltaOf(c, d.price * q, d.scales))}`}</b></span>`,
-              artwork: html`<span class="cz-opt__art">${DECOR_ART[d.id] || DECOR_ART.generic}</span>`,
-              role: 'checkbox',
-              disabled: full && !isOn,
-            });
-          })}
-        </div>`,
-      )}
-      ${items.includes('velas') ? decorAdjust(c, 'velas') : ''}
+      ${query
+        ? html`<div class="cz-grid cz-grid--2" role="group" aria-label="Resultado da busca" data-k="group:busca">
+            ${found.length ? found.map((d) => card(d, 'busca')) : html`<p class="cz-note" data-k="busca:vazia">Nada com “${ui.decorQuery}”. Tente “fruta”, “chocolate”, “natal”, “infantil”…</p>`}
+          </div>`
+        : tabs.map(
+            // todas as abas ficam montadas; só a escolhida aparece (trocar de aba não refaz nada)
+            (g) => html`<div class="cz-grid cz-grid--2" role="group" aria-label="${g.name}: ${items.length} de ${MAX_DECORS} decorações escolhidas" data-k="group:${g.id}" ${g.id === group ? '' : raw('hidden')}>
+              ${listOf(g.id).map((d) => card(d, g.id))}
+            </div>`,
+          )}
+      ${items.includes('velas') && !byHand ? decorAdjust(c, 'velas') : ''}
     </section>
 
     <section class="cz-sec">
@@ -989,11 +1371,20 @@ function stepDecoracao(c, ui) {
         ${bico
           ? html`<div class="cz-sub">
               <span class="cz-sub__label">Letra</span>
-              ${segmented('script', c.decor.script, SCRIPTS, 'Letra da mensagem')}
+              <div class="cz-chips" role="radiogroup" aria-label="Letra da mensagem">${SCRIPTS.map((x) => chip('script', x.id, c.decor.script === x.id, x.name))}</div>
+              ${DOODLES.filter(isActive).length > 1
+                ? html`<span class="cz-sub__label">Desenho ao lado</span>
+                    <div class="cz-chips cz-chips--scroll" role="radiogroup" aria-label="Desenho de bentô">${DOODLES.filter(isActive).map((x) => chip('doodle', x.id || 'nenhum', c.decor.doodle === x.id, x.name))}</div>`
+                : ''}
               <span class="cz-sub__label">Cor da escrita</span>
               ${colorPicker('messageColor', c.decor.messageColor, COLORS, 'Cor da escrita')}
             </div>`
-          : ''}
+          : PLAQUE_SHAPES.filter(isActive).length > 1
+            ? html`<div class="cz-sub" data-k="plaque:shape">
+                <span class="cz-sub__label">Formato da plaquinha</span>
+                <div class="cz-chips" role="radiogroup" aria-label="Formato da plaquinha">${PLAQUE_SHAPES.filter(isActive).map((x) => chip('plaque', x.id, c.decor.plaque === x.id, x.name))}</div>
+              </div>`
+            : ''}
         <div class="cz-ideas" aria-label="Sugestões de mensagem">
           ${MESSAGE_IDEAS.map((m) => html`<button type="button" data-act="idea" data-value="${m}">${m}</button>`)}
           <button type="button" class="cz-ideas__clear" data-act="idea" data-value="" data-clear-message ${c.decor.message ? '' : raw('hidden')}>Sem mensagem</button>
@@ -1008,10 +1399,22 @@ function stepDecoracao(c, ui) {
           <span class="cz-field__price">+ ${money(TOPPER_PRICE)}</span>
         </div>
         <input class="input" id="cz-topper" type="text" maxlength="${TOPPER_MAX}" placeholder="Ex.: Ana 30" value="${c.decor.topper.text}" data-field="topper" autocomplete="off" enterkeyhint="done" />
-        <div class="cz-field__foot"><span>Nome ou idade recortado em acrílico, no palito.</span><span data-count="topper">${c.decor.topper.text.length}/${TOPPER_MAX}</span></div>
-        <div class="cz-chips" role="radiogroup" aria-label="Cor do topo personalizado">
-          ${TOPPER_COLORS.map((t) => chip('topperColor', t.hex, c.decor.topper.color === t.hex, t.name, { swatch: t.hex }))}
+        <div class="cz-field__foot"><span>Nome ou idade recortado, no palito.</span><span data-count="topper">${c.decor.topper.text.length}/${TOPPER_MAX}</span></div>
+        ${TOPPER_STYLES.filter(isActive).length > 1
+          ? html`<span class="cz-sub__label">Estilo</span>
+              <div class="cz-chips cz-chips--scroll" role="radiogroup" aria-label="Estilo do topo personalizado">
+                ${TOPPER_STYLES.filter(isActive).map((t) => chip('topperStyle', t.id, c.decor.topper.style === t.id, t.name))}
+              </div>`
+          : ''}
+        <span class="cz-sub__label">Material e cor</span>
+        <div class="cz-chips" role="radiogroup" aria-label="Material do topo personalizado">
+          ${TOPPER_FINISHES.map((t) => chip('topperFinish', t.id, c.decor.topper.finish === t.id, t.name))}
         </div>
+        ${c.decor.topper.finish === 'madeira'
+          ? ''
+          : html`<div class="cz-chips" role="radiogroup" aria-label="Cor do topo personalizado" data-k="topper:colors">
+              ${TOPPER_COLORS.map((t) => chip('topperColor', t.hex, c.decor.topper.color === t.hex, t.name, { swatch: t.hex }))}
+            </div>`}
       </div>
     </section>
   `;
@@ -1069,6 +1472,11 @@ function stepResumo(real, ui) {
       <div class="cz-offer__name" data-cz-namebox>${nameBox(c, ui.renaming)}</div>
       <div class="cz-offer__price"><strong data-cz-price>${money(total)}</strong></div>
       <p class="cz-offer__pay" data-cz-pay>${payLine(total)}</p>
+      <button type="button" class="at-revealbtn" data-act="reveal-cake" data-k="reveal:cake">
+        <span class="at-revealbtn__icon">${ICON.atelier}</span>
+        <span class="at-revealbtn__text"><strong>Revelar meu bolo</strong><small>${c.decor.items.includes('velas') ? 'Luz baixa, velas acesas e você sopra' : 'Luz baixa, uma volta e confete'}</small></span>
+        ${icon('chevron-right')}
+      </button>
       <p class="cz-offer__ship">${icon('calendar')}<span>Rende ${servesText(c)} · receba a partir de <strong>${firstDate(c)}</strong></span></p>
       <p class="cz-offer__sub">Confira e peça: a gente começa a fazer assim que você fechar o pedido.</p>
       ${billPreview(bill).length ? html`<div class="cz-note cz-note--warn cz-note--list" role="status" data-k="resumo:bill">${billPreview(bill).map((t) => html`<p>${t}</p>`)}</div>` : ''}
@@ -1084,15 +1492,37 @@ function stepResumo(real, ui) {
       )}
     </div>
 
+    ${ui.revealOffer && !c.reveal?.on
+      ? html`<div class="cz-rules cz-rules--sum" data-k="resumo:cha">
+          <div class="cz-rule cz-rule--dica" role="note">
+            <span class="cz-rule__icon">${icon('info')}</span>
+            <p><strong>Chá revelação desligado:</strong> este bolo vai com o recheio sem cor. Para a surpresa no corte, escolha a cor em segredo.</p>
+            <button type="button" class="cz-linkbtn cz-rule__fix" data-act="reveal-color">Escolher a cor em segredo</button>
+          </div>
+        </div>`
+      : ''}
+
+    ${rulesOf(c).some((r) => r.level === 'alerta')
+      ? html`<div class="cz-rules cz-rules--sum" data-k="resumo:regras">
+          <h3>Antes de pedir, o que a confeiteira avisa</h3>
+          ${rulesOf(c)
+            .filter((r) => r.level === 'alerta')
+            .map((r) => html`<div class="cz-rule cz-rule--alerta" role="note" data-k="rule:${r.code}"><span class="cz-rule__icon">${icon('alert')}</span><p>${r.text}</p></div>`)}
+        </div>`
+      : ''}
+
     <div class="cz-after">
       <button type="button" class="cz-linkbtn cz-linkbtn--solid" data-act="breakdown">${icon('receipt')} Ver detalhes do preço</button>
-      <div class="cz-quiet" role="group" aria-label="Guardar ou mostrar este bolo">
+      <button type="button" class="cz-linkbtn" data-act="ficha">${icon('utensils')} Como será feito</button>
+      <div class="cz-quiet" role="group" aria-label="Lembranças deste bolo">
         <button type="button" class="cz-quiet__btn" data-act="save" aria-pressed="${ui.savedId ? 'true' : 'false'}" data-k="save:toggle" aria-label="${ui.savedId ? 'Tirar dos favoritos' : 'Salvar nos favoritos'}" title="${ui.savedId ? 'Salvo nos favoritos' : 'Salvar nos favoritos'}">${icon('heart')}<span>${ui.savedId ? 'Salvo' : 'Salvar'}</span></button>
-        <button type="button" class="cz-quiet__btn" data-act="share" aria-label="Enviar a foto do bolo" title="Enviar a foto do bolo">${icon('share')}<span>Enviar</span></button>
+        <button type="button" class="cz-quiet__btn" data-act="share" aria-label="Cartão do bolo: a foto com o nome, para enviar ou guardar" title="Cartão do bolo">${ICON.card}<span>Cartão</span></button>
         <button type="button" class="cz-quiet__btn" data-act="download" aria-label="Baixar a foto do bolo" title="Baixar a foto do bolo">${icon('download')}<span>Baixar</span></button>
+        <button type="button" class="cz-quiet__btn" data-act="video" aria-label="Gravar um vídeo do bolo" title="Vídeo do bolo" data-k="video:btn" ${ui.canVideo ? '' : raw('hidden')}>${ICON.film}<span>Vídeo</span></button>
+        <button type="button" class="cz-quiet__btn" data-act="link" aria-label="Copiar o link deste bolo" title="Copiar o link deste bolo">${icon('copy')}<span>Link</span></button>
       </div>
     </div>
-    <p class="cz-trust">${icon('shield-check')}<span>Garantia BOLAB: se o seu bolo não chegar perfeito, a gente refaz ou devolve o dinheiro. O dia e o horário da entrega você escolhe ao fechar o pedido.</span></p>
+    <p class="cz-trust">${icon('shield-check')}<span>Feito sob encomenda, do jeito que você montou. O dia e o horário da entrega você escolhe ao fechar o pedido, e a BOLAB confirma tudo com você antes de produzir.</span></p>
   `;
 }
 
@@ -1101,7 +1531,7 @@ function renderStep(i, c, ui) {
   if (id === 'resumo') return stepResumo(c, ui);
   if (id === 'formato') return html`${stepHead(i)}${stepFormato(c, ui)}`;
   const body = id === 'massa' ? stepMassa(c, ui) : id === 'recheio' ? stepRecheio(c, ui) : id === 'cobertura' ? stepCobertura(c, ui) : id === 'acabamento' ? stepAcabamento(c) : stepDecoracao(c, ui);
-  return html`${stepHead(i)}${tipBox(id, c, ui.tipOpen)}${body}`;
+  return html`${stepHead(i)}${tipBox(id, c, ui.tipOpen)}${rulesBox(id, c)}${body}`;
 }
 
 function stepChips(current, c, visited) {
@@ -1119,6 +1549,30 @@ function stepChips(current, c, visited) {
       <span class="cz-step__n">${done ? icon('check') : i + 1}</span>${s.label}
     </button>`;
   });
+}
+
+/**
+ * r5-tela — A ponte entre o motor 3D e a tela. O motor guarda as funções que recebe (enquadramento, "a pessoa
+ * mexeu", "desenhei um quadro"…) e, depois de encerrado, continua preso a um registro de js/customizer/kit.js
+ * (onDecorReady: o motor não cancela a inscrição). Se essas funções fossem as da própria tela, cada visita ao
+ * personalizador deixaria a tela inteira na memória. Por isso o motor recebe só estes repasses, criados aqui fora:
+ * ao sair, cut() esvazia o destino e a tela fica livre.
+ */
+function linkScene() {
+  const to = {};
+  return {
+    to,
+    options: {
+      insets: () => to.insets?.() || {},
+      onInteract: () => to.onInteract?.(),
+      onFrame: () => to.onFrame?.(),
+      onContextLost: () => to.onContextLost?.(),
+      onContextRestored: () => to.onContextRestored?.(),
+    },
+    cut() {
+      for (const key of Object.keys(to)) delete to[key];
+    },
+  };
 }
 
 /* ───────── Tela ───────── */
@@ -1145,8 +1599,19 @@ export default {
             </button>
           </header>
 
+          <div class="at-hud" data-at-hud>
+            <span class="at-hud__sound" data-at-sound></span>
+            <button type="button" class="at-mode" data-act="mode" data-at-mode>
+              <span class="at-mode__icon" data-at-mode-icon>${ICON.bolt}</span><span class="at-mode__text"><span class="at-mode__pre">Modo </span><span data-at-mode-text>rápido</span></span>
+            </button>
+            <button type="button" class="at-mode at-mode--game" data-act="game" data-at-game hidden>
+              <span class="at-mode__icon">${ICON.ticket}</span><span class="at-mode__text"><span class="at-mode__pre">Encomendas</span><span class="at-mode__short">jogo</span></span>
+            </button>
+          </div>
+
           <canvas class="cz-canvas" data-cz-canvas tabindex="0" role="img" aria-label="Visualização 3D do seu bolo. Arraste para girar; use as setas do teclado para girar e os botões ao lado para ver por dentro."></canvas>
-          <div class="cz-loading" data-cz-loading><img src="assets/logo-mark.webp" alt="" width="44" height="68" /><span>Preparando o seu bolo…</span></div>
+          <div class="at-fx" data-at-fx></div>
+          <div class="cz-loading" data-cz-loading><img src="assets/logo-mark.webp" alt="" width="44" height="68" /><span data-cz-loadtext>Preparando o seu bolo…</span></div>
           <div class="cz-fallback" data-cz-fallback hidden>
             <canvas width="520" height="520" aria-hidden="true"></canvas>
             <p>Seu aparelho não conseguiu abrir a visualização 3D, então mostramos um desenho. Pode montar à vontade: o bolo sai do forno exatamente como você escolher.</p>
@@ -1161,11 +1626,14 @@ export default {
           <div class="cz-bgbar cz-viewbar" id="cz-viewbar" data-cz-viewbar role="group" aria-label="Vistas e medidas" hidden></div>
           <div class="cz-tools" data-cz-tools>
             <button type="button" class="cz-tool cz-tool--bg" data-act="bgmenu" aria-expanded="false" aria-controls="cz-bgbar" aria-label="Fundo do palco" title="Fundo do palco">${ICON.backdrop}<span>Fundo</span></button>
+            <button type="button" class="cz-tool cz-tool--label cz-tool--reveal" data-act="reveal" aria-pressed="false" aria-label="Revelar a cor" title="Revelar a cor" hidden>${icon('gift')}<span>Revelar</span></button>
             <button type="button" class="cz-tool cz-tool--label" data-act="cutaway" aria-pressed="false" aria-label="Ver por dentro" title="Ver por dentro">${ICON.slice}<span>Ver por dentro</span></button>
             <button type="button" class="cz-tool cz-tool--icon" data-act="rotate" aria-pressed="false" aria-label="Giro automático" title="Giro automático">${ICON.spin}</button>
             <button type="button" class="cz-tool cz-tool--view" data-act="viewmenu" aria-expanded="false" aria-controls="cz-viewbar" aria-label="Vistas e medidas" title="Vistas e medidas">${icon('eye')}</button>
           </div>
         </section>
+
+        <div class="at-layer" data-at-layer><i class="at-keepout" data-bo-avoid aria-hidden="true"></i></div>
 
         <section class="cz-panel" aria-label="Opções do bolo">
           <nav class="cz-steps" data-cz-steps aria-label="Etapas"></nav>
@@ -1198,6 +1666,10 @@ export default {
       lost: $('[data-cz-lost]'),
       loading: $('[data-cz-loading]'),
       live: $('[data-cz-live]'),
+      stage: $('.cz-stage'),
+      hud: $('[data-at-hud]'),
+      layer: $('[data-at-layer]'),
+      fx: $('[data-at-fx]'),
     };
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const desktop = window.matchMedia('(min-width: 900px)');
@@ -1212,18 +1684,65 @@ export default {
     };
     let alive = true;
 
+    /* ── r5-tela: modo Ateliê (cena, som, a Bô, gestos) × modo rápido (só o que é preciso para comprar) ──
+       A escolha fica guardada. O módulo do ateliê (js/atelier/ui/) só é buscado depois do primeiro quadro do bolo. */
+    let mode = prefs.get('atelierMode') === 'rapido' ? 'rapido' : 'atelie';
+    let atelier = null;
+    const frameSubs = new Set(); // quem quer ser avisado a cada quadro desenhado (gravação de vídeo, giro do prato)
+    // r5-qa: a tela só se diz pronta (some o aviso "Untando a fôrma…", a tela 3D aparece, o ateliê é buscado) quando
+    // o bolo está DE FATO desenhado. Antes, "is-ready" entrava logo depois de cake.setConfig(): em celular fraco o
+    // primeiro quadro leva segundos (compilar materiais) e o palco ficava vazio, sem aviso, nesse meio-tempo.
+    let firstFrame = null; // chamada uma vez, no primeiro quadro desenhado depois de o bolo entrar na cena
+    let stageShown = false;
+    let tellShown = null;
+    const sceneShown = new Promise((resolve) => (tellShown = resolve));
+    function stageReady() {
+      if (stageShown) return;
+      stageShown = true;
+      firstFrame = null;
+      el.cz.classList.add('is-ready');
+      tellShown();
+    }
+    el.cz.dataset.mode = mode;
+
     /* ── estado ── */
     let config = defaultConfig();
     let step = 0;
     let editLineId = null; // editando um bolo que já está no carrinho (?linha=<id>)
     const visited = new Set([0]);
     const ui = { flavorMode: 'all', fillMode: 'all', layer: 0, gap: 0, moreDrip: false, colorChosen: false, tipOpen: false, renaming: false, editing: false, celebrated: false, savedId: null, savedKey: '', occasion: '', structOpen: null, tierMode: 'all', tier: 0, decorGroup: 'frutas', decorOpen: null, scriptFits: true, decorAdapted: false };
+    // listas grandes: aba e busca de cada uma, e as últimas opções que a pessoa usou (guardadas no aparelho)
+    ui.tabs = {};
+    ui.search = {};
+    ui.searchOpen = {};
+    ui.recent = (() => {
+      const saved = prefs.get('customizerRecent');
+      return saved && typeof saved === 'object' ? saved : {};
+    })();
+    // chá revelação: a cor só aparece no 3D depois de "Revelar"; revealSet = a pessoa já escolheu a cor neste bolo
+    ui.revealed = false;
+    ui.revealSet = false;
+    ui.keep = null; // o bolo de antes de virar vulcão (camadas, recheios, cobertura), para voltar igual
+    // r5-tela: decoração por arranjo pronto ou peça por peça, com o dedo; a peça "na mão"; vídeo disponível?
+    ui.decorHow = 'arranjo';
+    ui.armed = null;
+    ui.canVideo = false;
+    ui.sceneLive = false; // a cena do ateliê (cozinha, animações) está carregada?
+    ui.sideIds = null; // peças que também grudam na lateral (Set), quando a cena sabe dizer onde o dedo tocou
+    ui.gameOn = false;
+    function remember(key, id) {
+      const list = [id, ...(ui.recent[key] || []).filter((x) => x !== id)].slice(0, 4);
+      ui.recent = { ...ui.recent, [key]: list };
+      prefs.set('customizerRecent', ui.recent);
+    }
     let cake = null;
+    const sceneLink = linkScene(); // o que o motor chama de volta (cortado ao sair da tela)
     let cutaway = false;
     let autoCut = true; // enquanto a pessoa não mexer no botão, o corte abre sozinho nas etapas de massa e recheio
     let rotating = !reduceMotion && prefs.get('customizerRotate', true) !== false;
     let shownPrice = null;
     let priceAnim = 0;
+    const said = { at: -1e9, text: '' }; // o último anúncio do ateliê ao leitor de tela
 
     const configKey = () => JSON.stringify({ ...config, backdrop: undefined }); // o fundo do palco não faz dele outro bolo
     const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -1241,6 +1760,8 @@ export default {
       if (!config.decor.items.includes(ui.decorOpen)) ui.decorOpen = null;
       ui.scriptFits = scriptRoom(config).ok;
       ui.decorAdapted = notesOf(billOf(config).config).adapted; // não avisa de novo ao abrir um bolo que já vinha reorganizado
+      ui.revealed = false;
+      if (!config.reveal?.on) ui.revealSet = false;
     }
 
     /** A cobertura que os controles estão editando: a do andar escolhido ou a do bolo inteiro. */
@@ -1261,6 +1782,16 @@ export default {
     function loadInitial(query) {
       editLineId = null;
       ui.editing = false;
+      if (query.c) {
+        // link de um bolo (js/customizer/share.js): abre exatamente aquele bolo, já no resumo
+        const linked = decodeConfig(query.c);
+        if (linked) {
+          config = linked;
+          step = STEP_INDEX.resumo;
+          return 'link';
+        }
+        toast('Esse link de bolo não abriu. Que tal montar um novo?');
+      }
       if (query.linha) {
         const line = cart.line(query.linha);
         if (line?.kind === 'custom' && line.config) {
@@ -1305,8 +1836,49 @@ export default {
     if (prefs.get('customizerThumbs')) prefs.set('customizerThumbs', null);
 
     const origin = loadInitial(ctx.query || {});
-    config = normalizeConfig(config);
+    // um bolo guardado antes das regras de confeiteiro pode ter uma combinação que não se faz: abre já corrigido
+    const opened = enforceRules(config);
+    config = opened.config;
     syncModes();
+    ui.revealSet = Boolean(config.reveal?.on); // um bolo que já chega com chá revelação já tem a cor escolhida
+    if (opened.fixed.length) setTimeout(() => alive && toast(opened.fixed.map((r) => r.text).join(' '), { duration: 7000 }), 600);
+
+    /* ── avisos ao ateliê (js/atelier/bus.js): som, assistente e efeitos só ouvem ──
+       Nada disto roda dentro do toque: as mudanças são comparadas e avisadas no quadro seguinte (flush), junto
+       com o preço. A cor do chá revelação nunca sai daqui: quem ouve recebe 'segredo'. */
+    const SOURCES = { line: 'edicao', saved: 'salvo', base: 'produto', draft: 'rascunho', link: 'link', new: 'novo' };
+    const publicConfig = (c) => (c.reveal ? { ...c, reveal: { ...c.reveal, color: 'segredo' } } : c);
+    const told = { config: clone(config), price: null, dropped: '' };
+    let changeBy = 'user'; // quem causou a próxima mudança: 'user' | 'preset' | 'surprise' | 'palette' | 'undo' | 'redo' | 'restart' | 'auto' | 'bo'
+    let sceneBy = 'user'; // o mesmo, para a cena escolher entre a animação de preparo e a transição curta
+    let changeNote = null; // mudança "geral" avisada antes das diferenças: { key: 'preset', value: 'festa' }
+    /** Marca a origem da próxima mudança (inspiração, surpresa, paleta, desfazer…). Vale até o próximo aviso. */
+    function mark(by, value = null) {
+      changeBy = by;
+      changeNote = by === 'auto' || by === 'user' || by === 'bo' ? null : { key: by, value };
+    }
+    function tellChanges() {
+      const by = changeBy;
+      sceneBy = by;
+      const note = changeNote;
+      changeBy = 'user';
+      changeNote = null;
+      const diffs = diffConfig(told.config, config);
+      if (!diffs.length && !note) return;
+      const bill = billOf(config);
+      const price = priceOf(bill.config);
+      const detail = { config: publicConfig(config), price, prevPrice: told.price ?? price, by };
+      if (note) bus.emit('change', { key: note.key, value: note.value, prev: null, ...detail });
+      diffs.forEach((d) => bus.emit('change', d.key === 'reveal.color' ? { key: d.key, value: 'segredo', prev: 'segredo', ...detail } : { ...d, ...detail }));
+      told.config = clone(config);
+      told.price = price;
+      // o distribuidor reorganizou as decorações, ou alguma não coube (e não é cobrada)
+      const adapted = notesOf(bill.config).adapted;
+      const dropped = bill.removed.join();
+      if ((adapted || dropped) && dropped !== told.dropped) bus.emit('fit', { adapted, dropped: bill.removed.slice(), config: publicConfig(config) });
+      told.dropped = dropped;
+    }
+    const tellTool = (id, value = null) => bus.emit('tool', { id, value });
 
     /* ── desfazer / refazer ── */
     const hist = { past: [], future: [], cur: JSON.stringify(config), merge: '', at: 0, lock: false };
@@ -1336,6 +1908,7 @@ export default {
       if (!from.length) return;
       to.push(hist.cur);
       config = normalizeConfig(JSON.parse(from.pop()));
+      mark(to === hist.future ? 'undo' : 'redo');
       hist.lock = true;
       hist.merge = '';
       // a pessoa continua no mesmo andar / camada que estava editando (quando ele ainda existe)
@@ -1363,13 +1936,32 @@ export default {
 
     /* ── 3D ── */
     /** Espaço que os botões flutuantes ocupam no palco e quanto do resto o bolo pode preencher. */
-    const stageInsets = () => (desktop.matches ? { top: 4, bottom: 84, fill: 0.78 } : { top: 14, bottom: 58, fill: 0.9 });
+    const stageInsets = () => {
+      if (desktop.matches) return { top: 4, bottom: 84, fill: 0.78 };
+      if (mode !== 'atelie') return { top: 14, bottom: 58, fill: 0.9 };
+      // na revelação os botões e a Bô saem de cena: o bolo toma o palco
+      if (el.cz.classList.contains('is-revealing')) return { top: 12, bottom: 36, fill: 0.88 };
+      // Celular, modo Ateliê: a faixa de baixo do palco é da Bô e do balão dela, e as laterais são das colunas
+      // de botões — o bolo nunca fica atrás de nada. O motor tem um "fill" só (altura e largura); para limitar a
+      // largura sem encolher o bolo na altura, a margem de cima/baixo é recalculada (pode ficar negativa).
+      const h = el.canvas.clientHeight || 300;
+      const w = el.canvas.clientWidth || 360;
+      const top = (ui.gameOn ? 54 : 8) / h; // com uma encomenda do jogo, a comanda ocupa o alto do palco
+      const bottom = 84 / h;
+      const fx = Math.max(0.5, 1 - 124 / w); // 62 px livres de cada lado
+      const sum = 1 - ((1 - top - bottom) * 0.94) / fx;
+      return { top: ((sum - (bottom - top)) / 2) * h, bottom: ((sum + (bottom - top)) / 2) * h, fill: fx };
+    };
 
     /**
      * O bolo que aparece na tela (3D ou desenho 2D): o cobrável — sem o que não coube, com a quantidade que ficou.
      * Assim o que a pessoa vê é sempre o que está sendo somado e o que será feito.
      */
-    const shownCake = () => billOf(config).config;
+    const shownCake = () => {
+      const cake3d = billOf(config).config;
+      // chá revelação: enquanto ninguém tocar em "Revelar", o bolo aparece sem a cor (nem no corte)
+      return cake3d.reveal.on && !ui.revealed ? { ...cake3d, reveal: { ...cake3d.reveal, on: false } } : cake3d;
+    };
 
     function makeThumb(size = 360) {
       try {
@@ -1383,7 +1975,8 @@ export default {
 
     function useFallback() {
       cake = null;
-      el.cz.classList.add('is-flat', 'is-ready');
+      el.cz.classList.add('is-flat');
+      stageReady(); // r5-qa: o desenho 2D aparece na hora
       el.canvas.hidden = true;
       el.tools.hidden = true;
       el.hint.hidden = true;
@@ -1398,14 +1991,20 @@ export default {
     }
 
     function sceneUpdate() {
-      if (cake) cake.setConfig(shownCake());
+      // `by` diz à cena (quando ela souber: scene.atelier) se cabe a animação de preparo ou só uma transição curta
+      // (um bolo trocado pelo jogo entra como uma inspiração: transição curta, não a montagem inteira)
+      if (cake) cake.setConfig(shownCake(), { by: sceneBy === 'game' ? 'preset' : sceneBy });
       else drawCake2D(el.fallback.querySelector('canvas'), shownCake(), { background: false });
+      sceneBy = 'user';
     }
     const sceneUpdateSoon = debounce(() => alive && sceneUpdate(), 130); // digitando: a plaquinha é refeita no máximo a cada ~130 ms
 
     function setCutaway(on, manual) {
       cutaway = on;
-      if (manual) autoCut = false;
+      if (manual) {
+        autoCut = false;
+        tellTool('cutaway', on);
+      }
       cake?.setCutaway(on);
       const btn = el.tools.querySelector('[data-act="cutaway"]');
       const label = on ? 'Fechar o bolo' : 'Ver por dentro';
@@ -1419,7 +2018,10 @@ export default {
       rotating = on && !reduceMotion;
       cake?.setAutoRotate(rotating && !measuring);
       el.tools.querySelector('[data-act="rotate"]').setAttribute('aria-pressed', String(rotating));
-      if (remember) prefs.set('customizerRotate', rotating);
+      if (remember) {
+        prefs.set('customizerRotate', rotating);
+        tellTool('rotate', rotating);
+      }
     }
 
     /* ── fundo do palco: automático (pelas cores do bolo) ou escolhido no botão "Fundo" ── */
@@ -1462,8 +2064,17 @@ export default {
             (b) => html`<button type="button" class="cz-bgsw ${cur === b.id ? 'is-on' : ''}" role="radio" aria-checked="${cur === b.id ? 'true' : 'false'}" data-act="backdrop" data-value="${b.id}" aria-label="${b.name}" title="${b.name}" style="--sw:${b.c[1]};--sw2:${b.c[3]}"></button>`,
           )}
         </div>
+        ${ui.sceneLive && mode === 'atelie'
+          ? html`<p class="cz-bgbar__name at-scenes__name"><span>Cenário</span><strong>${SCENE_NAMES[sceneChoice()] || SCENE_NAMES.auto}</strong></p>
+              <div class="at-scenes" role="group" aria-label="Cenário em volta do bolo">
+                ${Object.entries(SCENE_NAMES).map(([id, name]) => html`<button type="button" class="cz-chip ${sceneChoice() === id ? 'is-on' : ''}" aria-pressed="${sceneChoice() === id ? 'true' : 'false'}" data-act="scene" data-value="${id}">${name}</button>`)}
+              </div>`
+          : ''}
       `);
     }
+    // r5-tela: o cenário em volta do bolo (a cozinha da frente Cena). "Automático" = bancada nas etapas, vitrine no resumo.
+    const SCENE_NAMES = { auto: 'Automático', bancada: 'Bancada', vitrine: 'Vitrine', festa: 'Festa' };
+    const sceneChoice = () => (Object.hasOwn(SCENE_NAMES, prefs.get('atelierScene')) ? prefs.get('atelierScene') : 'auto');
 
     function setBgBar(open) {
       bgOpen = Boolean(open);
@@ -1493,18 +2104,34 @@ export default {
     }
     root.addEventListener('error', (ev) => ev.target instanceof HTMLImageElement && ev.target.closest('[data-thumb]') && presetFallback(ev.target), true);
 
-    function startScene() {
+    async function startScene() {
+      let createCakeScene = null;
       try {
-        cake = createCakeScene(el.canvas, {
+        ({ createCakeScene } = await engineLoad);
+      } catch (err) {
+        console.warn('[personalizador] o motor 3D não chegou, usando desenho 2D:', err?.message || err);
+      }
+      if (!alive) return;
+      if (!createCakeScene) return void useFallback();
+      try {
+        Object.assign(sceneLink.to, {
           insets: stageInsets,
-          onInteract: hideHint,
-          onFrame: () => measuring && drawMeasure(),
+          onInteract: () => {
+            hideHint();
+            atelier?.interact();
+          },
+          onFrame: () => {
+            if (firstFrame) firstFrame(); // r5-qa
+            if (measuring) drawMeasure();
+            frameSubs.forEach((fn) => fn());
+          },
           onContextLost: () => (el.lost.hidden = false),
           onContextRestored: () => {
             el.lost.hidden = true;
             cake?.setConfig(shownCake(), { instant: true });
           },
         });
+        cake = createCakeScene(el.canvas, sceneLink.options);
       } catch (err) {
         console.warn('[personalizador] 3D indisponível, usando desenho 2D:', err?.message || err);
         useFallback();
@@ -1525,13 +2152,23 @@ export default {
           cake?.dispose();
           useFallback();
         }
-        el.cz.classList.add('is-ready');
-        if (cake && !prefs.get('customizerHintSeen')) {
-          later(() => el.hint.classList.add('is-on'), 900);
-          later(hideHint, 7000);
+        // r5-qa: "pronto" = o primeiro quadro com o bolo já foi desenhado (o motor avisa por onFrame). Com um diálogo
+        // por cima ou a aba escondida o motor não desenha: aí vale já. E um limite de segurança: o aviso nunca fica preso.
+        if (!cake || document.hidden || document.querySelector('.overlay')) stageReady();
+        else {
+          firstFrame = stageReady;
+          later(stageReady, 6000);
         }
-        // com tudo parado, adianta o que a pessoa ainda pode escolher (o primeiro toque em cada opção não engasga)
-        later(() => alive && cake?.warmUp(), 900);
+        sceneShown.then(() => {
+          if (!alive) return;
+          // a dica de girar: no modo Ateliê ela faz parte das três dicas da primeira visita (js/atelier/ui/)
+          if (cake && !prefs.get('customizerHintSeen') && mode !== 'atelie') {
+            later(() => el.hint.classList.add('is-on'), 900);
+            later(hideHint, 7000);
+          }
+          // com tudo parado, adianta o que a pessoa ainda pode escolher (o primeiro toque em cada opção não engasga)
+          later(() => alive && cake?.warmUp(), 900);
+        });
       });
       // a plaquinha usa a fonte da marca: se ela chegar depois, refaz o texto
       document.fonts?.load?.('700 40px "Plus Jakarta Sans"').then(() => alive && cake?.refreshText()).catch(() => {});
@@ -1592,7 +2229,8 @@ export default {
       const markup = `<svg aria-hidden="true"><path class="cz-measure__halo" d="${path}"/><path d="${path}"/></svg>${tags}`;
       if (markup === measureMarkup) return;
       measureMarkup = markup;
-      el.measure.innerHTML = `${markup}<p class="cz-measure__info">${String(icon('users'))}<span>Rende ${servesText(config)}</span></p>`;
+      // o desenho das medidas é só números; o texto ("rende…") entra escapado
+      el.measure.innerHTML = markup + String(html`<p class="cz-measure__info">${icon('users')}<span>Rende ${servesText(config)}</span></p>`);
     }
     /* ── vistas rápidas (padrão, de frente, de cima) e medidas: uma barra que abre no botão "Vistas" ── */
     let viewOpen = false;
@@ -1640,6 +2278,7 @@ export default {
         cake?.setView(viewFor(step));
       }
       setViewBar(viewOpen);
+      tellTool('measure', measuring);
     }
     const onResize = () => measuring && later(() => alive && measuring && (placeMeasure(), (measureMarkup = ''), drawMeasure()), 200);
     window.addEventListener('resize', onResize);
@@ -1739,7 +2378,8 @@ export default {
         if (k < 1) priceAnim = requestAnimationFrame(tick);
       };
       priceAnim = requestAnimationFrame(tick);
-      el.live.textContent = `Total: ${money(target)}`;
+      // o que acabou de ser anunciado (ex.: "peça colocada") não é atropelado pelo total: os dois vão juntos
+      el.live.textContent = performance.now() - said.at < 700 ? `${said.text} Total: ${money(target)}` : `Total: ${money(target)}`;
     }
 
     /* Depois de qualquer escolha: o toque só valida e agenda. No quadro seguinte o painel e o preço são
@@ -1755,6 +2395,7 @@ export default {
       pending = null;
       if (!alive || !p) return;
       updatePrice();
+      tellChanges();
       renderMeta();
       syncBackdrop();
       if (p.body) {
@@ -1783,9 +2424,39 @@ export default {
       sceneUpdate();
     }
 
+    /** O botão "Revelar" só existe para o bolo de chá revelação. */
+    function syncReveal() {
+      const btn = el.tools.querySelector('[data-act="reveal"]');
+      const on = Boolean(config.reveal?.on) && Boolean(cake);
+      if (!on) ui.revealed = false;
+      btn.hidden = !on;
+      el.tools.classList.toggle('has-reveal', on); // no celular, com "Revelar" à vista, "Ver por dentro" fica só com o ícone
+      btn.setAttribute('aria-pressed', String(ui.revealed));
+      const label = ui.revealed ? 'Esconder a cor' : 'Revelar a cor';
+      btn.setAttribute('aria-label', label);
+      btn.title = label;
+      btn.querySelector('span').textContent = ui.revealed ? 'Esconder' : 'Revelar';
+    }
+
     function commit({ rerender = true, scene = 'now', merge = '' } = {}) {
       const wantScript = config.decor?.messageMode === 'bico';
       config = normalizeConfig(config);
+      // regras de confeiteiro: o que não se faz de verdade é corrigido aqui, com a explicação num aviso
+      const ruled = enforceRules(config, JSON.parse(hist.cur));
+      if (ruled.fixed.length) {
+        config = ruled.config;
+        syncModes();
+        rerender = true;
+        scene = 'now';
+        toast(ruled.fixed.map((r) => r.text).join(' '), { duration: 7000 });
+        el.live.textContent = ruled.fixed.map((r) => r.text).join(' ');
+        // a Bô explica a correção com a fala da regra (ela ouve o evento opcional 'rule')
+        // r5-qa: o aviso sai DEPOIS das mudanças desta escolha (que vão ao barramento no quadro seguinte). Saindo antes,
+        // a rajada de mudanças que a própria correção causa atropelava a fala e a Bô ficava calada sobre a correção.
+        const fixedNow = ruled.fixed.map((r) => ({ code: r.code, step: r.step, text: r.text }));
+        later(() => alive && bus.emit('rule', { fixed: fixedNow }), 160);
+      }
+      syncReveal();
       // a escrita no topo deixou de caber (bolo de 3 andares, topo pequeno para o texto): a mensagem vai na plaquinha
       const bumped = wantScript && config.decor.messageMode !== 'bico';
       const fits = scriptRoom(config).ok;
@@ -1818,7 +2489,8 @@ export default {
       if (!cake) return;
       cake.playIntro();
       cake.spin();
-      if (!ui.celebrated && !editLineId) {
+      // no modo Ateliê a festa (luz, velas, confete) fica para o botão "Revelar meu bolo"
+      if (!ui.celebrated && !editLineId && mode !== 'atelie') {
         ui.celebrated = true;
         later(() => alive && STEPS[step]?.id === 'resumo' && confetti({ count: cake.tier === 'mobile' ? 44 : 80 }), 500);
       }
@@ -1827,6 +2499,11 @@ export default {
     function goto(i, { focus = true } = {}) {
       const next = Math.max(0, Math.min(STEPS.length - 1, i));
       if (next === step) return;
+      const prevStep = STEPS[step]?.id || null;
+      // a bancada "anda": o painel entra pelo lado para onde a pessoa foi (só visual; css/atelier.css)
+      el.cz.dataset.dir = next > step ? 'fwd' : 'back';
+      if (mode === 'atelie' && !reduceMotion && step >= 0) el.canvas.animate?.([{ transform: `translateX(${next > step ? 16 : -16}px)` }, { transform: 'none' }], { duration: 420, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
+      if (ui.armed) disarm();
       step = next;
       visited.add(step);
       ui.tipOpen = false;
@@ -1849,6 +2526,8 @@ export default {
         if (want !== cutaway) setCutaway(want, false);
       }
       saveDraft();
+      bus.emit('step', { id, index: step, prev: prevStep, config: publicConfig(config) });
+      atelier?.step(id, prevStep);
     }
 
     /**
@@ -1856,10 +2535,13 @@ export default {
      * que devolve o bolo anterior.
      */
     function replaceConfig(next, { keepSize = false, message = '', undo = false } = {}) {
-      const before = undo ? { config: clone(config), savedId: ui.savedId, savedKey: ui.savedKey } : null;
+      const before = undo ? { config: clone(config), savedId: ui.savedId, savedKey: ui.savedKey, revealSet: ui.revealSet, revealOffer: ui.revealOffer } : null;
+      ui.revealOffer = false; // r5-qa: o aviso "chá revelação desligado" só vale para o bolo da inspiração que o ofereceu
       const size = config.size;
       const stage = config.backdrop;
       config = normalizeConfig(next);
+      ui.keep = null;
+      ui.revealSet = Boolean(config.reveal?.on); // um bolo que chega pronto com chá revelação já traz a cor
       if (keepSize) config.size = size;
       if (!getBackdrop(next?.backdrop)) config.backdrop = stage; // inspiração ou surpresa não mexem no fundo escolhido
       ui.savedId = null;
@@ -1876,9 +2558,13 @@ export default {
               onClick: () => {
                 if (!alive) return;
                 config = normalizeConfig(before.config);
+                mark('undo');
                 ui.savedId = before.savedId;
                 ui.savedKey = before.savedKey;
                 syncModes();
+                // r5-qa: o bolo de antes volta com o chá revelação como estava (cor já escolhida continua escolhida)
+                ui.revealSet = Boolean(config.reveal?.on) && before.revealSet;
+                ui.revealOffer = before.revealOffer;
                 commit();
                 renderFoot();
               },
@@ -1914,6 +2600,12 @@ export default {
     }
 
     function addToCart() {
+      // chá revelação ligado sem a cor escolhida: o pedido não pode sair com uma cor que ninguém escolheu
+      if (config.reveal?.on && !ui.revealSet) {
+        toast('Falta escolher a cor do chá revelação.');
+        pickRevealColor();
+        return;
+      }
       const note = settleCake();
       const p = cakePayload();
       const extra = { serves: servesOf(config), prepHours: prepHoursOf(config) };
@@ -1921,12 +2613,14 @@ export default {
         // editando um bolo do carrinho: atualiza a mesma linha e volta para lá
         const updated = cart.replaceCustom(editLineId, { ...p, ...extra });
         if (!updated) cart.addCustom({ ...p, ...extra });
+        bus.emit('cart', { config: publicConfig(config), price: p.price, editing: true });
         navigate('/carrinho');
         const done = updated ? 'Bolo atualizado no carrinho' : 'Seu bolo foi para o carrinho';
         toast(note ? `${done}. ${note}` : done, note ? { type: 'success', duration: 6000 } : { type: 'success' });
         return;
       }
       cart.addCustom({ ...p, ...extra });
+      bus.emit('cart', { config: publicConfig(config), price: p.price, editing: false });
       el.live.textContent = `${p.name} foi para o carrinho`;
       const dlg = openDialog({
         title: 'Está no carrinho!',
@@ -1964,119 +2658,54 @@ export default {
         ui.savedKey = configKey();
         toast(note ? `Bolo salvo nos seus favoritos. ${note}` : 'Bolo salvo nos seus favoritos', { type: 'success', action: { label: 'Ver', href: '#/favoritos' }, ...(note ? { duration: 6000 } : {}) });
       }
+      tellTool('save', Boolean(ui.savedId));
       if (STEPS[step].id === 'resumo') renderBody({ still: true });
     }
 
-    function loadImage(src) {
-      return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => resolve(null);
-        img.src = src;
-      });
-    }
-
-    /** Foto para compartilhar: o bolo em destaque, com a marca e o nome. */
-    async function makePoster() {
-      const W = 1080;
-      const H = 1350;
-      let shot = null;
-      try {
-        shot = cake?.snapshotCanvas({ width: W, height: H, scale: 1.5, fill: 0.7 });
-      } catch (err) {
-        console.error('[personalizador] falha ao gerar a foto', err);
-      }
-      const out = document.createElement('canvas');
-      out.width = W;
-      out.height = H;
-      const g = out.getContext('2d');
-      if (shot) g.drawImage(shot, 0, 0);
-      else {
-        const flat = document.createElement('canvas');
-        flat.width = flat.height = W;
-        drawCake2D(flat, shownCake());
-        g.fillStyle = '#fdeef2';
-        g.fillRect(0, 0, W, H);
-        g.drawImage(flat, 0, (H - W) / 2 - 60);
-      }
-      const stage = shot ? resolveBackdrop(config) : getBackdrop('rosa');
-      const logo = await loadImage('assets/logo.webp');
-      if (logo) {
-        const lw = 250;
-        const lh = (lw * logo.height) / logo.width;
-        if (stage.tone === 'dark') {
-          // sobre fundo escuro, a marca vai numa plaquinha clara
-          g.fillStyle = 'rgba(255, 250, 248, 0.95)';
-          g.beginPath();
-          if (g.roundRect) g.roundRect((W - lw) / 2 - 30, 38, lw + 60, lh + 32, 30);
-          else g.rect((W - lw) / 2 - 30, 38, lw + 60, lh + 32);
-          g.fill();
-        }
-        g.drawImage(logo, (W - lw) / 2, 54, lw, lh);
-      }
-      const face = getComputedStyle(document.documentElement).getPropertyValue('--font-body').trim() || 'system-ui, sans-serif';
-      await document.fonts?.load?.(`700 60px ${face}`).catch(() => {});
-      g.textAlign = 'center';
-      g.fillStyle = stage.ink;
-      let fs = 64;
-      const name = displayName(config);
-      do {
-        g.font = `700 ${fs}px ${face}`;
-        fs -= 3;
-      } while (g.measureText(name).width > W - 140 && fs > 30);
-      g.fillText(name, W / 2, H - 150);
-      g.fillStyle = stage.ink2;
-      g.font = `600 30px ${face}`;
-      g.fillText(`${servesText(config)} · criado no personalizador 3D da BOLAB`, W / 2, H - 92);
-      return out;
-    }
-
-    function download(canvas) {
-      const a = document.createElement('a');
-      a.href = canvas.toDataURL('image/jpeg', 0.9);
-      a.download = 'meu-bolo-bolab.jpg';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    }
-
+    /**
+     * Cartão do bolo (foto + nome + "feito por…"): js/atelier/ui/card.js, buscado só quando a pessoa pede.
+     * directDownload = baixa a foto sem abrir o cartão.
+     */
     async function shareCake(directDownload) {
-      const canvas = await makePoster();
+      syncNow();
+      let card;
+      try {
+        card = await import('../atelier/ui/card.js');
+      } catch (err) {
+        console.error('[personalizador] cartão do bolo', err);
+        toast('Não deu para preparar a foto agora. Tente de novo em instantes.');
+        return;
+      }
       if (!alive) return;
+      const info = {
+        name: displayName(config),
+        serves: servesText(config),
+        backdrop: cake ? resolveBackdrop(config) : getBackdrop('rosa'),
+        shot: ({ width, height, fill = 0.7 }) => {
+          try {
+            // no modo Ateliê, com a cena carregada, a foto do cartão sai com o cenário em volta do bolo
+            return cake?.snapshotCanvas({ width, height, scale: 1.5, fill, scene: ui.sceneLive && mode === 'atelie' }) || null;
+          } catch (err) {
+            console.error('[personalizador] falha ao gerar a foto', err);
+            return null;
+          }
+        },
+        flat: (canvas) => drawCake2D(canvas, shownCake()),
+        link: cakeLink(),
+        maker: String(prefs.get('atelierMaker', '') || ''),
+        setMaker: (name) => prefs.set('atelierMaker', name),
+        tell: (id, value) => (id === 'photo' ? bus.emit('photo', { kind: value }) : tellTool(id, value)),
+        video: ui.canVideo ? () => actions.video() : null,
+      };
+      tellTool('photo', directDownload ? 'download' : 'share');
       if (directDownload) {
-        download(canvas);
+        tellTool('download');
+        card.downloadCanvas(await card.drawCard(info));
+        bus.emit('photo', { kind: 'foto' });
         toast('Foto do bolo baixada', { type: 'success' });
         return;
       }
-      const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
-      const file = blob ? new File([blob], 'meu-bolo-bolab.jpg', { type: 'image/jpeg' }) : null;
-      const canShare = Boolean(file && navigator.canShare?.({ files: [file] }));
-      const dlg = openDialog({
-        title: 'Mostre o seu bolo',
-        body: html`<div class="cz-share">
-          <img src="${canvas.toDataURL('image/jpeg', 0.8)}" alt="Foto do bolo ${displayName(config)}" />
-          <p class="muted">Envie para a família, peça opinião ou guarde de recordação.</p>
-        </div>`,
-        footer: html`
-          <button type="button" class="btn btn--secondary cz-fit" data-do="download">${icon('download')} Baixar foto</button>
-          ${canShare ? html`<button type="button" class="btn cz-fit" data-do="share">${icon('share')} Compartilhar</button>` : ''}
-        `,
-      });
-      dlg.el.addEventListener('click', async (ev) => {
-        const what = ev.target.closest('[data-do]')?.dataset.do;
-        if (what === 'download') {
-          download(canvas);
-          dlg.close();
-          toast('Foto do bolo baixada', { type: 'success' });
-        }
-        if (what === 'share') {
-          try {
-            await navigator.share({ files: [file], title: displayName(config), text: 'Olha o bolo que eu montei na BOLAB!' });
-          } catch {
-            // a pessoa fechou a janela de compartilhar: tudo bem
-          }
-        }
-      });
+      await card.openCard(info);
     }
 
     async function restart() {
@@ -2088,6 +2717,7 @@ export default {
       });
       if (!ok || !alive) return;
       config = defaultConfig();
+      mark('restart');
       ui.savedId = null;
       ui.moreDrip = false;
       syncModes();
@@ -2102,7 +2732,66 @@ export default {
       toast('Tudo pronto para um bolo novo');
     }
 
+    /** "Como será feito": a ficha de produção do bolo, em linguagem de confeitaria (sem a cor do chá revelação). */
+    async function showFicha() {
+      tellTool('ficha');
+      const { fichaDeProducao, fichaEmTexto } = await import('../customizer/ficha.js');
+      if (!alive) return;
+      const lines = fichaEmTexto(fichaDeProducao(billOf(config).config, { secret: false }));
+      const dlg = openDialog({
+        title: 'Como o seu bolo será feito',
+        body: html`<div class="cz-ficha">
+          <p class="cz-ficha__lead">É esta ficha que vai para a cozinha junto com o pedido.</p>
+          ${lines.slice(1).map((t) => html`<p class="${/^\s{2,}/.test(t) ? 'cz-ficha__sub' : ''}">${t.trim()}</p>`)}
+        </div>`,
+        footer: html`<button type="button" class="btn btn--secondary cz-fit" data-do="copy">${icon('copy')} Copiar</button><button type="button" class="btn cz-fit" data-dialog-close>Fechar</button>`,
+      });
+      dlg.el.addEventListener('click', async (ev) => {
+        if (!ev.target.closest('[data-do="copy"]')) return;
+        await copyText(lines.join('\n'));
+        toast('Ficha copiada', { type: 'success' });
+      });
+    }
+
+    /** Copia o link que abre exatamente este bolo (sem a cor do chá revelação). */
+    const cakeLink = () => `${location.origin}${location.pathname}#/monte-seu-bolo?c=${encodeConfig(billOf(config).config, { secret: false })}`;
+    async function copyLink() {
+      const ok = await copyText(cakeLink());
+      tellTool('link');
+      toast(ok === false ? 'Não deu para copiar o link aqui. Use "Enviar" para mandar a foto.' : 'Link do bolo copiado. Quem abrir vê este mesmo bolo.', { type: ok === false ? 'info' : 'success' });
+    }
+
+    /** A cor do chá revelação, escolhida numa janela à parte: depois de fechar, ela não aparece em lugar nenhum. */
+    function pickRevealColor({ offer = false } = {}) {
+      const dlg = openDialog({
+        title: 'A cor do chá revelação',
+        body: html`<div class="cz-secretpick">
+          ${offer === true ? html`<p><strong>Este bolo é de chá revelação:</strong> o recheio vai tingido e a cor só aparece no corte (+ ${money(REVEAL_PRICE)}).</p>` : ''}
+          <p>Só você deve ver esta tela. Depois de escolher, a cor some do painel, do resumo e do pedido: ela vai direto para a confeitaria.</p>
+          <div class="cz-secretpick__row">
+            ${REVEAL_COLORS.map(
+              (r) => html`<button type="button" class="cz-secretpick__btn" data-reveal="${r.id}">
+                <i style="--c:${r.hex}"></i><strong>${r.who === 'menina' ? 'É menina' : 'É menino'}</strong><span>Recheio ${r.name.toLowerCase()}</span>
+              </button>`,
+            )}
+          </div>
+        </div>`,
+        footer: html`<button type="button" class="btn btn--secondary btn--block" data-dialog-close>${offer === true ? 'Agora não (bolo sem a cor)' : 'Fechar sem mudar'}</button>`,
+      });
+      dlg.el.addEventListener('click', (ev) => {
+        const id = ev.target.closest('[data-reveal]')?.dataset.reveal;
+        if (!id || !alive) return;
+        config.reveal = { on: true, color: id };
+        ui.revealSet = true;
+        ui.revealed = false;
+        dlg.close();
+        commit();
+        toast('Cor guardada em segredo. No bolo ela só aparece em "Revelar".', { type: 'success', duration: 5000 });
+      });
+    }
+
     function showBreakdown() {
+      tellTool('breakdown');
       openDialog({
         title: 'Detalhes do preço',
         body: html`<div class="cz-bill">${billLines(config)}</div>
@@ -2113,8 +2802,37 @@ export default {
 
     /* ── escolhas ── */
     const setters = {
-      shape: (v) => (config.shape = v),
-      size: (v) => (config.size = v),
+      shape: (v) => {
+        // virar vulcão guarda o bolo de camadas; sair do vulcão devolve as camadas, os recheios e a cobertura de antes
+        if (v === 'vulcao' && config.shape !== 'vulcao') ui.keep = clone({ layers: config.layers, fillings: config.fillings, fillAdds: config.fillAdds, tiers: config.tiers, tierCover: config.tierCover, covering: config.covering, drip: config.drip, reveal: config.reveal });
+        else if (config.shape === 'vulcao' && v !== 'vulcao' && ui.keep) {
+          Object.assign(config, ui.keep);
+          ui.keep = null;
+        }
+        config.shape = v;
+      },
+      size: (v) => {
+        // o bentô vai na caixinha (a base dele) e, nela, com 2 camadas; quem quiser muda depois
+        if (v === 'bento' && config.size !== 'bento' && config.base === 'boleira') {
+          config.base = 'caixa';
+          if (config.layers.length > 2) setLayers(2);
+        }
+        config.size = v;
+      },
+      tab: (v, key) => (ui.tabs[key] = v),
+      soak: (v) => (config.soak = v),
+      fillAdd: (v) => {
+        const adds = config.fillings.map((_, i) => config.fillAdds?.[i] || '');
+        if (ui.fillMode === 'each' && adds.length > 1) adds[Math.min(ui.gap, adds.length - 1)] = v;
+        else adds.fill(v);
+        config.fillAdds = adds;
+      },
+      trim: (v) => {
+        coverRef().trim = v;
+        coverDone();
+      },
+      dripAmount: (v) => (config.drip.amount = v),
+      dripLength: (v) => (config.drip.length = v),
       occasion: (v) => (ui.occasion = v),
       tiers: (v) => {
         config.tiers = Number(v) || 1;
@@ -2156,6 +2874,7 @@ export default {
       flavor: (v) => {
         if (ui.flavorMode === 'each' && config.layers.length > 1) config.layers[Math.min(ui.layer, config.layers.length - 1)] = v;
         else config.layers = config.layers.map(() => v);
+        remember('flavor', v);
       },
       fillMode: (v) => {
         ui.fillMode = v;
@@ -2166,6 +2885,7 @@ export default {
       filling: (v) => {
         if (ui.fillMode === 'each' && config.fillings.length > 1) config.fillings[Math.min(ui.gap, config.fillings.length - 1)] = v;
         else config.fillings = config.fillings.map(() => v);
+        remember('filling', v);
       },
       covering: (v) => {
         // a cor acompanha o tipo (ganache escura, chantilly branco…) até a pessoa escolher uma cor por conta própria
@@ -2174,6 +2894,7 @@ export default {
         if (!ui.colorChosen) cov.color = getCovering(v).defaultColor;
         if (!finishAllowed(v, cov.style)) cov.style = 'liso';
         coverDone();
+        remember('covering', v);
       },
       coveringColor: (v) => {
         coverRef().color = v;
@@ -2187,6 +2908,7 @@ export default {
         // duas cores iguais não aparecem: a segunda começa em branco (ou em rosa-claro, se a cobertura já for branca)
         if (getFinish(v)?.two && cov.color2 === cov.color) cov.color2 = cov.color === '#ffffff' ? '#f7d3dc' : '#ffffff';
         coverDone();
+        remember('finish', v);
       },
       color2: (v) => {
         coverRef().color2 = v;
@@ -2197,9 +2919,23 @@ export default {
       pipingWhere: (v) => (config.piping.where = v),
       pipingColor: (v) => (config.piping.color = v),
       decorGroup: (v) => (ui.decorGroup = v),
+      decorHow: (v) => {
+        ui.decorHow = v === 'mao' ? 'mao' : 'arranjo';
+        ui.decorOpen = null;
+        tellTool('hand', ui.decorHow === 'mao');
+        if (ui.decorHow !== 'mao') disarm();
+      },
       decorArr: (v, id) => decorOpt(id, { arr: v }),
       decorQty: (v, id) => decorOpt(id, { qty: v }),
       decorColor: (v, id) => decorOpt(id, { color: v }),
+      // r5-decor ↓
+      decorKind: (v, id) => decorOpt(id, { kind: v }),
+      candlePalette: (v) => (config.decor.candlePalette = v),
+      plaque: (v) => (config.decor.plaque = v),
+      doodle: (v) => (config.decor.doodle = v === 'nenhum' ? '' : v),
+      topperStyle: (v) => (config.decor.topper.style = v),
+      topperFinish: (v) => (config.decor.topper.finish = v),
+      // r5-decor ↑
       candleStyle: (v) => (config.decor.candleStyle = v),
       messageMode: (v) => (config.decor.messageMode = v),
       script: (v) => (config.decor.script = v),
@@ -2238,7 +2974,12 @@ export default {
       } else if (items.length >= MAX_DECORS) {
         toast(`Dá para combinar até ${MAX_DECORS} decorações. Tire uma para trocar.`);
         return false;
-      } else items.push(id);
+      } else {
+        items.push(id);
+        // r5-decor: as últimas escolhidas ficam na aba "Recentes" (neste aparelho)
+        ui.decorRecent = [id, ...(ui.decorRecent || []).filter((x) => x !== id)].slice(0, 8);
+        prefs.set('customizerRecentDecor', ui.decorRecent);
+      }
       return true;
     }
 
@@ -2297,10 +3038,12 @@ export default {
         if (!keepText) hexIn.value = hex.toUpperCase();
         if (tonesHue !== Math.round(h)) {
           tonesHue = Math.round(h);
-          tones.innerHTML = TONES.map(([ts, tv]) => {
-            const x = hsvToHex(h, ts, tv);
-            return `<button type="button" style="--c:${x}" data-cp-color="${x}" aria-label="Tom ${x.toUpperCase()}"></button>`;
-          }).join('');
+          tones.innerHTML = String(
+            html`${TONES.map(([ts, tv]) => {
+              const x = hsvToHex(h, ts, tv);
+              return html`<button type="button" style="--c:${x}" data-cp-color="${x}" aria-label="Tom ${x.toUpperCase()}"></button>`;
+            })}`,
+          );
         }
       };
       const pick = (ev) => {
@@ -2387,6 +3130,7 @@ export default {
         manualView = next === 'default' ? null : next;
         if (cutaway && next !== 'default') setCutaway(false, true);
         cake.setView(manualView || viewFor(step));
+        tellTool('view', next);
         setViewBar(false); // a barra sai da frente: o bolo é o que interessa
         flash(next === 'default' ? 'Vista padrão' : `Vista: ${VIEWS.find((x) => x.id === next).name.toLowerCase()}`);
       },
@@ -2405,6 +3149,7 @@ export default {
         if (!p) return;
         config = applyPalette(config, p);
         ui.colorChosen = true;
+        mark('palette', p.id);
         commit();
         el.live.textContent = `Paleta ${p.name} aplicada ao bolo inteiro`;
       },
@@ -2426,12 +3171,24 @@ export default {
       },
       surprise() {
         // o bolo surpresa já nasce só com o que cabe nele (nada "não coube", nenhuma quantidade reduzida)
+        mark('surprise');
         replaceConfig(billOf(normalizeConfig({ ...randomConfig(config), size: config.size })).config, { keepSize: true, undo: true, message: 'Bolo surpresa montado. Gostou?' });
         el.live.textContent = `Bolo surpresa: ${summaryOf(config).join('. ')}`;
       },
       preset(v) {
         const p = getPreset(v);
-        if (p) replaceConfig(p.config, { keepSize: true, undo: true, message: `Inspiração “${p.name}” aplicada. Agora deixe do seu jeito!` });
+        if (!p) return;
+        mark('preset', p.id);
+        // r5-qa: inspiração pensada para um tamanho (bentô, GG: `sized`) chega no tamanho dela — nome, etiqueta e
+        // miniatura dizem bentô/GG, e o bolo, o preço e o carrinho têm de dizer o mesmo. As outras mantêm o tamanho
+        // que a pessoa já escolheu.
+        replaceConfig(p.config, { keepSize: !p.sized, undo: true, message: `Inspiração “${p.name}” aplicada. Agora deixe do seu jeito!` });
+        // r5-qa: "Chá Revelação" leva direto a escolher a cor em segredo. Nenhuma cor é assumida: sem escolha, o chá
+        // fica desligado (recheio sem cor) e o resumo avisa.
+        if (p.askReveal && !config.reveal?.on) {
+          ui.revealOffer = true;
+          pickRevealColor({ offer: true });
+        }
       },
       'add-layer'() {
         setLayers(2);
@@ -2445,13 +3202,85 @@ export default {
         ui.moreDrip = true;
         renderBody({ still: true });
       },
+      find(v) {
+        ui.searchOpen[v] = true;
+        renderBody({ still: true });
+        root.querySelector(`[data-field="search.${v}"]`)?.focus();
+      },
+      'find-close'(v) {
+        ui.searchOpen[v] = false;
+        ui.search[v] = '';
+        renderBody({ still: true });
+      },
+      'drip-half'() {
+        config.drip.half = !config.drip.half;
+        commit();
+      },
+      'drip-metal'() {
+        config.drip.metal = !config.drip.metal;
+        // a calda metálica começa dourada; ao desligar, uma cor metálica volta para o chocolate
+        const metals = METAL_COLORS.map((x) => x.hex);
+        if (config.drip.metal && !metals.includes(config.drip.color)) config.drip.color = metals[0];
+        else if (!config.drip.metal && metals.includes(config.drip.color)) config.drip.color = '#3a1a08';
+        commit();
+      },
+      'reveal-toggle'() {
+        config.reveal = { ...config.reveal, on: !config.reveal.on };
+        ui.revealed = false;
+        ui.revealSet = false;
+        if (!config.reveal.on) ui.revealOffer = false; // r5-qa: desligou de propósito: o resumo não insiste
+        commit();
+        if (config.reveal.on) pickRevealColor();
+      },
+      'reveal-color': pickRevealColor,
+      reveal() {
+        if (!config.reveal?.on || !cake) return;
+        ui.revealed = !ui.revealed;
+        syncReveal();
+        sceneUpdate();
+        if (ui.revealed) {
+          if (!cutaway) setCutaway(true, true);
+          const who = getRevealColor(config.reveal.color)?.who;
+          later(() => alive && ui.revealed && flash(who === 'menina' ? 'É menina!' : 'É menino!'), 700);
+        }
+        tellTool('reveal', ui.revealed);
+      },
+      fix(v) {
+        mark('auto');
+        config = applyFix(config, v);
+        syncModes();
+        commit();
+      },
+      ficha: showFicha,
+      link: copyLink,
       decor(v) {
+        // "uma a uma, com o dedo": o toque põe a peça na mão (o lugar é escolhido no bolo)
+        if (ui.decorHow === 'mao') return void arm(ui.armed === v ? null : v);
         if (toggleDecor(v)) commit();
       },
+      'place-auto': () => atelier?.hands.auto(),
+      'place-done': () => disarm(),
+      'place-remove': (v) => atelier?.hands.removeOne(v),
+      'place-clear': () => atelier?.hands.clear(),
+      mode: () => setMode(mode === 'atelie' ? 'rapido' : 'atelie'),
+      'reveal-cake': () => atelier?.reveal(),
+      video: () => atelier?.video(),
+      game: () => atelier?.game(),
       'clear-decor'() {
         ui.decorOpen = null;
         config.decor.items = [];
+        config.decor.theme = '';
         commit();
+      },
+      // r5-decor: tema pronto — troca as decorações e o bico de uma vez, com "Desfazer"
+      theme(v) {
+        const t = getTheme(v);
+        if (!t) return;
+        ui.decorOpen = null;
+        ui.colorChosen = true;
+        // o tema já entra só com o que cabe neste bolo (nada "não coube" fica cobrado nem gravado)
+        replaceConfig(billOf(applyTheme(config, v)).config, { keepSize: true, undo: true, message: `Tema “${t.name}” aplicado. Agora deixe do seu jeito!` });
+        el.live.textContent = `Tema ${t.name} aplicado: ${t.desc}`;
       },
       idea(v) {
         config.decor.message = cleanMessage(v);
@@ -2466,6 +3295,14 @@ export default {
         input?.select();
       },
       bgmenu: () => setBgBar(!bgOpen),
+      scene(v) {
+        prefs.set('atelierScene', Object.hasOwn(SCENE_NAMES, v) ? v : 'auto');
+        atelier?.scene();
+        tellTool('scene', sceneChoice());
+        renderBgBar();
+        el.bgbar.querySelector('.at-scenes .is-on')?.focus({ preventScroll: true });
+        el.live.textContent = `Cenário: ${SCENE_NAMES[sceneChoice()]}`;
+      },
       backdrop(v) {
         config.backdrop = v;
         commit({ rerender: false, scene: 'none' });
@@ -2494,6 +3331,17 @@ export default {
       if (fn) fn(btn.dataset.value, btn);
     });
 
+    // r5-decor: busca entre as decorações (filtra enquanto a pessoa digita; o campo não perde o foco)
+    ui.decorRecent = (prefs.get('customizerRecentDecor', []) || []).filter((id) => getDecor(id));
+    ui.decorGroup = 'populares'; // a etapa abre nos mais pedidos
+    const searchSoon = debounce(() => alive && renderBody({ still: true }), 140);
+    on(root, 'input', '[data-cz-search]', (_ev, input) => {
+      ui.decorQuery = input.value.slice(0, 40);
+      searchSoon();
+    });
+    // os módulos de peças chegam num momento ocioso, um a um (a abertura não espera por eles)
+    warmDecorModules(3500);
+
     // o painel "Fundo" fecha ao tocar fora dele ou com Esc
     const onDocDown = (ev) => {
       if (bgOpen && !ev.target.closest?.('[data-cz-bgbar], [data-act="bgmenu"]')) setBgBar(false);
@@ -2511,6 +3359,7 @@ export default {
         return;
       }
       if (ev.key !== 'Escape') return;
+      if (atelier?.back()) return; // fecha o que o ateliê tiver aberto (peça na mão, revelação, dicas)
       if (viewOpen) {
         setViewBar(false);
         el.tools.querySelector('[data-act="viewmenu"]').focus();
@@ -2541,6 +3390,12 @@ export default {
     const cleanName = (v) => String(v).replace(/[<>]/g, '').replace(/^\s+/, '').slice(0, 40);
 
     on(root, 'input', '[data-field]', (_ev, input) => {
+      if (input.dataset.field.startsWith('search.')) {
+        // busca nas listas grandes: só o painel muda (o bolo fica como está)
+        ui.search[input.dataset.field.slice(7)] = input.value.slice(0, 40);
+        renderBody({ still: true });
+        return;
+      }
       if (input.dataset.field === 'message') {
         const had = Boolean(config.decor.message);
         if (input.value !== cleanMessage(input.value)) writeBack(input, cleanMessage);
@@ -2633,7 +3488,28 @@ export default {
     if (new URLSearchParams(location.search).has('czdebug')) {
       // quality() é só leitura: nível, proporção de pixels em uso e o estado do regulador de resolução
       // bill() = o bolo como será cobrado e gravado (sem o que não coube): usado por tools/cz_bill.mjs
-      window.__cz = { cake: () => cake, config: () => config, set: (next) => replaceConfig(next), goto, quality: () => cake?.quality() ?? null, bill: (other) => billOf(other ? normalizeConfig(other) : config) };
+      // reveal(true|false) = mostra ou esconde a cor do chá revelação no 3D (o que o botão "Revelar" faz)
+      window.__cz = {
+        cake: () => cake,
+        config: () => config,
+        set: (next) => replaceConfig(next),
+        goto,
+        quality: () => cake?.quality() ?? null,
+        bill: (other) => billOf(other ? normalizeConfig(other) : config),
+        reveal: (on) => {
+          ui.revealed = Boolean(on);
+          syncReveal();
+          if (cake) sceneUpdate();
+        },
+        rules: () => rulesOf(config).map((r) => ({ level: r.level, code: r.code, step: r.step, text: r.text })),
+        link: () => encodeConfig(config),
+        // r5-tela: o barramento, o modo e a camada do ateliê (tools/r5t_*.mjs)
+        bus,
+        mode: () => mode,
+        setMode: (m) => setMode(m),
+        atelier: () => atelier,
+        ui: () => ui,
+      };
     }
 
     /* ── primeira pintura ── */
@@ -2644,27 +3520,213 @@ export default {
     renderMeta();
     updatePrice();
     setRotating(rotating, false);
+    syncReveal();
     syncBackdrop({ instant: true });
-    // a tela aparece primeiro (fundo, opções e o aviso de "preparando"); a cena 3D começa logo em seguida
-    requestAnimationFrame(() => requestAnimationFrame(() => alive && startScene()));
+    syncModeUi();
+    // espera viva: enquanto o 3D chega, a confeitaria "se prepara" (some junto com o aviso)
+    const loadText = root.querySelector('[data-cz-loadtext]');
+    const WAITS = ['Untando a fôrma…', 'Peneirando a farinha…', 'Batendo a massa…', 'Quase no ponto…'];
+    let waitAt = 0;
+    const waitTick = () => {
+      if (!alive || el.cz.classList.contains('is-ready')) return;
+      loadText.textContent = WAITS[waitAt++ % WAITS.length];
+      later(waitTick, 1300);
+    };
+    later(waitTick, 900);
+    // a tela aparece primeiro (fundo, opções e o aviso de "preparando"); a cena 3D começa logo em seguida;
+    // o ateliê (som, Bô, gestos) só é buscado com a loja parada, depois que o bolo já está na tela
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (!alive) return;
+        const idle = window.requestIdleCallback ? (fn) => window.requestIdleCallback(fn, { timeout: 2500 }) : (fn) => setTimeout(fn, 300);
+        // (o ateliê só entra depois que o motor chegou — ou falhou — e o bolo começou a ser desenhado)
+        // r5-qa: "desenhado" de verdade (sceneShown), não só pedido — som, jogo e dicas nunca chegam antes do bolo
+        startScene().finally(() => sceneShown.then(() => later(() => idle(() => alive && loadAtelier()), 500)));
+      }),
+    );
 
+    told.price = priceOf(billOf(config).config);
+    bus.emit('open', { config: publicConfig(config), source: SOURCES[origin] || 'novo' });
     if (origin === 'base') toast('Partimos de um bolo do cardápio. Mude o que quiser!', { type: 'success' });
     if (origin === 'draft' && step > 0) toast('Continuando de onde você parou');
 
     // entrada por ?bolo= ou ?base=: depois de aplicar, tira o parâmetro do endereço (recarregar mantém o rascunho).
     // ?linha= fica: recarregar continua editando o bolo do carrinho.
     const q = ctx.query || {};
-    if (origin !== 'line' && (q.bolo || q.base || q.linha)) {
+    if (origin !== 'line' && (q.bolo || q.base || q.linha || q.c)) {
       storeDraft();
       later(() => alive && navigate('/monte-seu-bolo', { replace: true }), 0);
     }
 
+    /* ── r5-tela: o ateliê (js/atelier/ui/index.js) ──
+       A tela entrega ao módulo só o que ele precisa (host); ele liga som, vibração, a Bô, os gestos, a revelação e o
+       jogo, e devolve os poucos comandos que a tela chama. Se o módulo não chegar (sem rede), a compra segue igual. */
+    function syncModeUi() {
+      const quick = mode === 'rapido';
+      el.cz.dataset.mode = mode;
+      const btn = root.querySelector('[data-at-mode]');
+      btn.querySelector('[data-at-mode-text]').textContent = quick ? 'ateliê' : 'rápido';
+      btn.querySelector('[data-at-mode-icon]').innerHTML = String(quick ? ICON.atelier : ICON.bolt);
+      btn.setAttribute('aria-label', quick ? 'Voltar ao modo Ateliê: som, animações e a assistente Bô' : 'Mudar para o modo rápido: sem som, sem animações e sem a assistente');
+      btn.title = quick ? 'Som, animações e a assistente Bô' : 'Só o essencial para pedir';
+    }
+    function setMode(next, { quiet = false } = {}) {
+      const to = next === 'rapido' ? 'rapido' : 'atelie';
+      if (to === mode) return;
+      mode = to;
+      prefs.set('atelierMode', mode);
+      syncModeUi();
+      if (mode === 'rapido') hideHint();
+      // a faixa reservada para a Bô muda com o modo: o bolo se reenquadra
+      cake?.resize();
+      cake?.setView(manualView || viewFor(step));
+      bus.emit('mode', { mode });
+      atelier?.setMode(mode);
+      if (!atelier && mode === 'atelie') loadAtelier();
+      if (!quiet) {
+        const said = mode === 'rapido' ? 'Modo rápido: sem som, sem animações e sem a Bô. Tudo o que você escolheu continua aqui.' : 'Modo Ateliê: som, animações e a Bô de volta.';
+        flash(mode === 'rapido' ? 'Modo rápido' : 'Modo Ateliê');
+        el.live.textContent = said;
+      }
+    }
+    function arm(id) {
+      ui.armed = id && getDecor(id)?.unit ? id : null;
+      tellTool('pick', ui.armed);
+      renderBody({ still: true });
+      if (ui.armed && !atelier) toast('Só um instante: a bancada ainda está chegando.');
+      atelier?.hands.arm(ui.armed);
+    }
+    function disarm() {
+      if (!ui.armed) return;
+      ui.armed = null;
+      tellTool('pick', null);
+      atelier?.hands.arm(null);
+      if (STEPS[step]?.id === 'decoracao') renderBody({ still: true });
+    }
+    let atelierLoading = null;
+    /** Anúncio curto para o leitor de tela (região aria-live da tela). */
+    function say(text) {
+      said.at = performance.now();
+      said.text = text;
+      el.live.textContent = text;
+    }
+    function loadAtelier() {
+      if (atelier || atelierLoading || !alive) return;
+      atelierLoading = import('../atelier/ui/index.js')
+        .then((m) => {
+          if (!alive) return;
+          atelier = m.mountAtelier({
+            root,
+            cz: el.cz,
+            stage: el.stage,
+            canvas: el.canvas,
+            hud: el.hud,
+            layer: el.layer,
+            fx: el.fx,
+            bus,
+            prefs,
+            reduceMotion,
+            rules: rulesOf,
+            source: SOURCES[origin] || 'novo',
+            mode: () => mode,
+            setMode,
+            cake: () => cake,
+            config: () => config,
+            publicConfig: () => publicConfig(config),
+            shown: () => shownCake(),
+            step: () => STEPS[step]?.id || 'formato',
+            price: () => priceOf(billOf(config).config),
+            name: () => displayName(config),
+            goto: (id) => goto(STEP_INDEX[id] ?? step),
+            flash,
+            say,
+            toast,
+            armed: () => ui.armed,
+            disarm,
+            cutaway: () => cutaway,
+            closeCut: () => cutaway && setCutaway(false, false),
+            setView: (name) => cake?.setView(name || manualView || viewFor(step)),
+            spinOn: (on) => cake?.setAutoRotate(on ? rotating && !measuring : false),
+            onFrame: (fn) => {
+              frameSubs.add(fn);
+              return () => frameSubs.delete(fn);
+            },
+            card: () => shareCake(false),
+            /** A Bô sugeriu e a pessoa aceitou: { label, patch, step }. */
+            applyBo(action, applyPatch) {
+              if (action?.patch) {
+                config = applyPatch(config, action.patch);
+                mark('bo');
+                syncModes();
+                commit();
+                renderFoot();
+              }
+              if (action?.step && STEP_INDEX[action.step] != null) goto(STEP_INDEX[action.step]);
+            },
+            /** Peças colocadas à mão: grava a lista nova (o preço e o bolo acompanham). */
+            setPlaced(list) {
+              config.decor.placed = list;
+              commit();
+            },
+            /** Calda pelo gesto (tocar na borda): liga ou aumenta. */
+            setDrip(patch) {
+              config.drip = { ...config.drip, ...patch };
+              commit();
+            },
+            /** Troca o bolo inteiro (jogo: encomenda). */
+            setConfig(next, opts = {}) {
+              if (opts.by) mark(opts.by);
+              replaceConfig(next, {});
+            },
+            sceneChoice,
+            /** A cena carregou (ou não): a troca de cenário aparece no painel "Fundo" e as peças de lateral ganham etiqueta. */
+            sceneLive(on, sideIds = null) {
+              ui.sceneLive = Boolean(on);
+              if (sideIds) ui.sideIds = sideIds;
+              if (bgOpen) renderBgBar();
+              if (STEPS[step]?.id === 'decoracao' && ui.decorHow === 'mao') renderBody({ still: true });
+            },
+            /** Uma encomenda do jogo está em curso: a comanda fica no alto do palco e o bolo desce um pouco. */
+            gameOn(on) {
+              if (ui.gameOn === Boolean(on)) return;
+              ui.gameOn = Boolean(on);
+              el.cz.classList.toggle('has-order', ui.gameOn);
+              cake?.resize();
+              cake?.setView(manualView || viewFor(step));
+            },
+            video(can) {
+              if (ui.canVideo === can) return;
+              ui.canVideo = can;
+              if (STEPS[step]?.id === 'resumo') renderBody({ still: true });
+            },
+            celebrate: () => confetti({ count: cake?.tier === 'mobile' ? 44 : 80 }),
+          });
+          if (ui.armed) atelier.hands.arm(ui.armed);
+        })
+        .catch((err) => {
+          // sem o ateliê a tela continua inteira: é o modo rápido de fato
+          console.warn('[personalizador] ateliê indisponível:', err?.message || err);
+        })
+        .finally(() => {
+          atelierLoading = null;
+        });
+    }
+    // "voltar" do Android: primeiro fecha o que o ateliê tiver aberto; depois, o de sempre (diálogos)
+    const prevBack = window.bolabBack;
+    const androidBack = () => Boolean(atelier?.back()) || Boolean(prevBack?.());
+    window.bolabBack = androidBack;
+
     root.__czLoad = (query) => {
       // outro bolo pedido com a tela já aberta (ex.: link de favorito ou "Editar bolo" do carrinho)
-      if (!query?.bolo && !query?.base && !query?.linha) return;
+      if (!query?.bolo && !query?.base && !query?.linha && !query?.c) return;
       if (query.linha && query.linha === editLineId) return;
       const res = loadInitial(query);
-      config = normalizeConfig(config);
+      config = enforceRules(config).config;
+      ui.revealSet = Boolean(config.reveal?.on);
+      // outro bolo aberto por cima: para quem ouve, é uma abertura nova (não uma lista de mudanças)
+      told.config = clone(config);
+      told.price = priceOf(billOf(config).config);
+      bus.emit('open', { config: publicConfig(config), source: SOURCES[res] || 'novo' });
       syncModes();
       hist.past.length = 0;
       hist.future.length = 0;
@@ -2681,6 +3743,15 @@ export default {
 
     return () => {
       alive = false;
+      bus.emit('close', {});
+      try {
+        atelier?.destroy();
+      } catch (err) {
+        console.error('[personalizador] erro ao encerrar o ateliê', err);
+      }
+      atelier = null;
+      frameSubs.clear();
+      if (window.bolabBack === androidBack) window.bolabBack = prevBack;
       storeDraft();
       vv?.removeEventListener('resize', syncKeyboard);
       vv?.removeEventListener('scroll', syncKeyboard);
@@ -2697,6 +3768,10 @@ export default {
         console.error('[personalizador] erro ao encerrar a cena', err);
       }
       cake = null;
+      // r5-tela: um motor encerrado ainda fica preso a um registro do kit de peças (ver linkScene): aqui a tela
+      // se solta dele, para que só o motor — e não a tela inteira — fique na memória
+      sceneLink.cut();
+      el.canvas.remove();
     };
   },
 

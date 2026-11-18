@@ -8,6 +8,7 @@ import { html, raw, icon, on, money, dateLong, toDate, isoDate, confirmDialog } 
 import { pageHead, listRow, dayLabel as shortDay, slotLabel } from '../components.js';
 import { auth, orders, chat, schedule } from '../store.js';
 import { SITE, COUPONS, WALLET_COUPONS } from '../data/site.js';
+import { MONTAR } from '../data/montar.js';
 import { PRODUCTS, SIZES, isCake } from '../data/products.js';
 import { SIZES as CUSTOM_SIZES, MAX_LAYERS, DECORS } from '../data/customizer.js';
 import { defaultConfig, prepHoursOf } from '../customizer/pricing.js';
@@ -109,6 +110,13 @@ const ANSWERS = {
   },
 
   pagamento() {
+    if (SITE.demo) {
+      return (
+        `Nada é cobrado pelo site. Você fecha o pedido, envia para a BOLAB pelo WhatsApp e combina o pagamento por lá:\n` +
+        `• Pix, com ${SITE.pix.discountPct}% de desconto\n` +
+        `• Cartão de crédito em até ${SITE.card.maxInstallments}x sem juros (parcela mínima de ${money(SITE.card.minInstallment)})`
+      );
+    }
     return (
       `Você paga aqui mesmo, ao fechar o pedido:\n` +
       `• Pix, com ${SITE.pix.discountPct}% de desconto e aprovação na hora\n` +
@@ -142,10 +150,10 @@ const ANSWERS = {
     const [min3d, max3d] = customPrepRange();
     const varies = daysOf(min3d) !== daysOf(max3d);
     return (
-      `No Monte seu bolo você escolhe formato, andares, massa, recheio, cobertura e decoração, e vê o bolo girando na tela a cada escolha. O preço atualiza na hora.\n\n` +
+      `No Monte seu bolo você monta o bolo camada por camada numa cozinha 3D: formato, andares, massa, recheio, cobertura e decoração, com o preço mudando a cada escolha. Se quiser, liga o som e as dicas da assistente Bô, e no fim sopra as velas. Quem tem pressa usa o modo rápido.\n\n` +
       `Depois é só mandar para o carrinho, ou salvar na sua conta para pedir outro dia. ` +
       `Bolos montados em 3D pedem ${daysRange(min3d, max3d)} de antecedência${varies ? ', conforme o tamanho e a decoração' : ''}.\n\n` +
-      `[Montar meu bolo em 3D](#/monte-seu-bolo)`
+      `[${MONTAR.button}](${MONTAR.href})`
     );
   },
 
@@ -166,7 +174,7 @@ const ANSWERS = {
       : '';
     const how = o.delivery?.mode === 'pickup' ? 'Retirada' : 'Entrega';
     return (
-      `Seu pedido ${o.id} está na etapa “${st.label}”. ${o.payment?.paidAt ? step.desc : 'Estamos aguardando a confirmação do pagamento.'}` +
+      `Seu pedido ${o.id} está na etapa “${st.label}”. ${o.payment?.paidAt || SITE.demo ? step?.desc || '' : 'Estamos aguardando a confirmação do pagamento.'}` +
       (when && st.id !== 'delivered' ? `\n\n${how} agendada para ${when}.` : '') +
       `\n\n[Acompanhar pedido](#/pedido/${o.id})`
     );
@@ -205,7 +213,7 @@ const ANSWERS = {
     return (
       `${found.length ? 'Olha o que encontrei no cardápio:' : `Temos ${PRODUCTS.filter(isCake).length} bolos no cardápio. Os mais pedidos:`}\n` +
       list.map((p) => `• [${p.name}](#/produto/${p.id}), a partir de ${money(p.price)}`).join('\n') +
-      `\n\nNão achou o que queria? Dá para [montar o seu em 3D](#/monte-seu-bolo) ou [ver o cardápio completo](#/cardapio).`
+      `\n\nNão achou o que queria? Dá para [montar o seu em 3D](${MONTAR.href}) ou [ver o cardápio completo](#/cardapio).`
     );
   },
 
@@ -352,7 +360,7 @@ function introHtml() {
       from: 'bolab',
       text:
         `Oi${name ? `, ${name}` : ''}! Eu sou o Assistente BOLAB, o atendimento automático da loja.\n\n` +
-        `Respondo na hora às dúvidas mais comuns sobre pedidos e entregas. O que eu não souber, passo para a nossa equipe.`,
+        `Respondo na hora às dúvidas mais comuns sobre pedidos e entregas. Para o resto, eu mostro como falar com a equipe.`,
     },
     { still: true },
   );

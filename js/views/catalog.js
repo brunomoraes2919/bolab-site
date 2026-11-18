@@ -3,11 +3,11 @@
 // a aba ativa acompanha a rolagem. Computador: grade de cartões; a busca é a do cabeçalho e as
 // categorias são as da faixa de seções (js/shell.js), para não repetir as duas coisas na tela.
 // A URL é a fonte da verdade (?cat=&q=&ordem=): dá para compartilhar um filtro e o "voltar" funciona.
-import { html, icon, on, debounce, plural, money } from '../ui.js';
+import { html, icon, on, debounce, plural } from '../ui.js';
 import { productCard, productRow, promoBanner, chipRow } from '../components.js';
 import { searchProducts, isCake } from '../data/products.js';
 import { CATEGORIES } from '../data/site.js';
-import { minPrice } from '../customizer/pricing.js';
+import { MONTAR, montarFrom } from '../data/montar.js';
 import { navigate } from '../router.js';
 
 const CATS = CATEGORIES.filter((c) => c.id !== 'todos');
@@ -24,6 +24,8 @@ const SUGGESTIONS = ['chocolate', 'morango', 'limão', 'aniversário'];
 /** A partir daqui a tela é "de computador": grade de cartões e abas que filtram. */
 const WIDE = window.matchMedia('(min-width: 900px)');
 const XWIDE = window.matchMedia('(min-width: 1100px)');
+/** A partir do tablet a busca é a do cabeçalho (o campo da própria tela fica escondido: css/catalog.css). */
+const HEADER_SEARCH = window.matchMedia('(min-width: 720px)');
 
 /** Cada tela montada guarda aqui a função que aplica um novo filtro (usada por onQuery). */
 const live = new WeakMap();
@@ -70,15 +72,15 @@ function countHtml(list, state) {
   return html`<strong>${cat.label}</strong><span>${itemsLabel(list)}</span>`;
 }
 
-/** Convite ao personalizador 3D, no meio da lista. */
+/** Convite ao personalizador 3D, no meio da lista (textos em js/data/montar.js). */
 function promo3d(state) {
   return promoBanner({
     tone: 'stage',
-    tag: 'Só na BOLAB',
-    title: state.cat === 'acess' ? 'Falta o bolo? Monte o seu em 3D' : 'Não achou o seu? Monte do seu jeito',
-    text: `Massa, recheio e cobertura em 3D. A partir de ${money(minPrice()).replace(',00', '')}.`,
-    cta: 'Montar meu bolo',
-    href: '#/monte-seu-bolo',
+    tag: MONTAR.tag,
+    title: state.cat === 'acess' ? MONTAR.catalogTitleParty : MONTAR.catalogTitle,
+    text: `${MONTAR.line} ${montarFrom()}`,
+    cta: MONTAR.cta,
+    href: MONTAR.href,
     img: 'assets/img/cz-morango.webp',
     cutout: true,
     cls: 'catalog-promo',
@@ -86,14 +88,14 @@ function promo3d(state) {
 }
 
 /* ───────── Celular: linhas de lista ───────── */
-function rows(list, eagerCount = 0) {
-  return html`<div class="menu-list catalog-list">${list.map((p, i) => productRow(p, { eager: i < eagerCount }))}</div>`;
+function rows(list, eagerCount = 0, level = 3) {
+  return html`<div class="menu-list catalog-list">${list.map((p, i) => productRow(p, { eager: i < eagerCount, priority: i < Math.min(2, eagerCount), level }))}</div>`;
 }
 
 /** Cardápio inteiro, em seções por categoria (as abas rolam até cada uma). */
 function sectionsHtml(list, state) {
   const groups = CATS.map((c) => ({ c, items: list.filter((p) => p.cat === c.id) })).filter((g) => g.items.length);
-  const promoAfter = Math.min(1, groups.length - 1);
+  const promoAfter = 0; // o convite ao personalizador vem logo depois da primeira categoria: aparece na segunda tela
   return html`${groups.map(
     (g, i) => html`
       <section class="catalog-sec" data-catalog-sec="${g.c.id}" aria-labelledby="catalog-sec-${g.c.id}">
@@ -107,16 +109,16 @@ function sectionsHtml(list, state) {
 
 function listHtml(list, state) {
   return html`
-    ${rows(list, 4)} ${promo3d(state)}
+    ${rows(list, 4, 2)} ${promo3d(state)}
     <button class="btn btn--secondary btn--block catalog-all" type="button" data-catalog-clear>Ver cardápio completo</button>
   `;
 }
 
 /* ───────── Computador: grade de cartões ───────── */
 function gridHtml(list, state) {
-  const cards = list.map((p, i) => productCard(p, { eager: i < 4 }));
+  const cards = list.map((p, i) => productCard(p, { eager: i < 4, priority: i < 2, level: 2 })); // sem título de seção acima: o nome é o h2
   const promo = html`<div class="catalog-grid__promo">${promo3d(state)}</div>`;
-  const at = (XWIDE.matches ? 4 : 3) * 2; // depois de duas fileiras cheias
+  const at = XWIDE.matches ? 4 : 3; // depois da primeira fileira cheia: o convite aparece sem rolar muito
   if (list.length > at) cards.splice(at, 0, promo);
   else cards.push(promo);
   return html`<div class="product-grid catalog-grid">${cards}</div>`;
@@ -133,12 +135,12 @@ function emptyHtml(state) {
       <p>
         ${elsewhere
           ? `Em ${cat.label} não tem, mas há ${plural(elsewhere, 'resultado', 'resultados')} em outras categorias.`
-          : 'Tente outro sabor. Ou monte o bolo que você imaginou, em 3D.'}
+          : 'Tente outro sabor ou monte o seu bolo em 3D.'}
       </p>
       <div class="catalog-empty__actions">
         ${elsewhere
           ? html`<button class="btn" type="button" data-catalog-all>Buscar em todo o cardápio</button>`
-          : html`<a class="btn" href="#/monte-seu-bolo">${icon('cube')} Montar meu bolo em 3D</a>`}
+          : html`<a class="btn" href="${MONTAR.href}">${icon('cube')} ${MONTAR.button}</a>`}
         <button class="btn btn--secondary" type="button" data-catalog-clear>Ver cardápio completo</button>
       </div>
       <div class="catalog-empty__hints">
@@ -239,8 +241,8 @@ export default {
     let shown = resultsKey(find(state), state);
     let disposed = false;
 
-    /** O campo de busca em uso: o do cabeçalho no computador, o da própria tela no celular. */
-    const field = () => (WIDE.matches && headerField()) || input;
+    /** O campo de busca em uso: o do cabeçalho no tablet e no computador, o da própria tela no celular. */
+    const field = () => (HEADER_SEARCH.matches && headerField()) || input;
     /** Escreve o texto da busca nos dois campos (o que não está em uso só acompanha). */
     const setQuery = (text) => {
       input.value = text;
@@ -336,7 +338,8 @@ export default {
     /** Altura do que fica preso no topo (cabeçalho + barra de abas, com ou sem a busca). */
     function pinnedHeight(withSearch) {
       const header = document.getElementById('header')?.offsetHeight || 56;
-      const search = top.querySelector('.catalog-search').offsetHeight + 8;
+      const own = top.querySelector('.catalog-search').offsetHeight; // 0 no tablet: lá a busca é a do cabeçalho
+      const search = own ? own + 8 : 0;
       return header + top.offsetHeight - (withSearch ? 0 : search);
     }
 
@@ -355,7 +358,8 @@ export default {
       if (disposed || WIDE.matches) return;
       const y = window.scrollY;
       if (Math.abs(y - lastY) > 4) {
-        setCompact(y > lastY && y > 96 && document.activeElement !== input);
+        // (no tablet não há o que recolher: a busca mora no cabeçalho)
+      setCompact(!HEADER_SEARCH.matches && y > lastY && y > 96 && document.activeElement !== input);
         lastY = y;
       }
       if (isMenu(state) && performance.now() > spyLockUntil) spy();
@@ -386,13 +390,14 @@ export default {
     // (mantendo a categoria), em vez de recomeçar a navegação como nas outras telas.
     const header = document.getElementById('header');
     const onHeaderInput = (ev) => {
-      if (WIDE.matches && ev.target.matches('[data-search] input')) typed();
+      if (HEADER_SEARCH.matches && ev.target.matches('[data-search] input')) typed();
     };
     const onHeaderSubmit = (ev) => {
-      if (!WIDE.matches || !ev.target.matches('[data-search]')) return;
+      if (!HEADER_SEARCH.matches || !ev.target.matches('[data-search]')) return;
       ev.preventDefault();
       ev.stopPropagation(); // a moldura (js/shell.js) não precisa navegar: já estamos no cardápio
       commit({ q: ev.target.q.value.trim() });
+      if (!WIDE.matches) ev.target.q.blur(); // tablet: fecha o teclado para mostrar os resultados
     };
     header?.addEventListener('input', onHeaderInput);
     header?.addEventListener('submit', onHeaderSubmit);
@@ -462,8 +467,10 @@ export default {
       setCompact(false);
       paint(state, { force: true });
     };
+    const onSearchPlace = () => setCompact(false); // girou o tablet: a busca mudou de lugar
     WIDE.addEventListener('change', onLayout);
     XWIDE.addEventListener('change', onLayout);
+    HEADER_SEARCH.addEventListener('change', onSearchPlace);
     window.addEventListener('scroll', onScroll, { passive: true });
 
     centerChip(chipOf(state.cat), 'instant');
@@ -489,6 +496,7 @@ export default {
       header?.removeEventListener('submit', onHeaderSubmit);
       WIDE.removeEventListener('change', onLayout);
       XWIDE.removeEventListener('change', onLayout);
+      HEADER_SEARCH.removeEventListener('change', onSearchPlace);
       live.delete(root);
     };
   },

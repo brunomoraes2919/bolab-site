@@ -1,10 +1,10 @@
 // BOLAB — meus pedidos (#/pedidos): em andamento primeiro, depois os anteriores.
-import { html, icon, money, plural, on, toast } from '../ui.js';
+import { html, icon, money, plural, on } from '../ui.js';
 import { lineThumb, sectionHead } from '../components.js';
 import { orders } from '../store.js';
-import { navigate } from '../router.js';
+import { SITE } from '../data/site.js';
 import { whenStore, keepFocus } from './cart.js';
-import { isClosed, isOff, isPickup, isPixPending, statusBadge, whenShort } from './order.js';
+import { isClosed, isOff, isPickup, isPixPending, needsSend, reorderAndGo, statusBadge, whenShort } from './order.js';
 import { accountPage, bindAccount } from './account.js';
 
 const MAX_THUMBS = 4;
@@ -15,7 +15,8 @@ function orderCard(order) {
   const extra = order.items.length - shown.length;
   const names = order.items.map((l) => (l.qty > 1 ? `${l.qty}× ${l.name}` : l.name)).join(', ');
   const closed = isClosed(order);
-  const pending = isPixPending(order);
+  const pending = !SITE.demo && isPixPending(order);
+  const unsent = needsSend(order); // sem servidor: a BOLAB ainda não recebeu este pedido
   const href = `#/pedido/${order.id}`;
   return html`
     <li class="card ord-card">
@@ -40,9 +41,11 @@ function orderCard(order) {
         </p>
         ${closed
           ? html`<button class="btn btn--secondary btn--sm" type="button" id="ord-again-${order.id}" data-reorder="${order.id}">${icon('repeat')}Pedir de novo</button>`
-          : pending
-            ? html`<a class="btn btn--sm" href="${href}">${icon('pix')}Pagar com Pix</a>`
-            : html`<a class="btn btn--soft btn--sm" href="${href}">Acompanhar${icon('chevron-right')}</a>`}
+          : unsent
+            ? html`<a class="btn btn--sm" href="${href}">${icon('whatsapp')}Enviar pedido</a>`
+            : pending
+              ? html`<a class="btn btn--sm" href="${href}">${icon('pix')}Pagar com Pix</a>`
+              : html`<a class="btn btn--soft btn--sm" href="${href}">Acompanhar${icon('chevron-right')}</a>`}
       </div>
     </li>
   `;
@@ -53,7 +56,7 @@ function emptyAll() {
     <div class="card empty">
       <div class="empty__art">${icon('receipt')}</div>
       <h2>Você ainda não fez pedidos</h2>
-      <p>Quando fizer, o acompanhamento aparece aqui: do forno até a sua mesa.</p>
+      <p>Quando fizer, ele aparece aqui, com o dia e o horário combinados.</p>
       <div class="cart-empty__cta">
         <a class="btn" href="#/cardapio">Ver cardápio</a>
         <a class="btn btn--secondary" href="#/monte-seu-bolo">${icon('cube')}Montar meu bolo em 3D</a>
@@ -114,12 +117,7 @@ export default {
     const page = root.firstElementChild;
     if (!page) return undefined; // sessão encerrada: o roteador já está levando ao login
     bindAccount(root);
-    on(page, 'click', '[data-reorder]', (_ev, btn) => {
-      const n = orders.reorder(btn.dataset.reorder);
-      if (!n) return;
-      toast(n === 1 ? 'O item voltou para o carrinho.' : 'Os itens voltaram para o carrinho.', { type: 'success' });
-      navigate('/carrinho');
-    });
+    on(page, 'click', '[data-reorder]', (_ev, btn) => reorderAndGo(btn.dataset.reorder));
     return whenStore('orders', () => keepFocus(() => ctx.rerender()));
   },
 };

@@ -1,0 +1,9 @@
+# BOLAB — loja online.
+# Obs.: buscadores só leem este arquivo na RAIZ do endereço. Enquanto a loja estiver em
+# brunomoraes2919.github.io/bolab-site/ (uma pasta), ele não é consultado; passa a valer
+# quando a loja tiver domínio próprio. O sitemap pode ser informado direto no Google Search Console.
+User-agent: *
+Allow: /
+Disallow: /lab/
+
+Sitemap: https://brunomoraes2919.github.io/bolab-site/sitemap.xml

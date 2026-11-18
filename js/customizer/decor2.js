@@ -7,7 +7,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rng, hashString, makeCanvas, texture } from './textures.js';
 import { cleanOffset, pathAt } from './geometry.js';
 import { decorOptions } from './pricing.js';
-import { FENCE_AWAY, signedDist } from './occupancy.js';
+import { FENCE_AWAY, signedDist, FENCES } from './occupancy.js';
 import { Batch, frameQuat, surface, paint, plain, smooth, gomo, newPart, groundBlob, leanQuat, addVol, plannedHeights } from './decor.js';
 
 const TAU = Math.PI * 2;
@@ -1065,38 +1065,115 @@ function fingerGeometry(D) {
   }, { wrapV: true, shade: true, orient: true });
 }
 
+/**
+ * Biscoito champanhe em pé: comprido, de ponta arredondada, com a frente abaulada e a casquinha de açúcar.
+ * Costas em z = 0 (encostadas no bolo); altura 1 (a escala em y dá a altura).
+ */
+function ladyfingerGeometry(D) {
+  const lowp = D < 1;
+  const ring = lowp
+    ? [[-0.108, 0, 0.7], [-0.1, 0.04, 0.84], [-0.06, 0.076, 0.97], [0, 0.088, 1], [0.06, 0.076, 0.97], [0.1, 0.04, 0.84], [0.108, 0, 0.7]]
+    : [[-0.108, 0, 0.68], [-0.107, 0.022, 0.78], [-0.096, 0.048, 0.88], [-0.07, 0.072, 0.96], [-0.036, 0.085, 1], [0, 0.089, 1], [0.036, 0.085, 1], [0.07, 0.072, 0.96], [0.096, 0.048, 0.88], [0.107, 0.022, 0.78], [0.108, 0, 0.68]];
+  // fileiras (altura, encolhimento da seção, tom): pé e ponta arredondados
+  const rows = lowp
+    ? [[0, 0.6, 0.72], [0.03, 0.96, 0.86], [0.9, 1, 1], [0.97, 0.8, 1], [1, 0, 0.96]]
+    : [[0, 0.5, 0.7], [0.012, 0.8, 0.8], [0.04, 0.97, 0.9], [0.1, 1, 0.98], [0.88, 1, 1], [0.94, 0.93, 1], [0.975, 0.76, 1], [0.993, 0.5, 0.98], [1, 0, 0.96]];
+  const nu = rows.length - 1;
+  const nv = ring.length;
+  return surface(nu, nv, (u, v, p) => {
+    const i = Math.round(u * nu);
+    const j = Math.round(v * nv) % nv;
+    const [y, k, t] = rows[i];
+    const [x, z, tone] = ring[j];
+    // casquinha levemente irregular (o açúcar racha ao assar)
+    const bump = lowp || z < 0.03 ? 0 : (hash2(i * 3 + 1, j) - 0.5) * 0.006;
+    p.set(x * k, y, 0.02 + (z - 0.02 + bump) * k);
+    return t * tone * (1 - 0.06 * hash2(j, i + 5));
+  }, { wrapV: true, shade: true, orient: true });
+}
+
+/**
+ * Canudo de wafer: tubinho comprido, listrado em espiral (a malha acompanha a espiral: as listras caem em
+ * colunas inteiras de vértices), com a boca oca em cima. Eixo y, centrado; altura 1; raio 0,05.
+ */
+function waferRollGeometry(D) {
+  const lowp = D < 1;
+  const R = 0.05;
+  const nv = lowp ? 10 : 14;
+  // fileiras bem juntas: a malha gira com a espiral, e com poucas fileiras o canudo sairia torcido
+  const N = lowp ? 8 : 14;
+  const rows = [...Array.from({ length: N + 1 }, (_, i) => i / N), 1, 0.96];
+  const nu = rows.length - 1;
+  const geo = surface(nu, nv, (u, v, p) => {
+    const i = Math.round(u * nu);
+    const y = rows[i];
+    const inner = i >= nu - 1; // as duas últimas fileiras dobram para dentro: a boca do canudo
+    const rad = inner ? R * (i === nu ? 0.5 : 0.62) : R;
+    const a = v * TAU + y * 5.2;
+    p.set(rad * Math.sin(a), y, rad * Math.cos(a));
+    const j = Math.round(v * nv) % nv;
+    // tom 2 = listra de chocolate; 1 = wafer; a boca é escura
+    return inner ? 0.42 : j % (nv / 2) === 0 ? 2 : 0.92 + 0.08 * hash2(j, 3);
+  }, { wrapV: true, shade: true, orient: true });
+  const col = geo.attributes.color;
+  const wafer = new THREE.Color('#ecd2a2');
+  const stripe = new THREE.Color('#6b3d20');
+  for (let i = 0; i < col.count; i++) {
+    const t = col.getX(i);
+    if (t > 1.5) col.setXYZ(i, stripe.r, stripe.g, stripe.b);
+    else col.setXYZ(i, wafer.r * t, wafer.g * t, wafer.b * t);
+  }
+  return geo;
+}
+
+const FENCE_LOOK = {
+  chocolate: { key: 'x2-finger', make: fingerGeometry, mat: chocolate, tints: ['#6a3c20', '#643820', '#704226', '#5f351d'], jitter: 0.035 },
+  champanhe: { key: 'x2-ladyfinger', make: ladyfingerGeometry, mat: matte, tints: ['#edcf9a', '#e9c88f', '#f0d5a4', '#e5c086'], jitter: 0.02 },
+  canudos: { key: 'x2-waferRoll', make: waferRollGeometry, mat: matte, tints: ['#ffffff', '#f6ecdc', '#fff6ea'], jitter: 0.12 },
+};
+
 function buildWaferFence(ctx, part) {
-  const { config, m, lib } = ctx;
-  const r = rng(hashString(`wafer${m.shape}${m.R}`));
-  const batch = new Batch(lib.shape('x2-finger', () => fingerGeometry(lib.detail)), chocolate(lib), { cast: true, receive: true });
-  const TINTS = ['#6a3c20', '#643820', '#704226', '#5f351d'];
+  const { config, m, lib, layout } = ctx;
+  const kind = FENCES[layout.opt('wafer').kind] ? layout.opt('wafer').kind : 'chocolate';
+  const F = FENCES[kind];
+  const look = FENCE_LOOK[kind];
+  const r = rng(hashString(`wafer${kind}${m.shape}${m.R}`));
+  const batch = new Batch(lib.shape(look.key, () => look.make(lib.detail)), look.mat(lib), { cast: true, receive: true });
   const pt = {};
   part.volumes = [];
-  // com calda, as barrinhas encostam nas gotas (ficam um pouco afastadas da cobertura) em vez de atravessá-las
+  // com calda, as peças encostam nas gotas (ficam um pouco afastadas da cobertura) em vez de atravessá-las
   const away = config.drip?.on ? FENCE_AWAY : 0;
   (m.stack || [m]).forEach((t) => {
-    // as barrinhas são distribuídas pelo meio da espessura delas: nas quinas, o vão de fora fica pela metade
-    const mid = 0.034;
+    // as peças são distribuídas pelo meio da espessura delas: nas quinas, o vão de fora fica pela metade
+    const mid = F.mid;
     const wall = cleanOffset(t.frost, mid + away);
-    const n = Math.max(8, Math.round(wall.length / 0.1005));
+    const n = Math.max(8, Math.round(wall.length / F.step));
     const step = wall.length / n;
     const base = t.y0 - (t.index ? 0 : 0.01);
     for (let i = 0; i < n; i++) {
       pathAt(wall, i * step, pt);
-      _x.set(pt.nz, 0, -pt.nx); // x = Y × normal → a frente (+Z) da barrinha olha para fora
+      _x.set(pt.nz, 0, -pt.nx); // x = Y × normal → a frente (+Z) da peça olha para fora
       frameQuat(_x, Y, _q);
-      const h = t.y0 + t.Ht + 0.1 + (r() - 0.5) * 0.035 - base;
-      const wide = Math.min(1.06, step / 0.1) * 1.005;
-      // numa reentrância (o "v" do coração) as barrinhas dos dois lados se encontram: a que entraria na
+      const h = t.y0 + t.Ht + F.rise + (r() - 0.5) * look.jitter - base;
+      const wide = Math.min(1.06, step / (F.step * 0.995)) * 1.005;
+      const half = kind === 'champanhe' ? 0.054 : kind === 'canudos' ? 0 : 0.022;
+      // numa reentrância (o "v" do coração) as peças dos dois lados se encontram: a que entraria na
       // cobertura (ou na calda) do outro lado fica de fora
       const reach = mid + away - 0.007;
-      if (m.shape === 'heart' && (-signedDist(t.frost, pt.x - pt.tx * 0.022 * wide, pt.z - pt.tz * 0.022 * wide) < reach || -signedDist(t.frost, pt.x + pt.tx * 0.022 * wide, pt.z + pt.tz * 0.022 * wide) < reach)) continue;
-      batch.add(pt.x - pt.nx * (mid - 0.003), base, pt.z - pt.nz * (mid - 0.003), _q, [wide, h, 1], pick(TINTS, r), 0.06);
-      // a barrinha: duas colunas de esferas no meio da espessura dela
-      const rows = Math.max(2, Math.ceil((h - 0.04) / 0.052));
+      if (m.shape === 'heart' && (-signedDist(t.frost, pt.x - pt.tx * (half + 0.012) * wide, pt.z - pt.tz * (half + 0.012) * wide) < reach || -signedDist(t.frost, pt.x + pt.tx * (half + 0.012) * wide, pt.z + pt.tz * (half + 0.012) * wide) < reach)) continue;
+      if (kind === 'canudos') {
+        // o canudo é redondo: fica no meio da espessura da cerca, com um giro qualquer
+        batch.add(pt.x, base, pt.z, _q2.copy(_q).multiply(_q3.setFromAxisAngle(Y, r() * TAU)), [wide, h, wide], pick(look.tints, r), 0.06);
+      } else {
+        batch.add(pt.x - pt.nx * (mid - 0.003), base, pt.z - pt.nz * (mid - 0.003), _q, [wide, h, 1], pick(look.tints, r), 0.06);
+      }
+      // a peça: colunas de esferas no meio da espessura dela
+      const rad = kind === 'champanhe' ? 0.047 : kind === 'canudos' ? 0.05 : 0.031;
+      const rows = Math.max(2, Math.ceil((h - 0.04) / (rad * 1.7)));
       for (let j = 0; j <= rows; j++) {
-        const y = base + 0.03 + ((h - 0.06) * j) / rows;
-        for (let q = -1; q <= 1; q += 2) part.volumes.push({ x: pt.x - pt.tx * q * 0.022 * wide, y, z: pt.z - pt.tz * q * 0.022 * wide, r: 0.031, kind: 'fence' });
+        const y = base + rad + ((h - 2 * rad) * j) / rows;
+        if (half) for (let q = -1; q <= 1; q += 2) part.volumes.push({ x: pt.x - pt.tx * q * half * wide, y, z: pt.z - pt.tz * q * half * wide, r: rad, kind: 'fence' });
+        else part.volumes.push({ x: pt.x, y, z: pt.z, r: rad, kind: 'fence' });
       }
     }
   });
@@ -1656,3 +1733,6 @@ export function extraDecorHeight(config) {
 }
 
 export { newPart };
+
+// Ajudantes que os módulos de peças carregados sob demanda (pecas-*.js) reaproveitam.
+export { rgbOf, mix, shift, shown, lightOf, saturOf, tintsOf, harmonyOf, dye, piece, lathe, tube, trail, onDome, planarUV, matte, paper, fondant, chocolate, candy, sugar, stickMat, goldLeaf, smallCast, planOf, pileBlob, uprightQuat, axisQuat, wallQuat, facingQuat, discQuat, hash2, pick, bowGeometry };

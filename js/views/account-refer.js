@@ -2,7 +2,7 @@
 // DEMONSTRAÇÃO: o código é gerado a partir da conta, mas ainda não existe contagem de indicações.
 import { html, icon, on, toast, money, copyText } from '../ui.js';
 import { auth } from '../store.js';
-import { SITE } from '../data/site.js';
+import { SITE, COUPONS } from '../data/site.js';
 import { accountPage, bindAccount, firstName } from './account.js';
 import { demoNote } from './auth.js';
 
@@ -27,8 +27,14 @@ function referralCode(user) {
 
 const siteUrl = () => `${location.origin}${location.pathname}`;
 
+/* Enquanto a loja está em demonstração o código pessoal ainda não vale no carrinho. Para o convite
+   não prometer o que não acontece, ele leva o cupom de primeiro pedido que já funciona (BOLAB10).
+   Com a loja no ar (SITE.demo desligado), o convite passa a levar o código da pessoa. */
+const WELCOME = COUPONS.BOLAB10;
 function inviteText(code) {
-  return `Pedi meu bolo na ${SITE.name} e amei! Use meu código ${code} e ganhe ${FRIEND_PCT}% OFF no seu primeiro pedido: ${siteUrl()}`;
+  const working = SITE.demo && WELCOME ? WELCOME.code : code;
+  const pct = SITE.demo && WELCOME ? WELCOME.value : FRIEND_PCT;
+  return `Pedi meu bolo na ${SITE.name} e recomendo. Use o cupom ${working} e ganhe ${pct}% OFF no primeiro pedido: ${siteUrl()}`;
 }
 
 const STEPS = [
@@ -54,6 +60,7 @@ export default {
         <section class="card acc-refer">
           <h2>Ganhe ${reward()} a cada indicação</h2>
           <p>Quem você indicar ganha ${FRIEND_PCT}% OFF no primeiro pedido.</p>
+          ${demoNote(`o programa ainda não está valendo. Por enquanto o convite leva o cupom ${WELCOME ? WELCOME.code : ''}, que já funciona no carrinho.`)}
 
           <div class="acc-code">
             <div>
@@ -102,7 +109,6 @@ export default {
               <strong class="acc-figure">${money(0)}</strong>
             </div>
           </div>
-          ${demoNote('as indicações ainda não são contabilizadas e o código não vale como cupom no carrinho.')}
         </section>
       `,
     });

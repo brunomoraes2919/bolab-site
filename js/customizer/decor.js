@@ -4,8 +4,10 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rng, hashString, makeCanvas, texture } from './textures.js';
 import { offsetPath, cleanOffset, pathAt, pointInPath, rayHit } from './geometry.js';
-import { allocate, plannedFor, plaqueSize, baseRingScale, signedDist } from './occupancy.js';
+import { allocate, plannedFor, plaqueSize, baseRingScale, signedDist, layoutBase, plaqueLiftOf, pipingPlan, pipeBlob, pipeReach, PIPE } from './occupancy.js';
 import { getDecor, getQuantity, getPiping } from '../data/customizer.js';
+import { getCandlePalette } from '../data/customizer-decor.js';
+import { KIT, kitBuilder, kitPending, decorIdsOf, onDecorReady, ensureDecor, warmDecorModules, coatShare, isCoat } from './kit.js';
 import { decorOptions } from './pricing.js';
 
 const TAU = Math.PI * 2;
@@ -427,6 +429,193 @@ function ruffleGeometry(D) {
   }, { wrapV: true, shade: true, orient: true });
 }
 
+/* ───────── Bicos da rodada 5 ───────── */
+
+/** Tubo de creme ao longo de at(u) (eixo x = ao longo da borda), com gomos de bico pitanga. */
+function pipedTube(nu, nv, at, rr, lobes, { floor = true, taper = null, ref = Y } = {}) {
+  const P = new THREE.Vector3();
+  const A = new THREE.Vector3();
+  const B = new THREE.Vector3();
+  const T = new THREE.Vector3();
+  const S = new THREE.Vector3();
+  const N = new THREE.Vector3();
+  return surface(nu, nv, (u, v, p) => {
+    at(u, P);
+    at(Math.min(1, u + 0.004), A);
+    at(Math.max(0, u - 0.004), B);
+    T.subVectors(A, B).normalize();
+    S.crossVectors(T, ref).normalize();
+    N.crossVectors(S, T);
+    const a = v * TAU;
+    const k = lobes ? gomo(a, lobes) : 1;
+    const rad = rr * (taper ? taper(u) : 1) * (1 - (lobes ? 0.28 : 0) * (1 - k));
+    p.copy(P).addScaledVector(S, rad * Math.cos(a)).addScaledVector(N, rad * Math.sin(a));
+    if (floor && p.y < 0) p.y = 0;
+    return (0.55 + 0.45 * k) * (0.74 + 0.26 * smooth(-0.5, 0.5, Math.sin(a)));
+  }, { wrapV: true, shade: true, orient: true });
+}
+
+/**
+ * Trança: três cordões que passam um por cima do outro (cada um faz um "8" deitado). Uma peça = um passo da
+ * trança; emendadas em fila, formam a trança contínua. Eixo x = ao longo da borda.
+ */
+function braidGeometry(D) {
+  const L = 0.15;
+  const amp = 0.036;
+  const rr = 0.027;
+  const parts = [0, 1, 2].map((i) =>
+    pipedTube(D < 1 ? 10 : 18, D < 1 ? 6 : 10, (u, out) => {
+      const th = u * TAU + (i * TAU) / 3;
+      // de lado a lado (sen θ) e, no cruzamento, por cima ou por baixo (sen 2θ)
+      out.set((u - 0.5) * L * 1.04, rr * 0.9 + 0.017 * (1 + Math.sin(2 * th)), amp * Math.sin(th));
+    }, rr, D < 1 ? 0 : 5),
+  );
+  return mergeGeometries(parts);
+}
+
+/** Coração de conchas: duas conchas que nascem lado a lado e se encontram na cauda. A ponta olha para +z. */
+function heartShellGeometry(D) {
+  const k = 0.66;
+  const ang = 1.168; // abertura de cada concha em relação ao eixo x
+  const half = (sign) => {
+    const g = shellGeometry(D).clone();
+    g.scale(k, k * 1.05, k);
+    g.rotateY(sign > 0 ? -ang : -(Math.PI - ang));
+    // a cabeça fica em (∓0,062, −0,045); a cauda vai até a ponta do coração, perto de (0, 0,10)
+    g.translate(-sign * 0.044, 0, -0.003);
+    return g;
+  };
+  return mergeGeometries([half(1), half(-1)]);
+}
+
+/** Florzinha de bico (drop flower): cinco pétalas gordinhas em volta de um miolo afundado, com a torção do bico. */
+function dropFlowerGeometry(D) {
+  const R = 0.082;
+  const H = 0.05;
+  const petals = 5;
+  return surface(D < 0.5 ? 5 : D < 1 ? 7 : 12, petals * (D < 0.5 ? 4 : D < 1 ? 4 : 8), (u, v, p) => {
+    const a0 = v * TAU;
+    const a = a0 + (1 - u) * 0.5; // o bico gira ao soltar: as pétalas saem levemente torcidas
+    const k = Math.pow(Math.abs(Math.cos((petals * a0) / 2)), 0.55); // 1 no meio da pétala, 0 no vão
+    const rad = R * Math.pow(u, 0.9) * (0.5 + 0.5 * k);
+    // perfil: nasce no miolo (baixo), sobe na barriga da pétala e desce até a cobertura
+    const y = H * Math.sin(Math.PI * Math.pow(u, 0.62)) * (0.42 + 0.58 * k) + 0.004 * (1 - u);
+    p.set(rad * Math.cos(a), Math.max(0, y), rad * Math.sin(a));
+    return (0.5 + 0.5 * k) * (0.62 + 0.38 * smooth(0.08, 0.5, u)) * (1 - 0.18 * smooth(0.8, 1, u));
+  }, { wrapV: true, shade: true, orient: true });
+}
+
+/** Pingo alto (suspiro de bico pitanga): barriga redonda de gomos que afina numa ponta comprida, um pouco caída. */
+function kissGeometry(D) {
+  const lobes = 6;
+  const r = 0.074;
+  const h = 0.145;
+  return surface(D < 0.5 ? 7 : D < 1 ? 10 : 16, lobes * (D < 0.5 ? 2 : D < 1 ? 3 : 6), (u, v, p) => {
+    const a = v * TAU;
+    const w = smooth(0.3, 0.85, u);
+    const body = Math.pow(1 - u, 0.42) * (1 - w) + 1.1 * Math.pow(1 - u, 1.25) * w;
+    const foot = 0.9 + 0.1 * smooth(0, 0.12, u);
+    const k = gomo(a, lobes, 0.55);
+    const rad = r * body * foot * (1 - (0.26 - 0.12 * u) * (1 - k));
+    const tw = a + u * 0.8;
+    const bend = 0.02 * Math.pow(u, 3.2);
+    p.set(rad * Math.cos(tw) + bend, h * Math.pow(u, 0.92) - 0.01 * Math.pow(u, 8), rad * Math.sin(tw));
+    return (0.46 + 0.54 * k) * (0.76 + 0.24 * smooth(0, 0.3, u));
+  }, { wrapV: true, shade: true, orient: true });
+}
+
+/** Grama (bico de vários furinhos): tufo de fios finos que sobem e abrem para os lados, cada um com a sua curva. */
+function grassGeometry(D) {
+  const r = rng(733);
+  const n = D < 0.5 ? 5 : D < 1 ? 7 : 12;
+  const parts = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU + r() * 0.7;
+    const d0 = i === 0 ? 0 : 0.018 + r() * 0.03;
+    const len = 0.085 + r() * 0.05;
+    const flare = 0.25 + r() * 0.6;
+    const x0 = Math.cos(a) * d0;
+    const z0 = Math.sin(a) * d0;
+    parts.push(
+      pipedTube(D < 1 ? 3 : 5, D < 1 ? 3 : 4, (u, out) => {
+        const bend = flare * u * u;
+        out.set(x0 + Math.cos(a) * len * 0.5 * bend, len * (u - 0.22 * bend * u), z0 + Math.sin(a) * len * 0.5 * bend);
+      }, 0.0085 + r() * 0.002, 0, { floor: false, taper: (u) => 1 - 0.72 * u, ref: new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)) }),
+    );
+  }
+  const g = mergeGeometries(parts);
+  // sombra assada: o pé do tufo é mais fundo que as pontas
+  const pos = g.attributes.position;
+  const col = g.attributes.color;
+  for (let i = 0; i < pos.count; i++) {
+    const t = 0.52 + 0.48 * smooth(0, 0.09, pos.getY(i));
+    col.setXYZ(i, t, t, t);
+  }
+  return g;
+}
+
+/**
+ * Escama (efeito pétala): uma bolinha de creme puxada com a espátula — cabeça redonda e alta, rastro chato que
+ * afina. Eixo x = sentido em que foi puxada; y = para fora da lateral.
+ */
+function scaleGeometry(D) {
+  const R = 0.056;
+  const L = 0.118;
+  // (a lateral inteira leva centenas destas: no celular a malha é bem leve)
+  return surface(D < 0.5 ? 4 : D < 1 ? 6 : 11, D < 0.5 ? 5 : D < 1 ? 7 : 12, (u, v, p) => {
+    const a = v * TAU;
+    // u = 0 na ponta do rastro … 1 no alto da cabeça
+    const t = 1 - u;
+    const head = t < 0.34 ? Math.sqrt(Math.max(0, 1 - (1 - t / 0.34) ** 2)) : 1;
+    const tail = t < 0.34 ? 1 : Math.pow(1 - (t - 0.34) / 0.66, 0.8);
+    const wide = R * head * (0.3 + 0.7 * tail);
+    const tall = 0.034 * head * (0.12 + 0.88 * Math.pow(tail, 1.6));
+    const x = -R * 0.9 + L * t;
+    p.set(x, Math.max(0, tall * (0.55 + 0.45 * Math.sin(a))), wide * Math.cos(a));
+    return (0.62 + 0.38 * smooth(-0.6, 0.6, Math.sin(a))) * (0.72 + 0.28 * Math.pow(tail, 0.7));
+  }, { wrapV: true, shade: true, orient: true });
+}
+
+/**
+ * Arabesco: um "S" de cordão fino com as duas pontas enroladas. Plano xz (x = ao longo da lateral, z = para
+ * cima), y = para fora. Largura ≈ 0,30, altura ≈ 0,15.
+ */
+function scrollGeometry(D) {
+  const rr = 0.0125;
+  const curve = (t, out) => {
+    // metade: espiral que nasce no meio do "S" e se enrola; a outra metade é o reflexo pelo centro
+    const q = Math.abs(t);
+    const rad = 0.072 * (1 - 0.7 * q);
+    const phi = Math.PI + 1.75 * Math.PI * q;
+    const x = 0.072 + rad * Math.cos(phi);
+    const z = rad * Math.sin(phi);
+    const sgn = t < 0 ? -1 : 1;
+    // (deitado: o "S" corre ao longo da lateral)
+    out.set(sgn * x, rr * 0.85, sgn * z);
+  };
+  const P = new THREE.Vector3();
+  const A = new THREE.Vector3();
+  const B = new THREE.Vector3();
+  const T = new THREE.Vector3();
+  const S = new THREE.Vector3();
+  const N = new THREE.Vector3();
+  return surface(D < 0.5 ? 22 : D < 1 ? 34 : 64, D < 1 ? 5 : 8, (u, v, p) => {
+    const t = u * 2 - 1;
+    curve(t, P);
+    curve(Math.min(1, t + 0.004), A);
+    curve(Math.max(-1, t - 0.004), B);
+    T.subVectors(A, B).normalize();
+    S.crossVectors(T, Y).normalize();
+    N.crossVectors(S, T);
+    const a = v * TAU;
+    const end = Math.min(1, (1 - Math.abs(t)) / 0.06);
+    const rad = rr * (0.45 + 0.55 * end) * (1 - 0.25 * Math.abs(t));
+    p.copy(P).addScaledVector(S, rad * Math.cos(a)).addScaledVector(N, rad * Math.sin(a));
+    if (p.y < 0) p.y = 0;
+    return 0.7 + 0.3 * smooth(-0.5, 0.5, Math.sin(a));
+  }, { wrapV: true, shade: true, orient: true });
+}
+
 /**
  * Pingo de tinta dourada: mancha chata (quase sem altura), de contorno irregular, levemente abaulada no meio
  * para pegar o brilho. kind 0/1 = pingos (dois contornos diferentes) · 2 = risco: gota comprida, com a cabeça
@@ -739,6 +928,13 @@ export function createDecorLibrary(tex, tier = { detail: 1, physical: true }) {
       rope: () => geo('rope', () => ropeGeometry(D)),
       zigzag: () => geo('zigzag', () => zigzagGeometry(D)),
       ruffle: piped('ruffle', ruffleGeometry),
+      braid: piped('braid', braidGeometry),
+      heartShell: piped('heartShell', heartShellGeometry),
+      dropFlower: piped('dropFlower', dropFlowerGeometry),
+      kiss: piped('kiss', kissGeometry),
+      grass: piped('grass', grassGeometry),
+      scale: piped('scale', scaleGeometry),
+      scroll: piped('scroll', scrollGeometry),
       bow: () => geo('bow', () => bowGeometry(D)),
       fleck: () => geo('fleck', () => (D < 1 ? new THREE.OctahedronGeometry(1, 0) : new THREE.SphereGeometry(1, 6, 4)).scale(1, 0.22, 0.75)),
       splat: (kind) => geo(`splat${kind}`, () => splatGeometry(kind, D)),
@@ -809,24 +1005,7 @@ export function createDecorLibrary(tex, tier = { detail: 1, physical: true }) {
 
 /* ───────── Composição: quem fica onde no topo ───────── */
 
-/**
- * Medidas de cada bico (1 = 10 cm, o tamanho real não muda com o tamanho do bolo):
- * r = meia largura da borda · step = distância entre peças (para se tocarem) · inset = recuo no topo (× r) ·
- * out = afastamento da lateral na base (× r) · lean = quanto a peça da base se apoia no canto bolo/prato.
- */
-const PIPE = {
-  bolinhas: { r: 0.064, step: 0.123, inset: 0.94, out: 0.62, lean: 0.3 },
-  conchas: { r: 0.08, step: 0.165, inset: 0.92, out: 0.6, lean: 0.42 },
-  estrelas: { r: 0.086, step: 0.158, inset: 0.94, out: 0.6, lean: 0.45 },
-  rosetas: { r: 0.158, step: 0.276, inset: 0.93, out: 0.45, lean: 0.62, baseScale: 0.86 },
-  folhas: { r: 0.06, step: 0.084, inset: 2.1, out: 0.2, lean: 0 },
-  perolao: { r: 0.098, step: 0.188, inset: 0.94, out: 0.62, lean: 0.3, scale: 1.52 },
-  corda: { r: 0.046, step: 0.138, inset: 0.95, out: 0.7, lean: 0.35, along: true },
-  ziguezague: { r: 0.075, step: 0.13, inset: 0.98, out: 0.78, lean: 0.4, along: true },
-  babado: { r: 0.05, step: 0.13, inset: 0.3, out: 0.12, lean: 0.95, topLean: 0.9, along: true, outward: true },
-};
-PIPE.vintage = PIPE.conchas; // o conjunto vintage usa conchas no topo e na base
-
+// (as medidas de cada bico — PIPE — e onde ele é aplicado — pipingPlan — ficam em occupancy.js)
 
 /**
  * O que o distribuidor de decorações precisou adaptar neste bolo, em frases prontas para o painel.
@@ -842,21 +1021,11 @@ export function decorNotes(config) {
     const found = plannedFor(config);
     if (!found?.m) return { adapted: false, messages: [], unfit: [] };
     const notes = (found.plan || decorLayout(config, found.m)).notes;
-    return { adapted: Boolean(notes.adapted), messages: notes.messages.slice(), unfit: notes.unfit.slice(), unfitIds: (notes.unfitIds || []).slice(), fit: { ...(notes.fit || {}) } };
+    return { adapted: Boolean(notes.adapted), messages: notes.messages.slice(), unfit: notes.unfit.slice(), unfitIds: (notes.unfitIds || []).slice(), fit: { ...(notes.fit || {}) }, placed: (notes.placed || []).map((q) => ({ ...q })) };
   } catch (err) {
     console.error('[personalizador] avisos das decorações', err);
     return { adapted: false, messages: [], unfit: [] };
   }
-}
-
-/**
- * A que altura fica o pé da plaquinha. Com velas de número (que ficam bem na frente dela) a plaquinha sobe,
- * para a mensagem aparecer por cima dos algarismos em vez de ficar escondida atrás deles.
- */
-export function plaqueLiftOf(config) {
-  const d = config?.decor || {};
-  const numbered = (d.items || []).includes('velas') && d.candleStyle === 'numero' && /\d/.test(String(d.number ?? ''));
-  return numbered ? 0.66 : 0.34;
 }
 
 const NO_PLAN = () => ({
@@ -884,25 +1053,12 @@ const NO_PLAN = () => ({
 export function decorLayout(config, m) {
   const items = config.decor.items;
   const has = (id) => items.includes(id);
-  const style = config.piping.style;
-  const combo = Boolean(getPiping(style)?.combo);
-  const pipeTop = style !== 'liso' && (combo || config.piping.where !== 'base');
-  const pipe = PIPE[style];
-  // com a cerca de chocolate em volta, o bico que passaria da beira recua para dentro (não atravessa as barrinhas)
-  const fenceIn = pipeTop && has('wafer') ? (style === 'folhas' ? 0.09 : style === 'babado' ? 0.085 : 0) : 0;
-  // faixa da borda ocupada pelo bico (as peças esticam até uns 16% para fechar a volta sem vão)
-  const border = pipeTop ? Math.max(pipe.r * 2 + 0.012, pipe.r * (pipe.inset + 1.2) + 0.004) + (style === 'folhas' ? fenceIn : 0) : 0.03;
-  const rho = m.rMin;
-  const topY = (m.y0 || 0) + m.Ht + (config.drip.on ? 0.017 : 0);
-  const text = config.decor.message || '';
-  const message = config.decor.messageMode === 'bico' ? '' : text; // plaquinha no palito
-  const script = config.decor.messageMode === 'bico' ? text : ''; // escrita com bico no topo
+  const base = layoutBase(config, m);
+  const { border, rho, topY, pipe, pipeTop, fenceIn, message, script, named, plaqueLift } = base;
   const opt = (id) => decorOptions(config, id);
-  const named = Boolean(config.decor.topper?.text?.trim()); // topo personalizado (nome em acrílico)
-  const plaqueLift = plaqueLiftOf(config);
   let alloc;
   try {
-    alloc = allocate(config, m, { border, rho, topY, pipe, pipeTop, message, script, named, plaqueLift });
+    alloc = allocate(config, m, base);
   } catch (err) {
     // nunca derruba o bolo: sem plano, ele aparece só com a cobertura e o bico
     console.error('[personalizador] distribuição das decorações', err);
@@ -910,11 +1066,16 @@ export function decorLayout(config, m) {
   }
   // até onde (fração do raio) um anel de decoração pode ir sem encostar no bico
   const ringK = Math.max(0.35, Math.min(0.74, 1 - (border + 0.12) / rho));
+  // peças de módulos carregados sob demanda: enquanto o módulo não chega, a chave do plano leva uma marca —
+  // quando ele chega, a chave muda e o motor refaz as peças que estavam esperando
+  const waiting = decorIdsOf(config).filter(kitPending);
+  const coats = items.filter(isCoat).length;
   return {
     has,
     opt,
     pipeTop,
     pipe,
+    piping: base.piping,
     border,
     fenceIn,
     rho,
@@ -933,12 +1094,26 @@ export function decorLayout(config, m) {
     edge: alloc.edge,
     necklace: alloc.necklace,
     sides: alloc.sides,
+    cover: alloc.cover || null,
     fenceOut: alloc.fenceOut,
     heights: alloc.heights,
     stage: alloc.stage,
     notes: alloc.notes,
-    key: alloc.key,
+    // (a chave leva também o que só muda o desenho: paleta das velas, formato da plaquinha, desenho de bentô,
+    // estilo e material do topo — o motor refaz as peças quando ela muda)
+    // (r5-junta3d: e quantos confeitos de cobertura há — no celular a densidade de cada um depende disso)
+    key: `${alloc.key}${waiting.length ? `~${waiting.join()}` : ''}~${coats > 1 ? `c${coats}` : ''}~${config.decor.candlePalette || ''}|${config.decor.plaque || ''}|${config.decor.doodle || ''}|${config.decor.topper?.style || ''}|${config.decor.topper?.finish || ''}`,
   };
+}
+
+/**
+ * Chave do que o bico desenha (o motor refaz o bico quando ela muda): estilo, lugar, cerca em volta e — quando o
+ * bico cobre o topo inteiro ou vai na cintura — o próprio plano (ele preenche o que as peças deixaram livre).
+ */
+export function pipingKey(config, layout) {
+  const pp = layout?.piping || pipingPlan(config);
+  const live = pp.cover || pp.waist || pp.side ? layout?.key || '' : '';
+  return `${config.piping.style}|${config.piping.where}|${config.decor.items.includes('wafer')}|${live}`;
 }
 
 /** Junta volumes ([[x, y, z, r, classe]]) aos que a peça declara (part.volumes), para o teste de sobreposição. */
@@ -1138,6 +1313,9 @@ function topArea(m) {
 /** Pontos da borda que precisam ter uma peça: as quatro quinas; no coração, o bico e a reentrância. */
 function ringAnchors(ring, shape) {
   if (shape === 'round') return [];
+  // r5-estrutura: oval, flor e vulcão não têm quinas — o bico é repartido por igual, como no redondo
+  // (com quatro "quinas" inventadas, num bolo pequeno cada trecho levava uma peça só, esticada até 40%)
+  if (shape === 'oval' || shape === 'flor' || shape === 'vulcao') return [];
   const idx = [];
   let minX = Infinity;
   let maxX = -Infinity;
@@ -1198,12 +1376,12 @@ function ringSlots(ring, shape, step) {
 
 export function buildPiping(ctx) {
   const { config, m, lib, layout } = ctx;
-  const style = config.piping.style;
+  const pp = layout.piping || pipingPlan(config);
+  const style = pp.style;
   const part = newPart();
   part.volumes = [];
   if (style === 'liso') return part;
-  const combo = style === 'vintage';
-  const kind = combo ? 'conchas' : style; // o vintage usa conchas no topo e na base
+  const kind = pp.kind; // o vintage usa conchas no topo e na base; os bicos de lateral, bolinhas
   const spec = PIPE[kind];
   const stack = m.stack || [m];
   const geoOf = {
@@ -1216,18 +1394,27 @@ export function buildPiping(ctx) {
     corda: lib.geo.rope,
     ziguezague: lib.geo.zigzag,
     babado: lib.geo.ruffle,
+    tranca: lib.geo.braid,
+    coracoes: lib.geo.heartShell,
+    florzinhas: lib.geo.dropFlower,
+    pingos: lib.geo.kiss,
+    pitangas: lib.geo.star,
+    grama: lib.geo.grass,
   }[kind];
   // os bicos não entram no passe de sombras: o relevo já vem sombreado nos vértices
   const far = stack.length > 1; // andares: muito mais peças, cada uma menor na tela (malha leve no celular)
   const batch = new Batch(geoOf(far), lib.mat.piping(), { cast: false, receive: true });
+  // miolo de pérola das florzinhas
+  const cores = kind === 'florzinhas' ? new Batch(lib.geo.pearl(), lib.mat.pearl(), { cast: false, receive: true }) : null;
   const r = rng(hashString(`pipe${style}${m.shape}${m.R}`));
   const tangent = new THREE.Vector3();
   const normal = new THREE.Vector3();
   const up = new THREE.Vector3();
   const pt = {};
   const unit = spec.scale || 1;
-  const fenced = config.decor.items.includes('wafer'); // a cerca de wafer cobre a lateral inteira
+  const fenced = config.decor.items.includes('wafer'); // a cerca cobre a lateral inteira
   const fenceIn = layout.fenceIn || 0;
+  const [blobR, blobLift] = pipeBlob(kind);
 
   /**
    * Folhas: guirlanda de pares em V. Em cada par, uma folha é puxada para fora e um pouco para trás e a outra
@@ -1265,21 +1452,37 @@ export function buildPiping(ctx) {
     });
   };
 
-  const ring = (path, y, base, baseSize = spec.baseScale || 1, ledge = null) => {
-    if (kind === 'folhas') return garland(path, y, base, ledge);
+  /** Uma peça pousada (bolinha, pitanga, roseta, pingo, florzinha, coração, tufo de grama) em pt, com o eixo `up`. */
+  const blob = (x, y, z, sc, cls, turn) => {
+    if (spec.face) _x.copy(tangent).negate(); // a ponta do coração olha para fora do bolo
+    else _x.copy(tangent).applyAxisAngle(up, turn);
+    frameQuat(_x, up, _q);
+    batch.add(x, y, z, _q, sc, null, spec.r);
+    const rad = blobR * sc;
+    addVol(part, [[x + up.x * rad * blobLift, y + up.y * rad * blobLift, z + up.z * rad * blobLift, rad, cls]]);
+    if (cores) cores.add(x + up.x * 0.02 * sc, y + up.y * 0.02 * sc, z + up.z * 0.02 * sc, null, 0.017 * sc, null, 0.02);
+  };
+
+  // where: 'top' (borda do topo) · 'base' (pé do andar) · 'waist' (cintura, a meia altura)
+  const ring = (path, y, where, baseSize = spec.baseScale || 1, ledge = null) => {
+    const base = where !== 'top';
+    if (kind === 'folhas') return where === 'waist' ? null : garland(path, y, base, ledge);
     const cls = base ? 'pipebase' : 'pipe';
     const size = base ? baseSize : 1;
-    ringSlots(path, m.shape, spec.step * size).forEach(({ s, k }) => {
+    // pitangas alternadas: uma grande, uma pequena — a volta fecha com um número par de peças
+    const slots = ringSlots(path, m.shape, spec.step * size);
+    slots.forEach(({ s, k }, i) => {
       pathAt(path, s, pt);
-      // na base de um andar de cima, a peça precisa caber no degrau (no coração, o degrau estreita na reentrância)
-      if (ledge && signedDist(ledge, pt.x, pt.z) < spec.r * size * 0.9) return;
+      // na base de um andar de cima, a peça precisa caber no degrau (no coração, o degrau estreita na reentrância):
+      // o que ela avança para fora não pode passar da beira do andar de baixo
+      if (ledge && signedDist(ledge, pt.x, pt.z) < Math.max(spec.r * size * 0.9, pipeReach(kind, spec, spec.lean || 0)[0] * size - 0.012)) return;
       tangent.set(pt.tx, 0, pt.tz);
       normal.set(pt.nx, 0, pt.nz);
       const fit = Math.max(0.86, Math.min(1.16, k)) * size;
       const jit = 0.97 + r() * 0.06;
-      // na base, a peça se apoia no canto entre o bolo e o prato, virada para fora
-      // (no topo, o babado cai para fora da borda — com a cerca em volta, fica em pé)
-      const lean = base ? spec.lean : fenced ? 0 : spec.topLean || 0;
+      // na base, a peça se apoia no canto entre o bolo e o prato, virada para fora; na cintura, fica colada na
+      // parede (no topo, o babado cai para fora da borda — com a cerca em volta, fica em pé)
+      const lean = where === 'waist' ? Math.PI / 2 : base ? spec.lean : fenced ? 0 : spec.topLean || 0;
       up.copy(Y).multiplyScalar(Math.cos(lean)).addScaledVector(normal, Math.sin(lean));
       if (kind === 'conchas' || spec.along) {
         // peças em fila, todas no mesmo sentido (a concha cobre a cauda da anterior; corda e babado se emendam)
@@ -1301,44 +1504,56 @@ export function buildPiping(ctx) {
             [pt.x + pt.tx * 0.1 * fit + up.x * 0.02, y + up.y * 0.02, pt.z + pt.tz * 0.1 * fit + up.z * 0.02, 0.052 * tall * size, cls],
           ]);
         } else {
-          // corda e zigue-zague: cordão contínuo → duas esferas por peça
-          const rad = spec.r * 1.02;
+          // corda, trança e zigue-zague: cordão contínuo → duas esferas por peça
+          const rad = spec.r * 1.02 * size;
           for (let q = -1; q <= 1; q += 2) {
             addVol(part, [[pt.x + pt.tx * q * 0.034 * fit + up.x * rad * 0.5, y + up.y * rad * 0.5, pt.z + pt.tz * q * 0.034 * fit + up.z * rad * 0.5, rad, cls]]);
           }
         }
       } else {
-        _x.copy(tangent).applyAxisAngle(up, kind === 'rosetas' ? (r() - 0.5) * 0.5 : r() * TAU);
-        frameQuat(_x, up, _q);
-        const sc = fit * jit * unit;
-        batch.add(pt.x, y, pt.z, _q, sc, null, spec.r);
-        // bolinha, pitanga ou roseta: uma esfera do tamanho da peça, apoiada na cobertura
-        const rad = (kind === 'estrelas' ? 0.092 : kind === 'rosetas' ? 0.158 : 0.064) * sc;
-        const lift = kind === 'rosetas' ? 0.12 : 0.3;
-        addVol(part, [[pt.x + up.x * rad * lift, y + up.y * rad * lift, pt.z + up.z * rad * lift, rad, cls]]);
+        const alt = kind === 'pitangas' ? (i % 2 ? 0.86 : 1.3) : 1;
+        blob(pt.x, y, pt.z, fit * jit * unit * alt, cls, kind === 'rosetas' ? (r() - 0.5) * 0.5 : r() * TAU);
       }
     });
   };
 
-  // topo: em cima da borda do andar mais alto; base: no encontro de cada andar com o que está embaixo dele
-  const where = combo ? 'both' : config.piping.where;
-  if (where !== 'base') ring(cleanOffset(m.topFlat, -(spec.r * spec.inset + fenceIn)), layout.topY - 0.002, false);
-  if (where !== 'top' && !fenced) {
+  // topo: em cima da borda do andar mais alto; base: no encontro de cada andar com o que está embaixo dele;
+  // cintura: a meia altura de cada andar (a altura vem do plano, que já desviou da calda)
+  if (pp.top) ring(cleanOffset(m.topFlat, -(spec.r * spec.inset + fenceIn)), layout.topY - 0.002, 'top');
+  if (pp.base && !fenced) {
     stack.forEach((t) => {
       // com calda, o bico da base encolhe para ficar abaixo das gotas (ou sai, se nem assim couber)
       const size = baseRingScale(config, t, spec);
-      if (size) ring(cleanOffset(t.frost, spec.r * spec.out * size), t.y0 + (t.index ? 0.002 : -0.012), true, size, t.index ? stack[t.index - 1].topFlat : null);
+      if (size) ring(cleanOffset(t.frost, spec.r * spec.out * size), t.y0 + (t.index ? 0.002 : -0.012), 'base', size, t.index ? stack[t.index - 1].topFlat : null);
+    });
+  }
+  if (pp.waist && !fenced) {
+    stack.forEach((t, ti) => {
+      const w = layout.sides?.[ti]?.waist;
+      if (w) ring(cleanOffset(t.frost, 0.002), w.y, 'waist', w.size);
+    });
+  }
+  // topo inteiro coberto: as voltas de dentro vêm do plano (só onde as peças deixaram lugar)
+  if (pp.cover && layout.cover) {
+    up.copy(Y);
+    layout.cover.forEach((c) => {
+      tangent.set(Math.cos(c.a), 0, Math.sin(c.a));
+      // (a escala vem do plano: o lugar reservado é exatamente o da peça desenhada)
+      blob(c.x, layout.topY - 0.002, c.z, c.s * (0.975 + r() * 0.025), 'pipe', kind === 'rosetas' ? (r() - 0.5) * 0.5 : r() * TAU);
     });
   }
   part.add(batch, m);
+  if (cores) part.add(cores, m);
 
-  if (combo && !fenced && !config.drip.on) {
-    // Vintage (lambeth): guirlandas drapeadas em volta de cada andar, com um lacinho em cada encontro.
-    // (com calda escorrendo, as guirlandas ficariam por cima das gotas: o conjunto fica só com as conchas)
+  if (pp.side === 'guirlanda' && !fenced && !config.drip.on) {
+    // Vintage (lambeth) e guirlandas: cordões drapeados em volta de cada andar; no vintage, um lacinho em cada
+    // encontro (nas guirlandas, uma pitanga).
+    // (com calda escorrendo, as guirlandas ficariam por cima das gotas: o conjunto fica só com a borda)
     const lod = lib.detail < 1 ? (far ? 0 : 1) : far ? 1 : 2; // 0 = de longe no celular · 1 = celular / de longe no computador · 2 = computador
     const bead = lib.shape(far ? 'swagBead~' : 'swagBead', () => paint(new THREE.SphereGeometry(1, [6, 8, 12][lod], [4, 5, 8][lod]), 1, 1, 1));
     const beads = new Batch(bead, lib.mat.piping(), { cast: false, receive: true });
-    const bows = new Batch(lib.geo.bow(), lib.mat.piping(), { cast: false, receive: true });
+    const lambeth = pp.combo;
+    const bows = new Batch(lambeth ? lib.geo.bow() : lib.geo.star(far), lib.mat.piping(), { cast: false, receive: true });
     stack.forEach((t) => {
       if (t.naked) return;
       const wall = offsetPath(t.frost, 0.004);
@@ -1363,26 +1578,105 @@ export function buildPiping(ctx) {
         }
       };
       drape(sag, 1, 0.5);
-      if (lib.detail >= 1 || stack.length === 1) drape(sag * 0.5, 0.72, 0.5);
+      if (lambeth && (lib.detail >= 1 || stack.length === 1)) drape(sag * 0.5, 0.72, 0.5);
       for (let g = 0; g < swags; g++) {
         pathAt(wall, g * span, pt);
-        tangent.set(-pt.tx, 0, -pt.tz); // eixo invertido: a frente do laço fica virada para fora do bolo
-        frameQuat(tangent, Y, _q);
         const bx = pt.x + pt.nx * 0.004;
         const bz = pt.z + pt.nz * 0.004;
-        bows.add(bx, yTop + 0.014, bz, _q, 1.7, null, 0.07);
-        // lacinho: nó, duas alças e duas pontas
-        addVol(part, [
-          [bx + pt.nx * 0.025, yTop + 0.014, bz + pt.nz * 0.025, 0.034, 'swag'],
-          [bx + pt.nx * 0.03 + pt.tx * 0.075, yTop + 0.02, bz + pt.nz * 0.03 + pt.tz * 0.075, 0.052, 'swag'],
-          [bx + pt.nx * 0.03 - pt.tx * 0.075, yTop + 0.02, bz + pt.nz * 0.03 - pt.tz * 0.075, 0.052, 'swag'],
-          [bx + pt.nx * 0.025 + pt.tx * 0.04, yTop - 0.055, bz + pt.nz * 0.025 + pt.tz * 0.04, 0.032, 'swag'],
-          [bx + pt.nx * 0.025 - pt.tx * 0.04, yTop - 0.055, bz + pt.nz * 0.025 - pt.tz * 0.04, 0.032, 'swag'],
-        ]);
+        if (lambeth) {
+          tangent.set(-pt.tx, 0, -pt.tz); // eixo invertido: a frente do laço fica virada para fora do bolo
+          frameQuat(tangent, Y, _q);
+          bows.add(bx, yTop + 0.014, bz, _q, 1.7, null, 0.07);
+          // lacinho: nó, duas alças e duas pontas
+          addVol(part, [
+            [bx + pt.nx * 0.025, yTop + 0.014, bz + pt.nz * 0.025, 0.034, 'swag'],
+            [bx + pt.nx * 0.03 + pt.tx * 0.075, yTop + 0.02, bz + pt.nz * 0.03 + pt.tz * 0.075, 0.052, 'swag'],
+            [bx + pt.nx * 0.03 - pt.tx * 0.075, yTop + 0.02, bz + pt.nz * 0.03 - pt.tz * 0.075, 0.052, 'swag'],
+            [bx + pt.nx * 0.025 + pt.tx * 0.04, yTop - 0.055, bz + pt.nz * 0.025 + pt.tz * 0.04, 0.032, 'swag'],
+            [bx + pt.nx * 0.025 - pt.tx * 0.04, yTop - 0.055, bz + pt.nz * 0.025 - pt.tz * 0.04, 0.032, 'swag'],
+          ]);
+        } else {
+          // pitanga colada na parede, no encontro de duas guirlandas
+          tangent.set(pt.tx, 0, pt.tz);
+          normal.set(pt.nx, 0, pt.nz);
+          frameQuat(tangent, normal, _q);
+          bows.add(bx, yTop + 0.006, bz, _q, 0.62, null, 0.06);
+          addVol(part, [[bx + pt.nx * 0.02, yTop + 0.006, bz + pt.nz * 0.02, 0.058, 'swag']]);
+        }
       }
     });
     part.add(beads, m);
     part.add(bows, m);
+  }
+
+  // ── bicos que tomam a lateral: a faixa livre de cada andar vem do plano (layout.sides[i].piped) ──
+  if (pp.side && pp.side !== 'guirlanda') {
+    const sideGeo = pp.side === 'escamas' ? lib.geo.scale(far) : pp.side === 'arabescos' ? lib.geo.scroll(far) : lib.geo.dot(far);
+    const sideBatch = new Batch(sideGeo, lib.mat.piping(), { cast: false, receive: true });
+    const dots = pp.side === 'arabescos' ? new Batch(lib.geo.dot(far), lib.mat.piping(), { cast: false, receive: true }) : null;
+    stack.forEach((t, ti) => {
+      const band = layout.sides?.[ti]?.piped;
+      if (!band || band.hi - band.lo < 0.12) return;
+      const wall = offsetPath(t.frost, 0.002);
+      if (pp.side === 'poa') {
+        // poá: bolinhas achatadas em fileiras desencontradas
+        const dy = 0.165;
+        const rows = Math.max(1, Math.floor((band.hi - band.lo - 0.09) / dy) + 1);
+        const y0 = (band.lo + band.hi) / 2 - ((rows - 1) * dy) / 2;
+        const n = Math.max(6, Math.round(wall.length / 0.19));
+        for (let j = 0; j < rows; j++) {
+          for (let i = 0; i < n; i++) {
+            pathAt(wall, ((i + (j % 2) * 0.5) / n) * wall.length, pt);
+            tangent.set(pt.tx, 0, pt.tz);
+            normal.set(pt.nx, 0, pt.nz);
+            frameQuat(tangent, normal, _q);
+            const y = y0 + j * dy;
+            sideBatch.add(pt.x, y, pt.z, _q, [0.62, 0.5, 0.62], null, 0.04);
+            addVol(part, [[pt.x + pt.nx * 0.008, y, pt.z + pt.nz * 0.008, 0.04, 'swag']]);
+          }
+        }
+      } else if (pp.side === 'escamas') {
+        // efeito pétala: colunas de bolinhas, cada uma puxada de lado com a espátula sobre a coluna anterior
+        const dy = 0.108;
+        const rows = Math.max(1, Math.floor((band.hi - band.lo - 0.1) / dy) + 1);
+        const y0 = (band.lo + band.hi) / 2 - ((rows - 1) * dy) / 2;
+        const n = Math.max(8, Math.round(wall.length / 0.104));
+        for (let i = 0; i < n; i++) {
+          pathAt(wall, (i / n) * wall.length, pt);
+          tangent.set(pt.tx, 0, pt.tz);
+          normal.set(pt.nx, 0, pt.nz);
+          frameQuat(tangent, normal, _q);
+          for (let j = 0; j < rows; j++) {
+            const y = y0 + j * dy;
+            const sc = 0.96 + r() * 0.08;
+            sideBatch.add(pt.x, y, pt.z, _q, sc, null, 0.06);
+            addVol(part, [[pt.x + pt.nx * 0.012, y, pt.z + pt.nz * 0.012, 0.05, 'swag']]);
+          }
+        }
+      } else {
+        // arabescos: uma fileira de "S" deitados a meia altura, com um pingo entre um e outro
+        const n = Math.max(4, Math.round(wall.length / 0.4));
+        const y = band.lo + (band.hi - band.lo) * 0.55;
+        const sc = Math.min(1.15, (band.hi - band.lo) / 0.34);
+        if (sc < 0.55) return;
+        for (let i = 0; i < n; i++) {
+          pathAt(wall, (i / n) * wall.length, pt);
+          tangent.set(pt.tx, 0, pt.tz);
+          normal.set(pt.nx, 0, pt.nz);
+          frameQuat(tangent, normal, _q);
+          sideBatch.add(pt.x, y, pt.z, _q, sc, null, 0.16);
+          for (let q = -1; q <= 1; q++) addVol(part, [[pt.x + pt.tx * q * 0.085 * sc + pt.nx * 0.006, y, pt.z + pt.tz * q * 0.085 * sc + pt.nz * 0.006, 0.078 * sc, 'swag']]);
+          pathAt(wall, ((i + 0.5) / n) * wall.length, pt);
+          tangent.set(pt.tx, 0, pt.tz);
+          normal.set(pt.nx, 0, pt.nz);
+          frameQuat(tangent, normal, _q);
+          dots.add(pt.x, y, pt.z, _q, [0.4, 0.4, 0.4], null, 0.03);
+          addVol(part, [[pt.x + pt.nx * 0.006, y, pt.z + pt.nz * 0.006, 0.026, 'swag']]);
+        }
+      }
+    });
+    part.add(sideBatch, m);
+    if (dots) part.add(dots, m);
   }
   return part;
 }
@@ -1544,15 +1838,22 @@ function buildFlowers(ctx, part) {
 
 const CHOC_TINTS = ['#3b1e0f', '#4a2614', '#5e3219', '#6f3f22'];
 
-function buildShavings(ctx, part) {
+const COCO_TINTS = ['#fffaf0', '#f8efe0', '#fff6e8', '#f1e3cb'];
+
+/** Lascas soltas: raspas de chocolate ou fitas de coco (id = 'raspas' | 'coco'). */
+function buildShavings(ctx, part, id = 'raspas') {
   const { m, lib, layout } = ctx;
-  const pl = layout.plan.raspas;
+  const pl = layout.plan[id];
+  const coco = id === 'coco';
+  const tints = coco ? COCO_TINTS : CHOC_TINTS;
+  // coco fresco: fosco, sem o brilho do chocolate temperado
+  const mat = coco ? lib.custom('cocoFlake', () => new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82, side: THREE.DoubleSide })) : lib.mat.chocolate();
   part.volumes = [];
   if (!pl || !pl.regions.length) return;
   const r = rng(hashString(`shave${m.shape}${m.R}${pl.zone}`));
   const small = { cast: ctx.tier?.smallCastShadow !== false };
-  const curls = new Batch(lib.geo.curl(), lib.mat.chocolate(), small);
-  const shards = new Batch(lib.geo.shard(), lib.mat.chocolate(), small);
+  const curls = new Batch(lib.geo.curl(), mat, small);
+  const shards = new Batch(lib.geo.shard(), mat, small);
   const y0 = layout.topY;
   const regions = pl.regions;
   // a lasca inteira (as duas pontas) tem de cair dentro da área reservada às raspas
@@ -1572,7 +1873,7 @@ function buildShavings(ctx, part) {
     const ex = ax * (half - rad);
     const ez = az * (half - rad);
     if (!inside(x + ex, z + ez, rad) || !inside(x - ex, z - ez, rad)) return false;
-    const tint = CHOC_TINTS[Math.floor(r() * CHOC_TINTS.length)];
+    const tint = tints[Math.floor(r() * tints.length)];
     (curl ? curls : shards).add(x, y0 + lift, z, _q, curl ? [k, k, k] : [k * 1.2, k, k * 1.2], tint, 0.07);
     const yc = y0 + lift + (curl ? 0.031 * k : 0.012 * k);
     addVol(part, [
@@ -1582,7 +1883,7 @@ function buildShavings(ctx, part) {
     ]);
     return true;
   };
-  const more = quantityOf(ctx, 'raspas');
+  const more = quantityOf(ctx, id);
   regions.forEach((g) => {
     if (g.mound) {
       // montinho: mais alto no meio, rareando para a beira
@@ -1617,13 +1918,15 @@ function scatter(ctx, part, { geometry, material, tints, perArea, perSide, flat,
   const r = rng(hashString(`${seed}${m.shape}${m.R}${m.n}`));
   const batch = new Batch(geometry, material, { cast: false, receive: true });
   const pt = {};
-  const density = (ctx.tier?.density || 1) * more;
+  const density = (ctx.tier?.density || 1) * more * coatShare(ctx.config, m, ctx.tier?.density);
   // volumes (só para o teste): um por confeito, tirados do lote na hora em que forem pedidos
   Object.defineProperty(part, 'volumes', { configurable: true, get: () => batch.items.map((it) => ({ x: it.x, y: it.y + 0.01, z: it.z, r: rad * it.s[0], kind: 'coating' })) });
   // confeito de cobertura: cai em todo o topo livre — nunca debaixo de uma peça, da escrita ou do bico
   const nTop = Math.round(topArea(m) * perArea * density);
   for (let i = 0; i < nTop; i++) {
     randomTop(m, r, layout.border + 0.012 + rad, pt);
+    // (num topo pequeno com borda larga o contorno recuado degenera: confere o ponto contra a borda de verdade)
+    if (signedDist(m.topFlat, pt.x, pt.z) < layout.border + rad) continue;
     if (flat) _q.setFromEuler(new THREE.Euler((r() - 0.5) * 0.5, r() * TAU, (r() - 0.5) * 0.5));
     else _q.setFromEuler(new THREE.Euler((r() - 0.5) * 0.3, r() * TAU, (r() - 0.5) * 0.3));
     const sc = 0.85 + r() * 0.35;
@@ -1675,6 +1978,7 @@ function buildPearls(ctx, part) {
     const big = i % 3 === 0;
     const rad = big ? 0.026 : 0.016;
     const y = layout.topY + rad * 0.82;
+    if (signedDist(m.topFlat, pt.x, pt.z) < layout.border + rad * 0.5) continue; // topo pequeno: o colar não cabe por dentro do bico
     if (taken(layout, pt.x, y, pt.z, rad)) continue;
     (i % 6 === 3 ? gold : white).add(pt.x, y, pt.z, null, rad, null, rad);
   }
@@ -1685,7 +1989,7 @@ function buildPearls(ctx, part) {
     const band = layout.sides?.[ti];
     const side = t.frost;
     const sideH = t.Ht - t.rf;
-    const count = Math.round(side.length * 13 * (ctx.tier?.density || 1) * more);
+    const count = Math.round(side.length * 13 * (ctx.tier?.density || 1) * more * coatShare(ctx.config, m, ctx.tier?.density));
     for (let i = 0; i < count; i++) {
       pathAt(side, r() * side.length, pt);
       const up = Math.pow(r(), 2.4);
@@ -1786,30 +2090,74 @@ function buildSplatter(ctx, part) {
 
 const CANDLE_COLORS = ['#f08fb0', '#f6c453', '#6fcfa8', '#6fb6f2', '#b497f0'];
 
+/** Vela torcida em espiral: três gomos que dão volta e meia ao longo da altura. Eixo y, pé em y = 0. */
+function spiralCandleGeometry(h, D = 1) {
+  const r = 0.03;
+  const lobes = 3;
+  const g = surface(D < 1 ? 12 : 24, lobes * (D < 1 ? 4 : 6), (u, v, p) => {
+    const a = v * TAU;
+    const tw = a + u * 5.4;
+    const k = Math.pow(Math.abs(Math.cos((lobes * a) / 2)), 0.8);
+    const cap = u > 0.94 ? Math.sqrt(Math.max(0, 1 - ((u - 0.94) / 0.06) ** 2)) : 1;
+    const rad = r * (0.74 + 0.26 * k) * cap;
+    p.set(rad * Math.cos(tw), h * u, rad * Math.sin(tw));
+    return 0.72 + 0.28 * k;
+  }, { wrapV: true, shade: true, orient: true });
+  return g;
+}
+
+/** Cera lisa (velas longas, de espiral e de estrela): a cor vem por instância. */
+const waxMat = (lib, metal) =>
+  metal
+    ? lib.custom('candleMetal', () => new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.82, roughness: 0.3, vertexColors: true }))
+    : lib.custom('candleWax', () => lib.physical({ color: 0xffffff, roughness: 0.44, clearcoat: 0.3, clearcoatRoughness: 0.4, vertexColors: true }));
+
+/** Velas contadas: clássicas (listradas), longas, de espiral e de estrela, nas cores da paleta escolhida. */
 function buildCandles(ctx, part) {
-  const { m, lib, layout } = ctx;
+  const { m, lib, layout, config } = ctx;
   const plan = layout.party.candles;
   part.volumes = [];
   if (!plan || !plan.spots.length) return;
   // o distribuidor já escolheu os lugares: roda no meio, em volta do arranjo do centro ou em arco
   const { h, y0, spots } = plan;
+  const style = plan.style || 'classica';
+  const pal = getCandlePalette(config.decor.candlePalette) || { hexes: CANDLE_COLORS };
+  const hexes = style === 'classica' && pal.id === 'colorida' ? CANDLE_COLORS : pal.hexes;
   const n = spots.length;
   const wick = new Batch(lib.geo.wick(), lib.mat.wick(), { cast: false });
   const byColor = new Map();
+  // listradas só as clássicas de cor (as metalizadas e as demais são de cera lisa)
+  const striped = style === 'classica' && !pal.metal;
+  const wax = new Batch(
+    style === 'espiral' ? lib.shape(`candleSpiral${h.toFixed(2)}`, () => spiralCandleGeometry(h, lib.detail)) : style === 'estrela' ? lib.shape('candleStar', () => paint(starShapeGeometry(), 1, 1, 1)) : lib.shape(`candleWax${h.toFixed(2)}`, () => paint(candleGeometry(h, lib.detail), 1, 1, 1)),
+    waxMat(lib, pal.metal),
+  );
+  const picks = style === 'estrela' ? new Batch(lib.geo.stick(), lib.mat.stick()) : null;
   const r = rng(77 + n);
   let sx = 0;
   let sz = 0;
+  const thin = style === 'longa' ? 0.62 : 1;
   spots.forEach((sp, i) => {
     const { x, z } = sp;
     sx += x / n;
     sz += z / n;
-    const hex = CANDLE_COLORS[i % CANDLE_COLORS.length];
-    if (!byColor.has(hex)) byColor.set(hex, new Batch(lib.geo.candle(h), lib.mat.candle(hex)));
+    const hex = hexes[i % hexes.length];
     const lean = new THREE.Euler((r() - 0.5) * 0.05, r() * TAU, (r() - 0.5) * 0.05);
     _q.setFromEuler(lean);
-    byColor.get(hex).add(x, y0, z, _q, 1, null, 0.04);
-    _p.set(0, h + 0.004, 0).applyQuaternion(_q);
-    wick.add(x + _p.x, y0 + _p.y, z + _p.z, _q, 1, null, 0.02);
+    let top = h + 0.004; // onde nasce o pavio
+    if (style === 'estrela') {
+      // estrela de cera de frente para quem olha, no palito
+      _q.setFromEuler(new THREE.Euler((r() - 0.5) * 0.08, (r() - 0.5) * 0.5, (r() - 0.5) * 0.2));
+      wax.add(x, y0 + h, z, _q, [0.11, 0.11, 0.15], hex, 0.11);
+      picks.add(x, y0 - 0.02, z, null, [1.3, h - 0.06, 1.3], null, 0.02);
+      top = h + 0.105;
+    } else if (striped) {
+      if (!byColor.has(hex)) byColor.set(hex, new Batch(lib.geo.candle(h), lib.mat.candle(hex)));
+      byColor.get(hex).add(x, y0, z, _q, 1, null, 0.04);
+    } else wax.add(x, y0, z, _q, [thin, 1, thin], hex, 0.04);
+    _p.set(0, top, 0);
+    if (style !== 'estrela') _p.applyQuaternion(_q);
+    wick.add(x + _p.x, y0 + _p.y, z + _p.z, style === 'estrela' ? null : _q, 1, null, 0.02);
     const glow = new THREE.Sprite(lib.mat.glow());
     glow.position.set(x + _p.x, y0 + _p.y + 0.06, z + _p.z);
     glow.scale.set(0.34, 0.34, 1);
@@ -1823,6 +2171,8 @@ function buildCandles(ctx, part) {
     addVol(part, sp.vol);
   });
   byColor.forEach((b) => part.add(b, m));
+  part.add(wax, m);
+  if (picks) part.add(picks, m);
   part.add(wick, m);
   part.lightAt = new THREE.Vector3(sx, y0 + h + 0.12, sz);
 }
@@ -1940,7 +2290,7 @@ export function buildDecor(id, ctx) {
   const { lib } = ctx;
   if (id === 'frutas') buildFruits(ctx, part);
   else if (id === 'flores') buildFlowers(ctx, part);
-  else if (id === 'raspas') buildShavings(ctx, part);
+  else if (id === 'raspas' || id === 'coco') buildShavings(ctx, part, id);
   else if (id === 'perolas') buildPearls(ctx, part);
   else if (id === 'velas') buildCandles(ctx, part);
   else if (id === 'toppers') buildMessageAndTopper(ctx, part);
@@ -1949,6 +2299,13 @@ export function buildDecor(id, ctx) {
   } else if (id === 'confete') {
     scatter(ctx, part, { geometry: lib.geo.confetti(), material: lib.mat.confetti(), tints: CONFETTI_TINTS, perArea: 78, perSide: 20, flat: true, sideBand: 1.3, seed: 'conf', id, rad: 0.022 });
   } else if (id === 'respingo') buildSplatter(ctx, part);
+  else if (KIT[id]) {
+    // peça do kit: o construtor mora num módulo carregado sob demanda. Se ainda não chegou, a parte fica vazia
+    // (e marcada): o carregamento já começou, e quando terminar a chave do plano muda e o motor refaz a peça.
+    const build = kitBuilder(id);
+    if (build) build(ctx, part);
+    else part.pending = true;
+  }
   return part;
 }
 
@@ -1983,4 +2340,5 @@ export function plannedHeights(config) {
 }
 
 // Peças e ajudantes que os outros módulos de decoração (decor2.js, party.js) reaproveitam.
-export { frameQuat, surface, paint, plain, segs, smooth, gomo, polarPoint, arcPoints, randomTop, topArea, newPart, groundBlob, leanQuat, roundedRectShape, addVol, taken };
+export { buildCandles };
+export { frameQuat, surface, paint, plain, segs, smooth, gomo, polarPoint, arcPoints, randomTop, topArea, newPart, groundBlob, leanQuat, roundedRectShape, addVol, taken, scatter, plaqueLiftOf, onDecorReady, ensureDecor, warmDecorModules };

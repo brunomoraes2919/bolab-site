@@ -4,17 +4,46 @@
 // frente para a escrita, lateral alta / baixa, base, faixa das cascatas). Cada peça declara o espaço que
 // ocupa (esferas, em unidades do mundo: 1 = 10 cm) e um único distribuidor — calculado uma vez por
 // configuração, sempre na mesma ordem — entrega os lugares: nada é colocado sem antes conferir que o lugar
-// está livre. Os construtores (decor.js, decor2.js, party.js) só desenham o que o plano manda, então o
-// resultado não depende da ordem em que as peças são montadas.
+// está livre. Os construtores (decor.js, decor2.js, party.js e os módulos de peças pecas-*.js) só desenham o
+// que o plano manda, então o resultado não depende da ordem em que as peças são montadas.
 //
-// Prioridade (quem escolhe lugar primeiro): nome em acrílico e plaquinha → estrelas → balões → arranjos do
-// centro → velas → escrita → pirulitos e corações no palito → cascatas → coroas e meias-luas → espalhados.
-// Os confeitos de cobertura (granulado, confete, pérolas soltas, folha de ouro miúda) entram por último, na
-// hora de desenhar: cada um consulta o plano pronto e só cai onde não há peça nenhuma.
-import { cleanOffset, pointInPath, rayHit, pathAt, cakeMetrics, dripReach } from './geometry.js';
+// Prioridade (quem escolhe lugar primeiro): bico da cintura e cerca → nome em acrílico e plaquinha → peças com
+// lugar escolhido pelo cliente → estrelas → topos de fundo (arco-íris, bandeirolas…) → balões → arranjos do
+// centro → velas → escrita → peças no palito → frente da lateral e cascatas → coroas e meias-luas → espalhados
+// → bico que cobre o topo inteiro (preenche o que sobrou). Os confeitos de cobertura (granulado, confete,
+// pérolas soltas, glitter, gotas…) entram por último, na hora de desenhar: cada um consulta o plano pronto e
+// só cai onde não há peça nenhuma.
+//
+// As decorações novas são descritas por dados (kit.js + kit-*.js): variantes com as esferas que ocupam e os
+// arranjos que aceitam. O distribuidor trata todas pelo mesmo caminho genérico (peças { t: 'k', … }).
+//
+// ── Peças com lugar escolhido pelo cliente (config.decor.placed) ──
+//   placed: [{ id, x, z, rot, scale, face: 'topo' | 'lateral', y? }]
+//     id     qualquer decoração que tenha preço por unidade (campo `unit` em customizer-decor.js)
+//     x, z   ponto no plano do bolo (o eixo do bolo é a origem; +z é a frente; 1 = 10 cm).
+//            face 'topo': onde a peça apoia. face 'lateral': a DIREÇÃO a partir do eixo — a peça gruda onde
+//            esse raio encontra a cobertura — e `y` é a altura do centro dela acima do prato (sem `y`, o meio
+//            da lateral do andar de baixo).
+//     rot    giro em radianos (no topo, em torno do eixo vertical; na lateral, em torno do eixo que sai do bolo)
+//     scale  0,6 a 1,4 (1 = tamanho de catálogo)
+//   Essas peças escolhem lugar logo depois da plaquinha e do nome em acrílico; os arranjos automáticos se
+//   acomodam em volta delas. Uma peça que não cabe onde foi pedida (fora do topo, em cima do bico, de outra
+//   peça escolhida, da plaquinha…) é levada ao ponto livre mais próximo; se não houver nenhum por perto, fica
+//   de fora — e não é cobrada. O resultado de cada uma vem em notes.placed[i] = { ok, x, z, y, moved } e a
+//   cobrança (pricing.js → billableConfig) grava só as que ficaram, já na posição final, por unidade.
+//
+//   canPlace(config, piece)    → { ok, why }   a peça cabe ali, com tudo o que JÁ está no bolo (arranjos
+//                                              automáticos incluídos)? why: '' | 'desconhecida' | 'fora' | 'ocupado'
+//   nearestFree(config, piece, { reach })      → { x, z, y, moved } (o ponto livre mais próximo, até `reach` de
+//                                              distância; moved = 0 quando já cabe) ou null
+//   São funções puras (mesma entrada, mesma resposta; não mexem na configuração): a tela de "colocar com o
+//   dedo" pergunta a elas enquanto a pessoa arrasta e só então grava a peça em decor.placed.
+import { cleanOffset, pointInPath, rayHit, raySpot, pathAt, cakeMetrics, dripReach, volcanoDims } from './geometry.js';
 import { rng, hashString } from './textures.js';
-import { getDecor, getQuantity, getPiping } from '../data/customizer.js';
+import { getDecor, getQuantity, getPiping, DECORS } from '../data/customizer.js';
+import { CANDLE_WORD } from '../data/customizer-decor.js';
 import { decorOptions } from './pricing.js';
+import { KIT, kitVolume, basisTop, basisSide, basisFace, basisStick, faceRot, pickVariant, topVariants } from './kit.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -83,12 +112,147 @@ export function baseRingScale(config, t, spec) {
   if (!spec) return 0;
   const size = spec.baseScale || 1;
   if (!config.drip?.on) return size;
-  const need = spec.r * size * 1.16 * (1 + 0.45 * Math.cos(spec.lean || 0)) + 0.012;
+  const need = Math.max(spec.r * size * 1.16 * (1 + 0.45 * Math.cos(spec.lean || 0)), pipeReach(pipingPlan(config).kind, spec, spec.lean || 0)[1] * size) + 0.012;
   const room = t.Ht - t.rf - dripReach(t) - 0.03;
   if (need <= room) return size;
   const k = room / need;
   return k < 0.55 ? 0 : size * k;
 }
+
+/* ───────── Bicos: medidas e onde cada um é aplicado ───────── */
+
+/**
+ * Medidas de cada bico (1 = 10 cm, o tamanho real não muda com o tamanho do bolo):
+ * r = meia largura da borda · step = distância entre peças (para se tocarem) · inset = recuo no topo (× r) ·
+ * out = afastamento da lateral na base (× r) · lean = quanto a peça da base se apoia no canto bolo/prato.
+ */
+export const PIPE = {
+  bolinhas: { r: 0.064, step: 0.123, inset: 0.94, out: 0.62, lean: 0.3 },
+  conchas: { r: 0.08, step: 0.165, inset: 0.92, out: 0.6, lean: 0.42 },
+  estrelas: { r: 0.086, step: 0.158, inset: 0.94, out: 0.6, lean: 0.45 },
+  rosetas: { r: 0.158, step: 0.276, inset: 0.93, out: 0.45, lean: 0.62, baseScale: 0.86 },
+  folhas: { r: 0.06, step: 0.084, inset: 2.1, out: 0.2, lean: 0 },
+  perolao: { r: 0.098, step: 0.188, inset: 0.94, out: 0.62, lean: 0.3, scale: 1.52 },
+  corda: { r: 0.046, step: 0.138, inset: 0.95, out: 0.7, lean: 0.35, along: true },
+  ziguezague: { r: 0.075, step: 0.13, inset: 0.98, out: 0.78, lean: 0.4, along: true },
+  babado: { r: 0.05, step: 0.13, inset: 0.3, out: 0.12, lean: 0.95, topLean: 0.9, along: true, outward: true },
+  // ── rodada 5 ──
+  tranca: { r: 0.062, step: 0.15, inset: 0.95, out: 0.7, lean: 0.35, along: true },
+  coracoes: { r: 0.092, step: 0.2, inset: 0.95, out: 0.55, lean: 0.5, face: true },
+  florzinhas: { r: 0.082, step: 0.172, inset: 0.96, out: 0.55, lean: 0.55 },
+  pingos: { r: 0.074, step: 0.142, inset: 0.96, out: 0.6, lean: 0.35 },
+  pitangas: { r: 0.112, step: 0.18, inset: 0.95, out: 0.55, lean: 0.45 },
+  grama: { r: 0.07, step: 0.118, inset: 0.96, out: 0.5, lean: 0.25 },
+};
+PIPE.vintage = PIPE.conchas; // o conjunto vintage usa conchas no topo e na base
+PIPE.guirlanda = PIPE.bolinhas; // guirlandas drapeadas: colar de bolinhas no topo e na base
+PIPE.escamas = PIPE.bolinhas; // lateral em escamas (bolinhas puxadas): a borda do topo vai em bolinhas
+PIPE.poa = PIPE.bolinhas;
+PIPE.arabescos = PIPE.bolinhas;
+
+/** Bicos que tomam a lateral (o que eles fazem ali é do próprio bico; "onde aplicar" não se usa). */
+export const PIPE_SIDE = { vintage: 'guirlanda', guirlanda: 'guirlanda', escamas: 'escamas', poa: 'poa', arabescos: 'arabescos' };
+
+/** Raio (sem escala) e subida (× raio) da esfera que cobre uma peça de bico pousada. */
+export function pipeBlob(kind) {
+  if (kind === 'rosetas') return [0.158, 0.12];
+  if (kind === 'estrelas') return [0.092, 0.3];
+  if (kind === 'pitangas') return [0.092, 0.3];
+  if (kind === 'pingos') return [0.074, 0.9];
+  if (kind === 'florzinhas') return [0.082, 0];
+  if (kind === 'coracoes') return [0.1, 0];
+  if (kind === 'grama') return [0.07, 0.9];
+  return [0.064, 0.3];
+}
+
+/**
+ * Alcance do volume de uma peça de bico pousada com a inclinação `lean`, a partir do ponto de apoio, na escala 1:
+ * [para fora do bolo, para cima]. (No pior caso de esticamento: as peças esticam até 16% para fechar a volta.)
+ */
+export function pipeReach(kind, spec, lean = 0) {
+  if (!spec) return [0, 0];
+  const sl = Math.sin(lean);
+  const cl = Math.cos(lean);
+  if (kind === 'folhas') return [0.19, 0.075];
+  if (kind === 'babado') return [0.05 * sl + 0.055 * cl + 0.056, Math.max(0.02, 0.05 * cl - 0.055 * sl + 0.056)];
+  if (kind === 'conchas') return [0.089 * (1 + 0.4 * sl), 0.089 * (1 + 0.4 * cl)];
+  if (spec.along) return [spec.r * 1.02 * (1 + 0.5 * sl), spec.r * 1.02 * (1 + 0.5 * cl)];
+  const [r0, lift] = pipeBlob(kind);
+  const rad = r0 * (spec.scale || 1) * 1.2 * (kind === 'pitangas' ? 1.3 : 1);
+  return [rad * (1 + lift * sl), rad * (1 + lift * cl)];
+}
+
+/** Até que altura (acima do topo) vai o bico da borda — o que está no ar passa por cima disso. */
+export function pipeHeight(kind, spec, fenced = false) {
+  if (!spec) return 0;
+  if (kind === 'folhas') return 0.08;
+  if (kind === 'babado') return fenced ? 0.11 : 0.05;
+  if (kind === 'conchas') return 0.13;
+  if (spec.along) return spec.r * 1.6;
+  const [rad, lift] = pipeBlob(kind);
+  return rad * (spec.scale || 1) * 1.2 * (1 + lift) * (kind === 'pitangas' ? 1.3 : 1);
+}
+
+/**
+ * Onde o bico de um bolo é aplicado: { style, kind, spec, top, base, waist, cover, side, combo }.
+ *  top = borda do topo · base = pé de cada andar · waist = cintura (meia altura) · cover = cobre o topo inteiro ·
+ *  side = o que o bico faz na lateral ('guirlanda' | 'escamas' | 'poa' | 'arabescos' | '').
+ */
+export function pipingPlan(config) {
+  const style = config?.piping?.style || 'liso';
+  const p = getPiping(style);
+  const spec = PIPE[style] || null;
+  if (style === 'liso' || !spec) return { style: 'liso', kind: '', spec: null, top: false, base: false, waist: false, cover: false, side: '', combo: false };
+  const side = PIPE_SIDE[style] || '';
+  const combo = Boolean(p?.combo);
+  const where = config.piping.where || 'top';
+  // (o vintage e as guirlandas levam conchas / bolinhas no topo e na base; os demais bicos de lateral, só no topo)
+  const fixed = combo || Boolean(side);
+  const kind = style === 'vintage' ? 'conchas' : side ? 'bolinhas' : style;
+  return {
+    style,
+    kind,
+    spec,
+    combo,
+    side,
+    top: fixed ? true : where === 'top' || where === 'both' || where === 'cobre',
+    base: fixed ? side === 'guirlanda' : where === 'base' || where === 'both',
+    waist: !fixed && where === 'cintura',
+    cover: !fixed && where === 'cobre',
+  };
+}
+
+/** Altura (acima do prato) do meio do bico da cintura de um andar. */
+export const waistY = (t) => t.y0 + (t.Ht - t.rf) * 0.5;
+
+/* ───────── Estilos de cobertura que ocupam o bolo (junção da rodada 5) ─────────
+   O bolo de rosetas é confeitado de bico por inteiro (topo e lateral); os babados e a cesta tomam a lateral; o
+   barrado e os confeitos subindo, o pé. Nada se cola por cima deles — e o que apoia no topo de um bolo de rosetas
+   apoia sobre as rosetas (1 cm acima da cobertura lisa). */
+export const COVER_SIDE = { rosetas: 'as rosetas', babados: 'os babados', cesta: 'o trançado de cesta' };
+/** Quanto o topo sobe por causa do relevo da cobertura (rosetas: as peças apoiam nos gomos, um pouco afundadas). */
+export const coverLift = (m) => (m && !m.naked && m.style === 'rosetas' ? 0.085 : 0);
+/** Até que altura (a partir do pé do andar) o estilo da cobertura ocupa a lateral: [altura, motivo] ou null. */
+export function coverFoot(t) {
+  if (!t || t.naked) return null;
+  const sideH = t.Ht - t.rf;
+  if (t.style === 'barrado') return [Math.min(0.34, sideH * 0.42) + 0.075, 'barrado'];
+  if (t.style === 'chuva') return [sideH * 0.5, 'chuva'];
+  return null;
+}
+
+/* ───────── Cerca em volta do bolo: tipos ─────────
+   t = espessura que a cerca ocupa a partir da cobertura · mid = meio dela · step = largura de uma peça ·
+   rise = quanto passa do topo · r = raio dos cilindros que a representam no plano. */
+export const FENCES = {
+  chocolate: { t: 0.068, mid: 0.034, step: 0.1005, rise: 0.1, r: 0.036 },
+  champanhe: { t: 0.1, mid: 0.05, step: 0.23, rise: 0.12, r: 0.052 },
+  canudos: { t: 0.104, mid: 0.052, step: 0.108, rise: 0.2, r: 0.054 },
+};
+export const fenceOf = (config) => {
+  if (!(config?.decor?.items || []).includes('wafer')) return null;
+  return FENCES[decorOptions(config, 'wafer').kind] || FENCES.chocolate;
+};
 
 /* ───────── Volumes das peças (os mesmos que cada construtor declara em part.volumes) ─────────
    Cada função devolve [[x, y, z, r, classe]]: esferas que cobrem a peça desenhada. */
@@ -311,6 +475,16 @@ export const VOL = {
     out.push([x, y0 + h + 0.075, z, 0.04, 'fx']);
     return out;
   },
+  /** Vela de estrela no palito: pé em (x, y0, z); a estrela fica a h de altura, com a chama em cima. */
+  candleStar(x, y0, z, h) {
+    return [
+      [x, y0 + 0.06, z, 0.02, 'solid'],
+      [x, y0 + 0.13, z, 0.02, 'solid'],
+      [x, y0 + 0.2, z, 0.02, 'solid'],
+      [x, y0 + h, z, 0.118, 'solid'],
+      [x, y0 + h + 0.17, z, 0.04, 'fx'],
+    ];
+  },
   /**
    * Placa em pé (plaquinha, nome em acrílico, algarismos): centro em (cx, z) e de y0 a y1, largura w, espessura
    * 2·r. tilt = quanto o alto recua (rad, em torno do pé `pivot`).
@@ -474,6 +648,7 @@ const SPEC = {
   marshmallows: { r: 0.13, out: 0.13, step: 0.28, touch: 0.265, band: 0.27, h: 0.21, minS: 0.72, pile: [0.132, 8, 0.19], scat: [0.14, 9] },
   biscoitos: { r: 0.153, out: 0.085, step: 0.371, touch: 0.2, band: 0.3, h: 0.31, minS: 0.72 },
   raspas: { r: 0.09, out: 0.09, step: 0.16, touch: 0.16, band: 0.19, h: 0.1, minS: 1 },
+  coco: { r: 0.09, out: 0.09, step: 0.16, touch: 0.16, band: 0.19, h: 0.1, minS: 1 },
   ouro: { r: 0.06, out: 0.06, step: 0.135, touch: 0.125, band: 0.13, h: 0.03, minS: 1, scat: [0.17, 6], casc: [0.1, 9], sideR: 0.1 },
   coracoes: { r: 0.073, out: 0.085, step: 0.195, touch: 0.165, band: 0.19, h: 0.16, minS: 0.8, scat: [0.086, 14] },
   borboletas: { r: 0.12, out: 0.145, step: 0.28, touch: 0.26, band: 0.29, h: 0.14, minS: 0.8, scat: [0.13, 6], casc: [0.115, 7], sideR: 0.1 },
@@ -495,6 +670,7 @@ const NAMES = {
   wafer: 'a cerca de chocolate',
   pirulitos: 'os pirulitos',
   raspas: 'as raspas de chocolate',
+  coco: 'as fitas de coco',
   granulado: 'o granulado',
   confete: 'o confete',
   perolas: 'as pérolas',
@@ -509,6 +685,33 @@ const NAMES = {
   nome: 'o topo com o nome',
   escrita: 'a mensagem escrita',
 };
+// decorações do kit: as medidas de coroa, montinho, espalhado e cascata saem da especificação delas
+Object.entries(KIT).forEach(([id, K]) => {
+  if (!(K.ring || K.pile || K.scat || K.casc) || !K.vars.length) return;
+  const tops = topVariants(K).map((k) => K.vars[k]);
+  const r = Math.max(...tops.map((v) => v.r));
+  const h = Math.max(...tops.map((v) => v.h));
+  const sideV = K.side ? K.vars[K.side.v ?? 0] : null;
+  SPEC[id] = {
+    r,
+    out: K.ring?.out ?? r,
+    step: K.ring?.step ?? r * 2.3,
+    touch: K.ring?.touch ?? K.ring?.step ?? r * 2.12,
+    band: K.ring?.band ?? r * 2.1,
+    h,
+    minS: K.ring?.minS ?? K.minS,
+    pile: K.pile,
+    scat: K.scat,
+    casc: K.casc,
+    sideR: sideV ? Math.max(...sideV.sph.map((q) => q[3])) : undefined,
+  };
+});
+// nomes com artigo ("os macarons"): as decorações novas trazem o artigo no cardápio (campo `art`)
+DECORS.forEach((d) => {
+  if (!NAMES[d.id]) NAMES[d.id] = `${d.art || 'os'} ${d.name.charAt(0).toLowerCase()}${d.name.slice(1)}`;
+});
+/** Decorações em lascas soltas (montinho ou faixa): o plano reserva a região e o construtor espalha dentro dela. */
+const SHAVED = new Set(['raspas', 'coco']);
 const bare = (id) => (NAMES[id] || id).replace(/^(as|os|a|o) /, '');
 const listOf = (ids, withArticle = false) => {
   const names = ids.map((id) => (withArticle ? NAMES[id] || id : bare(id)));
@@ -529,16 +732,19 @@ function configKey(config, m) {
   const covers = (m.stack || [m]).map((t) => `${t.type}:${t.style}:${t.naked ? 1 : 0}`).join();
   const opts = (d.items || []).map((id) => {
     const o = decorOptions(config, id);
-    return `${id}:${o.arr}:${o.qty}`;
+    return `${id}:${o.arr}:${o.qty}:${o.kind || ''}`;
   });
-  return [config.shape, config.size, config.tiers, config.height, (config.layers || []).length, covers, config.drip?.on ? 1 : 0, config.piping?.style, config.piping?.where, opts.join(), d.candles, d.candleStyle, d.number, d.message, d.messageMode, d.script, d.topper?.text, m.R, m.Ht, m.Htot].join('|');
+  // r5-estrutura: o comprimento da calda muda até onde as gotas descem (dripReach) e a meia-lua, onde elas existem
+  const dripKey = `${config.drip?.length || ''}${config.drip?.half ? 'h' : ''}`;
+  const placed = Array.isArray(d.placed) && d.placed.length ? JSON.stringify(d.placed) : '';
+  return [config.shape, config.size, config.tiers, config.height, (config.layers || []).length, covers, config.drip?.on ? 1 : 0, config.piping?.style, config.piping?.where, opts.join(), d.candles, d.candleStyle, d.number, d.message, d.messageMode, d.script, d.plaque || '', d.topper?.text, d.topper?.style || '', placed, m.R, m.Ht, m.Htot, dripKey].join('|');
 }
 
 /**
  * Plano de ocupação de um bolo. base = { border, rho, topY, pipe, pipeTop, message, script, named, plaqueLift }
  * (o que decorLayout já sabe). O resultado fica guardado: pedir de novo o mesmo bolo não refaz a conta.
  */
-export function allocate(config, m, base) {
+export function allocate(config, m, base = layoutBase(config, m)) {
   // (a chave não leva o nível de detalhe: os contornos que o plano usa são os mesmos no celular e no computador,
   // então o painel — que pede os avisos — e o desenho 3D compartilham a mesma conta)
   const key = configKey(config, m);
@@ -552,6 +758,62 @@ export function allocate(config, m, base) {
   MEMO.set(key, out);
   if (MEMO.size > MEMO_MAX) MEMO.delete(MEMO.keys().next().value);
   return out;
+}
+
+/**
+ * A que altura fica o pé da plaquinha. Com velas de número (que ficam bem na frente dela) a plaquinha sobe,
+ * para a mensagem aparecer por cima dos algarismos em vez de ficar escondida atrás deles.
+ */
+export function plaqueLiftOf(config) {
+  const d = config?.decor || {};
+  if (!(d.items || []).includes('velas')) return 0.34;
+  const numbered = d.candleStyle === 'numero' && /\d/.test(String(d.number ?? ''));
+  // (velas longas também passam da plaquinha: ela sobe para a mensagem não ficar atrás delas)
+  return d.candleStyle === 'longa' ? 0.74 : numbered ? 0.66 : 0.34;
+}
+
+/**
+ * O que o plano precisa saber do bolo antes de distribuir: a faixa da borda tomada pelo bico, o raio livre, a
+ * altura do topo e o que vai escrito (plaquinha, escrita com bico, nome no topo).
+ */
+export function layoutBase(config, m) {
+  const pp = pipingPlan(config);
+  const style = pp.style;
+  const pipeTop = pp.top;
+  const pipe = pp.spec;
+  const fenced = (config.decor.items || []).includes('wafer');
+  // com a cerca em volta, o bico que passaria da beira recua para dentro (não atravessa as barrinhas)
+  // (as peças gordas — rosetas, pitangas — esticam até 16% nas quinas e encostariam nas barrinhas: recuam 1,2 mm)
+  const fat = style === 'rosetas' || style === 'pitangas';
+  const fenceIn = pipeTop && fenced ? (style === 'folhas' ? 0.09 : style === 'babado' ? 0.085 : fat ? 0.012 : 0) : 0;
+  // faixa da borda ocupada pelo bico (as peças esticam até uns 16% para fechar a volta sem vão)
+  const border = pipeTop ? Math.max(pipe.r * 2 + 0.012, pipe.r * (pipe.inset + 1.2) + 0.004) + (style === 'folhas' || fat ? fenceIn : 0) : 0.03;
+  const text = config.decor.message || '';
+  const mode = config.decor.messageMode;
+  return {
+    border,
+    fenceIn,
+    rho: m.rMin,
+    topY: (m.y0 || 0) + m.Ht + (config.drip?.on ? 0.017 : 0) + coverLift(m),
+    pipe,
+    pipeTop,
+    piping: pp,
+    message: mode === 'bico' ? '' : text, // plaquinha no palito
+    script: mode === 'bico' ? text : '', // escrita com bico no topo
+    named: Boolean(config.decor.topper?.text?.trim()), // topo personalizado
+    plaqueLift: plaqueLiftOf(config),
+  };
+}
+
+/** Plano de um bolo (calcula se ainda não houver): { plan, m } — ou null se a configuração não monta. */
+export function planFor(config) {
+  try {
+    const m = cakeMetrics(config, 1);
+    return { plan: allocate(config, m), m };
+  } catch (err) {
+    console.error('[personalizador] distribuição das decorações', err);
+    return null;
+  }
 }
 
 /** Plano já calculado para esta configuração (ou null) e as medidas do bolo: { plan, m }. */
@@ -596,13 +858,30 @@ function compute(config, m, base) {
   const message = base.message || '';
   const script = base.script || '';
   const named = Boolean(base.named);
-  const special = has('velas') && d.candleStyle !== 'classica';
-  const numero = special && d.candleStyle === 'numero' && /\d/.test(String(d.number ?? ''));
-  const faisca = special && d.candleStyle === 'faisca';
-  const classic = has('velas') && !special;
+  // velas contadas (clássicas, longas, de espiral, de estrela): a pessoa escolhe quantas e elas se arrumam em roda
+  // ou em arco; as demais são um conjunto só (algarismos, letras, faísca)
+  const candleKind = d.candleStyle || 'classica';
+  const counted4 = ['classica', 'longa', 'espiral', 'estrela'].includes(candleKind);
+  const special = has('velas') && !counted4;
+  const letras = special && candleKind === 'letras';
+  const digitsOf = letras ? CANDLE_WORD : String(d.number ?? '').replace(/\D/g, '').slice(0, 3);
+  // (as velas de letras usam o mesmo caminho das de número: uma fileira de peças em pé, com uma chama cada)
+  const numero = special && ((candleKind === 'numero' && digitsOf.length > 0) || letras);
+  const faisca = special && candleKind === 'faisca';
+  const classic = has('velas') && counted4;
+  // medidas da vela contada: altura (com plaquinha atrás, mais baixa), largura que ela pede em relação à clássica
+  const CANDLE = { classica: [0.5, 0.4, 1], longa: [0.8, 0.66, 1], espiral: [0.52, 0.42, 1.1], estrela: [0.36, 0.32, 3.2] }[candleKind] || [0.5, 0.4, 1];
   const fenced = has('wafer');
+  const fence = fenceOf(config);
   const drip = Boolean(config.drip?.on);
-  const vintage = config.piping?.style === 'vintage';
+  const pp = base.piping || pipingPlan(config);
+  const vintage = pp.side === 'guirlanda'; // guirlandas drapeadas na lateral (vintage e "guirlandas")
+  const R = (seed) => rng(hashString(`${seed}${m.shape}${m.R}${items.join()}`));
+  const flowerScale = Math.min(1.3, 0.74 + rho * 0.42);
+  const peonyScale = clamp(0.74 + rho * 0.5, 0.95, 1.36);
+  /** Decoração do kit (kit.js) com este arranjo? */
+  const kit = (id) => KIT[id] || null;
+  const placedList = Array.isArray(d.placed) ? d.placed : [];
 
   // ── donos ──
   const owners = new Map();
@@ -659,14 +938,35 @@ function compute(config, m, base) {
     return lo;
   };
 
+  const pipeH = base.pipeTop ? pipeHeight(pp.kind, base.pipe, fenced) : 0;
+  // bolo vulcão: o meio do topo é o furo, cheio de creme. Frutas e docinhos apoiam nele; o que é fincado (velas,
+  // palitos, hastes) não tem onde se firmar ali — vai no anel de massa em volta.
+  const hole = m.volcano ? volcanoDims(m).holeTop : 0;
+  const VELAS = own('velas');
+  const inHole = (x, z, r = 0) => hole > 0 && Math.hypot(x - cx, z - cz) < hole + 0.012 + r;
+  // formatos de parede reta ou reentrante: a peça da lateral não pode ficar com um pedaço para dentro da parede
+  // (acontece nas reentrâncias da flor e do coração e nas quinas)
+  const SINK = 0.022;
+  const sunk = (v) => {
+    if (round || fenced) return false;
+    const t = stack.find((q) => v[1] >= q.y0 && v[1] < q.y0 + q.Ht) || stack[v[1] < stack[0].y0 + stack[0].Ht ? 0 : stack.length - 1];
+    if (v[1] - t.y0 > t.Ht - t.rf) return false; // acima da quina: é do topo
+    const far = Math.hypot(v[0] - t.center.x, v[2] - t.center.z);
+    if (far > t.bounds.maxR + 0.01) return false;
+    return signedDist(t.frost, v[0], v[2]) > SINK;
+  };
   /** Tenta pôr uma peça: confere o topo (peças apoiadas) e a ocupação; se couber, reserva. */
   const fits = (o, vol, pad = GAP) => {
     for (let i = 0; i < vol.length; i++) {
       const v = vol[i];
       const cls = String(v[4] || 'solid').split(':')[0];
       if (cls === 'solid' && !inside(v[0], v[2], v[3])) return false;
+      if (hole && (cls === 'stick' || (o === VELAS && cls === 'solid')) && v[1] - v[3] < topY + 0.03 && inHole(v[0], v[2], cls === 'stick' ? v[3] : 0.012)) return false;
+      if (cls === 'side' && sunk(v)) return false;
       if (cls === 'stick' && v[1] < topY + 0.08 && !inside(v[0], v[2], 0.012)) return false;
       if (cls === 'air' && Math.hypot(v[0] - cx, v[2] - cz) > rho && sd(v[0], v[2]) < -(m.rf + 0.03)) return false;
+      // o que fica no ar não desce sobre o bico da borda (ele tem altura: uma estrela baixa encostaria nele)
+      if (pipeH && (cls === 'air' || cls === 'fx') && v[1] - v[3] < topY + pipeH + GAP && sd(v[0], v[2]) < base.border + v[3]) return false;
       // o que é colado na lateral encosta na cerca de chocolate (ela é a parede): só o resto barra
       if (occ.hit(v[0], v[1], v[2], v[3], pad, o, false, cls === 'side' || cls === 'coating' ? 'fence' : '')) return false;
     }
@@ -682,19 +982,22 @@ function compute(config, m, base) {
   };
 
   /* ── lateral: faixa livre de cada andar ── */
-  const pipeStyle = config.piping?.style || 'liso';
-  const combo = Boolean(getPiping(pipeStyle)?.combo);
-  const pipeBase = pipeStyle !== 'liso' && (combo || config.piping.where !== 'top') && !fenced;
+  const pipeStyle = pp.style;
+  const pipeBase = pp.base && !fenced;
   const spec = base.pipe;
   const fenceAway = fenced && drip ? FENCE_AWAY : 0; // com calda, as barrinhas ficam encostadas nas gotas
-  const fenceOut = fenced ? 0.068 + fenceAway : 0;
+  const fenceOut = fenced ? fence.t + fenceAway : 0;
+  // bicos que tomam a lateral inteira (escamas, poá, arabescos): as peças da lateral não entram
+  const sidePiped = pp.side && pp.side !== 'guirlanda' && !fenced;
   let baseDropped = false;
+  let waistDropped = false;
+  const BICO = own('~bico');
   const sides = stack.map((t) => {
     const sideH = t.Ht - t.rf;
     let lo = t.y0 + 0.02;
     // bico da base: a peça (raio r, um pouco esticada) se apoia inclinada no canto bolo / prato
     const baseSize = pipeBase ? baseRingScale(config, t, spec) : 0;
-    if (baseSize) lo = t.y0 + spec.r * baseSize * 1.16 * (1 + 0.45 * Math.cos(spec.lean || 0)) + 0.02;
+    if (baseSize) lo = t.y0 + Math.max(spec.r * baseSize * 1.16 * (1 + 0.45 * Math.cos(spec.lean || 0)), pipeReach(pp.kind, spec, spec.lean || 0)[1] * baseSize) + 0.02;
     else if (pipeBase && spec) baseDropped = true;
     let hi = t.y0 + sideH - 0.015;
     let why = '';
@@ -713,26 +1016,126 @@ function compute(config, m, base) {
       }
     }
     if (t.isTop && base.pipeTop && (pipeStyle === 'babado' || pipeStyle === 'folhas') && !fenced) hi = Math.min(hi, t.y0 + sideH - 0.06);
-    return { t, sideH, lo, hi, why, out: fenceOut };
+    // bico gordo na borda do topo (rosetas, pitangas grandes): o volume dele passa um pouco da quina e desce pela
+    // lateral — as peças coladas na lateral ficam abaixo disso
+    if (t.isTop && base.pipeTop && !fenced && spec && !spec.along && !['conchas', 'folhas', 'babado'].includes(pp.kind)) {
+      const [r0, lift] = pipeBlob(pp.kind);
+      const R = r0 * (spec.scale || 1) * 1.2 * (pp.kind === 'pitangas' ? 1.3 : 1);
+      const dwall = spec.r * spec.inset + t.rf - 0.03; // (as peças da lateral saem até uns 3 mm da parede)
+      if (R > dwall) hi = Math.min(hi, t.y0 + t.Ht + R * lift - Math.sqrt(R * R - dwall * dwall) - 0.012);
+    }
+    const side = { t, sideH, lo, hi, why, out: fenceOut, piped: null, waist: null, ribbon: null, block: '', foot: '' };
+    // o estilo da cobertura ocupa o pé (barrado, confeitos subindo) ou a lateral inteira (rosetas, babados, cesta);
+    // no vulcão a lateral é a própria massa, com o creme escorrendo: nada é colado nela
+    const foot = fenced ? null : coverFoot(t);
+    if (foot && t.y0 + foot[0] > side.lo) {
+      side.lo = Math.min(side.hi, t.y0 + foot[0]);
+      side.why = side.why || foot[1];
+      side.foot = foot[1];
+    }
+    if (t.volcano || (!t.naked && COVER_SIDE[t.style] && !fenced)) {
+      side.block = t.volcano ? 'vulcao' : 'estilo';
+      side.lo = side.hi;
+      side.why = side.block;
+    }
+    if (sidePiped && !t.naked && !side.block) {
+      // a faixa livre fica toda com o bico da lateral
+      side.piped = { lo, hi };
+      side.lo = side.hi;
+      side.why = 'bico';
+    }
+    // bico na cintura: um colar a meia altura (com calda, logo abaixo das gotas); as peças da lateral desviam dele
+    if (pp.waist && !fenced && !t.naked && spec && !side.block) {
+      const size = spec.baseScale || 1;
+      // (o raio reservado cobre o volume de verdade da peça colada na parede, no pior esticamento)
+      const rad = Math.max(spec.r * 1.1, pipeReach(pp.kind, spec, Math.PI / 2)[1] * 1.04) * size;
+      const y = Math.min(waistY(t), hi - rad - 0.01);
+      if (y - rad < lo) waistDropped = true;
+      else {
+        side.waist = { y, size };
+        const wall = cleanOffset(t.frost, spec.r * size * 0.5);
+        const n = Math.max(8, Math.round(wall.length / (rad * 1.3)));
+        const pt = {};
+        for (let i = 0; i < n; i++) {
+          pathAt(wall, (i / n) * wall.length, pt);
+          occ.add(BICO, pt.x, y, pt.z, rad, 'pipebase');
+        }
+      }
+    }
+    return side;
   });
-  if (vintage && drip && !fenced) say('Com a calda escorrendo, o acabamento vintage fica só com as conchas da borda: as guirlandas da lateral ficariam por cima das gotas.');
+  if (vintage && drip && !fenced) say(pp.combo ? 'Com a calda escorrendo, o acabamento vintage fica só com as conchas da borda: as guirlandas da lateral ficariam por cima das gotas.' : 'Com a calda escorrendo, as guirlandas da lateral não são aplicadas: ficariam por cima das gotas.');
   if (baseDropped) say('Com a calda chegando perto do pé do bolo, o bico da base não é aplicado neste bolo.');
-  // a cerca de chocolate passa 1 cm da borda do topo: nada no topo (nem no ar, logo acima) encosta nela
+  if (waistDropped) say('Não sobrou altura livre na lateral para o bico da cintura neste bolo.');
+  // a cerca passa 1 cm da borda do topo: nada no topo (nem no ar, logo acima) encosta nela
   if (fenced) {
-    const wall = cleanOffset(m.frost, 0.034 + fenceAway);
-    const n = Math.max(12, Math.round(wall.length / 0.055));
+    const wall = cleanOffset(m.frost, fence.mid + fenceAway);
+    const n = Math.max(12, Math.round(wall.length / (fence.r * 1.5)));
     const pt = {};
     for (let i = 0; i < n; i++) {
       pathAt(wall, (i / n) * wall.length, pt);
-      occ.addCyl(own('wafer'), pt.x, pt.z, 0.036, topY - 0.2, topY + 0.135, 'fence');
+      occ.addCyl(own('wafer'), pt.x, pt.z, fence.r, topY - 0.2, topY + fence.rise + 0.035, 'fence');
     }
+  }
+  // fita em volta do bolo: uma faixa em cada andar, acima do bico da base (com cerca, amarrada por fora dela)
+  if (has('fita')) {
+    const K = KIT.fita?.band || { h: 0.26 };
+    const pl = P('fita');
+    pl.zone = 'lateral';
+    const o = own('fita');
+    sides.forEach((sd0, i) => {
+      if ((sd0.t.naked && !fenced) || sd0.block) return;
+      const h = Math.min(K.h, sd0.sideH * 0.42);
+      const y0 = fenced ? sd0.t.y0 + sd0.sideH * 0.5 - h / 2 : sd0.lo + (pipeBase ? 0.006 : -0.012);
+      const y1 = y0 + h;
+      if (!fenced && y1 > sd0.hi - 0.04) return; // a calda (ou a guirlanda) desce até aqui: não cabe neste andar
+      if (sd0.waist && y1 > sd0.waist.y - 0.09) return;
+      const out = sd0.out + 0.006;
+      const wall = cleanOffset(sd0.t.frost, out + 0.004);
+      const n = Math.max(10, Math.round(wall.length / 0.11));
+      const pt = {};
+      const vol = [];
+      const rows = Math.max(1, Math.round(h / 0.13));
+      for (let k = 0; k < n; k++) {
+        pathAt(wall, (k / n) * wall.length, pt);
+        for (let j = 0; j < rows; j++) vol.push([pt.x, y0 + (h * (j + 0.5)) / rows, pt.z, Math.min(0.07, h / rows / 2 + 0.006), 'side']);
+      }
+      // lacinho da fita, na frente do andar de baixo
+      let bow = null;
+      if (i === 0) {
+        const at = frontSpot(sd0.t);
+        const bs = clamp(h / 0.26, 0.6, 1.1);
+        const bx = at.x + at.nx * (out + 0.012);
+        const bz = at.z + at.nz * (out + 0.012);
+        const by = (y0 + y1) / 2;
+        const rx = at.nz;
+        const rz = -at.nx;
+        bow = { x: bx, y: by, z: bz, nx: at.nx, nz: at.nz, s: bs };
+        [[0, 0, 0.03, 0.05], [-0.1, 0.02, 0.03, 0.075], [0.1, 0.02, 0.03, 0.075], [-0.06, -0.12, 0.02, 0.045], [0.06, -0.12, 0.02, 0.045]].forEach(([lx, ly, lz, lr]) => {
+          vol.push([bx + rx * lx * bs + at.nx * lz * bs, by + ly * bs, bz + rz * lx * bs + at.nz * lz * bs, lr * bs, 'side']);
+        });
+      }
+      reserve(o, vol);
+      pl.pieces.push({ t: 'band', tier: i, y0, y1, out, bow, vol });
+      sd0.ribbon = { y0, y1 };
+      if (!fenced) sd0.lo = Math.max(sd0.lo, y1 + 0.014);
+    });
+    if (!pl.pieces.length) pl.unfit = true;
+    else if (pl.pieces.length < sides.length) say('A fita ficou só nos andares em que há lateral livre para ela.');
   }
   const sideOf = (y) => sides.find((s) => y >= s.t.y0 && y <= s.t.y0 + s.t.Ht) || sides[0];
   let sideLimited = '';
   /** Peça na lateral: centro a `depth` da parede, na direção theta (a partir do eixo do bolo). */
   const wallAt = (s, theta, depth) => {
-    const dist = rayHit(s.t.frost, 0, 0, theta) + s.out + depth;
-    return { x: Math.cos(theta) * dist, z: Math.sin(theta) * dist, ox: Math.cos(theta), oz: Math.sin(theta) };
+    if (round) {
+      const dist = rayHit(s.t.frost, 0, 0, theta) + s.out + depth;
+      return { x: Math.cos(theta) * dist, z: Math.sin(theta) * dist, ox: Math.cos(theta), oz: Math.sin(theta) };
+    }
+    // nos demais formatos, "para fora" é a normal da parede naquele ponto (não a direção do eixo): a peça cola de
+    // chapa na parede do oval, da pétala, da face do quadrado
+    const hit = raySpot(s.t.frost, 0, 0, theta);
+    const pt = pathAt(s.t.frost, hit.s, {});
+    return { x: pt.x + pt.nx * (s.out + depth), z: pt.z + pt.nz * (s.out + depth), ox: pt.nx, oz: pt.nz };
   };
 
   /* ── quem fica em que zona ── */
@@ -747,8 +1150,11 @@ function compute(config, m, base) {
     else if (arr === 'meialua') zones[id] = 'half';
     else if (arr === 'espalhado') zones[id] = 'scatter';
     else if (arr === 'cascata') zones[id] = 'cascade';
-    else if (arr === 'palito' || arr === 'frente' || arr === 'lateral') zones[id] = arr;
+    else if (arr === 'palito' || arr === 'frente' || arr === 'lateral' || arr === 'fundo') zones[id] = arr;
   });
+  // peças do kit espetadas ou em pé no fundo do palco também ocupam o meio
+  const kitUp = items.filter((id) => KIT[id] && (zones[id] === 'palito' || zones[id] === 'fundo'));
+  if (kitUp.length) centerTaken = true;
   const autos = items.filter((id) => id !== 'velas' && opt(id).arr === 'auto');
   if (autos.length === 1) zones[autos[0]] = centerTaken ? 'crown' : 'center';
   else {
@@ -762,7 +1168,8 @@ function compute(config, m, base) {
     const s = sides[sides.length - 1];
     if ((s.hi - s.lo) / 0.62 < 0.45) {
       zones.lacos = 'center';
-      say(`O laço foi para o topo do bolo: na lateral ele ficaria por cima ${s.why === 'calda' ? 'da calda' : s.why === 'guirlanda' ? 'das guirlandas' : 'do acabamento'}.`);
+      const over = { calda: 'da calda', guirlanda: 'das guirlandas', barrado: 'do barrado', chuva: 'dos confeitos', estilo: (COVER_SIDE[s.t.style] || 'o acabamento').replace(/^as /, 'das ').replace(/^os /, 'dos ').replace(/^o /, 'do ') }[s.why] || 'do acabamento';
+      say(s.block === 'vulcao' ? 'O laço foi para o topo do bolo: no vulcão nada é colado na lateral.' : `O laço foi para o topo do bolo: na lateral ele ficaria por cima ${over}.`);
     }
   }
 
@@ -798,7 +1205,7 @@ function compute(config, m, base) {
   /* ── palco: o miolo do topo, por dentro da coroa ── */
   const rings = ringIds();
   const groups = items.filter((id) => zones[id] === 'center');
-  const stageBusy = groups.length > 0 || has('velas') || Boolean(script) || Boolean(message) || named || has('topo') || has('baloes') || has('pirulitos') || zones.coracoes === 'palito';
+  const stageBusy = groups.length > 0 || has('velas') || Boolean(script) || Boolean(message) || named || has('topo') || has('baloes') || has('pirulitos') || zones.coracoes === 'palito' || kitUp.length > 0;
   let ringScale = 1;
   let ringW = 0;
   if (rings.length) {
@@ -808,9 +1215,9 @@ function compute(config, m, base) {
       need = 0.16;
       if (groups.length) need = Math.max(need, groups.length === 1 ? 0.26 : groups.length === 2 ? 0.46 : 0.56);
       if (classic) need = Math.max(need, 0.15 + 0.012 * (d.candles || 1)) + (groups.length ? 0.08 : 0);
-      if (numero) need = Math.max(need, 0.2 + 0.12 * String(d.number).length) + (groups.length ? 0.12 : 0);
+      if (numero) need = Math.max(need, letras ? 0.3 : 0.2 + 0.12 * digitsOf.length) + (groups.length ? 0.12 : 0);
       if (script) need = Math.max(need, 0.34) + (groups.length || has('velas') ? 0.12 : 0);
-      if (has('baloes') || has('pirulitos') || message || named) need = Math.max(need, 0.24);
+      if (has('baloes') || has('pirulitos') || message || named || kitUp.length) need = Math.max(need, 0.24);
       need = Math.min(need, 0.66 * F);
     }
     const minS = Math.max(...rings.map((id) => SPEC[id]?.minS || 0.75));
@@ -847,8 +1254,308 @@ function compute(config, m, base) {
     return best;
   };
 
+  // q = { wx, wz: ponto da parede (já por fora da cerca, se houver) · y · ox, oz: para fora · taper }
+  const makeSide = {
+    frutas: (q, i, r) => {
+      if (i % 3 === 2) {
+        const k = 0.9 * q.taper;
+        const x = q.wx + q.ox * 0.08 * k;
+        const z = q.wz + q.oz * 0.08 * k;
+        return { t: 'R', x, y: q.y - 0.064 * k, z, k, side: true, vol: [[x, q.y, z, 0.092 * k, 'side']] };
+      }
+      const sc = (0.86 + r() * 0.16) * q.taper;
+      const x = q.wx + q.ox * 0.11 * sc;
+      const z = q.wz + q.oz * 0.11 * sc;
+      return { t: 'S', x, y: q.y - 0.098 * sc, z, ox: q.ox, oz: q.oz, s: sc, lean: 1.45, yaw: (r() - 0.5) * 0.5, side: true, vol: VOL.berryLying(x, q.y - 0.098 * sc, z, q.ox, q.oz, sc, 1.45, 'side') };
+    },
+    flores: (q, i, r) => {
+      const sc = (0.6 + r() * 0.24) * q.taper * flowerScale;
+      if (i % 3 !== 1) return { t: 'rose', x: q.wx, y: q.y, z: q.wz, ox: q.ox, oz: q.oz, K: sc, side: true, leaf: true, vol: VOL.roseSide(q.wx, q.y, q.wz, q.ox, q.oz, sc) };
+      const k = sc * 1.25;
+      return { t: 'blossom', x: q.wx, y: q.y, z: q.wz, ox: q.ox, oz: q.oz, k, side: true, leaf: true, vol: [[q.wx + q.ox * 0.02, q.y, q.wz + q.oz * 0.02, 0.085 * k, 'side']] };
+    },
+    margaridas: (q, i, r) => {
+      const s = (i % 2 ? 0.8 : 1.0) * q.taper;
+      const l = Math.hypot(1, 0.3);
+      const x = q.wx + q.ox * 0.006;
+      const z = q.wz + q.oz * 0.006;
+      return { t: 'daisy', x, y: q.y, z, ox: q.ox, oz: q.oz, s, up: 0.3, roll: r() * TAU, side: true, leaf: i % 2 === 0, vol: VOL.daisySide(x, q.y, z, q.ox / l, 0.3 / l, q.oz / l, s) };
+    },
+    peonias: (q, i, r) => {
+      const s = peonyScale * q.taper * (0.5 + r() * 0.18) * 0.84;
+      const x = q.wx + q.ox * 0.02 * s;
+      const z = q.wz + q.oz * 0.02 * s;
+      return { t: 'peony', x, y: q.y, z, ox: q.ox, oz: q.oz, s, side: true, spin: r() * TAU, leaf: true, vol: VOL.peony(x, q.y, z, s, q.ox, q.oz, Math.atan2(1, 0.16), 'side') };
+    },
+    macarons: (q, i, r) => {
+      // colados pela casquinha de baixo, de frente para fora; um sim, um não, apoiado sobre os vizinhos
+      const over = i % 2;
+      const s = 0.9 + 0.1 * q.taper - (i % 3 === 2 ? 0.08 : 0);
+      const up = over * 0.2 + (r() - 0.5) * 0.1;
+      const l = Math.hypot(1, up);
+      const depth = 0.074 * s + over * 0.05;
+      const x = q.wx + q.ox * depth;
+      const z = q.wz + q.oz * depth;
+      return { t: 'mac', x, y: q.y, z, nx: q.ox / l, ny: up / l, nz: q.oz / l, s, side: true, roll: r() * TAU, vol: VOL.macaron(x, q.y, z, q.ox / l, up / l, q.oz / l, s, 'side') };
+    },
+    ouro: (q) => {
+      const x = q.wx + q.ox * 0.004;
+      const z = q.wz + q.oz * 0.004;
+      return { t: 'gold', x, y: q.y, z, ox: q.ox, oz: q.oz, side: true, spread: 0.09 * q.taper, vol: [[x, q.y, z, 0.1 * q.taper, 'coating']] };
+    },
+    borboletas: (q, i, r) => {
+      const s = (0.85 + r() * 0.3) * (0.8 + 0.2 * q.taper);
+      const open = 0.75 + r() * 0.45;
+      const up = 0.2 + r() * 0.3;
+      const l = Math.hypot(1, up);
+      const x = q.wx + q.ox * 0.004;
+      const z = q.wz + q.oz * 0.004;
+      return { t: 'fly', x, y: q.y, z, ox: q.ox, oz: q.oz, s, open, up, side: true, vol: VOL.butterfly(x, q.y, z, s, open, q.ox / l, up / l, q.oz / l, 'side') };
+    },
+  };
+  /** Peça de coroa / meia-lua de cada decoração. q = { x, z, ox, oz, u, taper, i, n, prev, s } */
+  const ringPiece = {
+    frutas: (q, r) => {
+      if (q.i % 2 === 0) {
+        const lean = 1.0 + r() * 0.3;
+        const sc = (0.88 + r() * 0.14) * q.taper * q.s;
+        return { t: 'S', x: q.x, y: topY, z: q.z, ox: q.ox, oz: q.oz, s: sc, lean, yaw: (r() - 0.5) * 0.4, vol: VOL.berryLying(q.x, topY, q.z, q.ox, q.oz, sc, lean) };
+      }
+      // entre dois morangos: framboesa na frente e mirtilos por dentro
+      const k = 0.92 * q.taper * q.s;
+      const x = q.x + q.ox * 0.05 * q.s;
+      const z = q.z + q.oz * 0.05 * q.s;
+      return { t: 'R', x, y: topY - 0.004, z, k, extra: [[-0.115, 0], [-0.03, 0.105], [-0.2, 0.05]], ox: q.ox, oz: q.oz, vol: VOL.raspberry(x, topY - 0.004, z, k) };
+    },
+    morangos: (q, r) => {
+      const lean = 0.92 + r() * 0.25;
+      const sc = (0.9 + r() * 0.14) * q.taper * q.s;
+      return { t: 'S', x: q.x, y: topY, z: q.z, ox: q.ox, oz: q.oz, s: sc, lean, yaw: (r() - 0.5) * 0.4, vol: VOL.berryLying(q.x, topY, q.z, q.ox, q.oz, sc, lean) };
+    },
+    cerejas: (q, r) => {
+      const sc = (0.9 + r() * 0.14) * q.taper * q.s;
+      const a = Math.atan2(q.oz, q.ox) + (q.i % 2 ? 1 : -1) * (Math.PI / 2 + r() * 0.5);
+      const tilt = 0.08 + r() * 0.26;
+      const spin = r() * TAU;
+      const v = r() < 0.5 ? 0 : 1;
+      return { t: 'cherry', x: q.x, y: topY, z: q.z, s: sc, a, tilt, spin, v, vol: VOL.cherry(q.x, topY, q.z, sc, a, tilt, spin, v) };
+    },
+    flores: (q, r) => {
+      const ends = q.open && (q.i === 0 || q.i === q.n - 1) && q.n > 2;
+      if (ends) {
+        const k = 0.9 * flowerScale * q.s;
+        return { t: 'blossom', x: q.x, y: topY, z: q.z, k, vol: VOL.blossom(q.x, topY, q.z, k) };
+      }
+      const K = (q.open ? 0.66 + 0.3 * Math.sin(Math.PI * q.u) : 0.74 + (q.i % 2) * 0.12) * flowerScale * 1.12 * q.s;
+      return { t: 'rose', x: q.x, y: topY, z: q.z, K, tx: q.ox, tz: q.oz, tilt: 0.2 + r() * 0.1, leaves: true, inner: true, ox: q.ox, oz: q.oz, vol: VOL.rose(q.x, topY, q.z, K) };
+    },
+    margaridas: (q) => {
+      const s = (q.i % 2 ? 0.8 : 1.02) * q.taper * q.s;
+      return { t: 'daisy', x: q.x, y: topY + (q.i % 2) * 0.004, z: q.z, ox: q.ox, oz: q.oz, s, leaf: q.i % 2 === 0, garland: q.i % 2 === 0, vol: VOL.daisy(q.x, topY, q.z, s) };
+    },
+    peonias: (q) => {
+      const s = q.size * q.s * (0.62 + 0.4 * Math.sin(Math.PI * q.u)) * 0.8;
+      return { t: 'peony', x: q.x, y: topY, z: q.z, s, ox: q.ox, oz: q.oz, tilt: 0.22, leaves: true, vol: VOL.peony(q.x, topY, q.z, s, q.ox, q.oz, 0.22) };
+    },
+    macarons: (q) => {
+      // em fila, cada um deitado sobre o anterior (dominós caídos); o primeiro do grupo fica deitado
+      const s = q.s;
+      const stepLen = q.prev ? Math.hypot(q.x - q.prev.x, q.z - q.prev.z) : 0;
+      const elev = q.prev ? Math.acos(clamp((MAC_T * s * 0.97) / stepLen, 0, 1)) : Math.PI / 2 - 0.04;
+      // tangente no sentido da fila
+      const tx = -q.oz;
+      const tz = q.ox;
+      const nx = tx * Math.cos(elev);
+      const ny = Math.sin(elev);
+      const nz = tz * Math.cos(elev);
+      const yc = topY + (MAC_R * Math.cos(elev) + (MAC_T / 2) * Math.sin(elev)) * s - 0.004;
+      return { t: 'mac', x: q.x, y: yc, z: q.z, nx, ny, nz, s, dx: tx, dz: tz, elev, vol: VOL.macaron(q.x, yc, q.z, nx, ny, nz, s) };
+    },
+    brigadeiros: (q, r) => {
+      const sc = (0.96 + r() * 0.06) * (0.8 + 0.2 * q.taper) * q.s;
+      return { t: 'brig', x: q.x, y: topY, z: q.z, s: sc, vol: VOL.brigadeiro(q.x, topY, q.z, sc) };
+    },
+    bombons: (q, r) => {
+      const sc = (0.94 + r() * 0.08) * (0.82 + 0.18 * q.taper) * q.s;
+      return { t: 'bombom', x: q.x, y: topY, z: q.z, s: sc, vol: VOL.bombom(q.x, topY, q.z, sc) };
+    },
+    suspiros: (q, r) => {
+      const sc = (q.i % 2 ? 0.84 : 1.0) * (0.8 + 0.2 * q.taper) * q.s;
+      const tall = 0.94 + r() * 0.12;
+      return { t: 'meringue', x: q.x, y: topY, z: q.z, s: sc, tall, vol: VOL.meringue(q.x, topY, q.z, sc, tall) };
+    },
+    marshmallows: (q, r) => {
+      const sc = (0.9 + r() * 0.1) * q.taper * q.s;
+      const lying = q.i % 3 === 2;
+      const squash = lying ? 1 : 0.9 + r() * 0.12;
+      const yc = topY + 0.1 * sc * squash - 0.004;
+      return { t: 'marsh', x: q.x, y: yc, z: q.z, s: sc, lying, squash, vol: VOL.marshmallow(q.x, yc, q.z, sc) };
+    },
+    biscoitos: (q, r) => {
+      // em pé, fincados na cobertura, com a face em relevo virada para fora; apertados, giram e se sobrepõem
+      const s = (0.86 + 0.14 * q.taper) * q.s;
+      const stepLen = q.prev ? Math.hypot(q.x - q.prev.x, q.z - q.prev.z) : 1;
+      const yaw = stepLen < 0.3 * s ? Math.acos(clamp((stepLen / s - 0.02) / 0.31, 0.3, 1)) : (r() - 0.5) * 0.2;
+      const a = Math.atan2(q.oz, q.ox) + yaw;
+      const elev = 0.2 + r() * 0.1;
+      const nx = Math.cos(a) * Math.cos(elev);
+      const ny = Math.sin(elev);
+      const nz = Math.sin(a) * Math.cos(elev);
+      const yc = topY + (COOKIE_R * Math.cos(elev) + (COOKIE_T / 2) * Math.sin(elev)) * s - 0.034;
+      return { t: 'cookie', x: q.x, y: yc, z: q.z, nx, ny, nz, s, a, elev, vol: VOL.cookie(q.x, yc, q.z, nx, ny, nz, s) };
+    },
+    ouro: (q) => ({ t: 'gold', x: q.x, y: topY, z: q.z, spread: 0.05, n: 3, vol: [[q.x, topY, q.z, 0.06, 'coating']] }),
+    coracoes: (q, r) => {
+      const s = (q.i % 2 ? 0.92 : 1.16) * (0.8 + 0.2 * q.taper) * q.s;
+      const lean = 0.16 + r() * 0.12;
+      const yc = topY + 0.07 * Math.cos(lean) * s - 0.014;
+      const x = q.x - q.ox * 0.07 * Math.sin(lean) * s * 0.5;
+      const z = q.z - q.oz * 0.07 * Math.sin(lean) * s * 0.5;
+      return { t: 'heart', x: q.x, y: yc, z: q.z, ox: q.ox, oz: q.oz, s, lean, roll: (r() - 0.5) * 0.2, stand: true, vol: VOL.heart(x, yc, z, s) };
+    },
+    borboletas: (q, r) => {
+      const s = (0.85 + r() * 0.3) * (0.8 + 0.2 * q.taper) * q.s;
+      const open = 0.75 + r() * 0.45;
+      return { t: 'fly', x: q.x, y: topY + 0.002, z: q.z, s, open, vol: VOL.butterfly(q.x, topY + 0.002, q.z, s, open) };
+    },
+  };
+
+  /* ── peças do kit (kit.js): os mesmos construtores servem a qualquer decoração nova ── */
+  /** Quanto a peça acompanha o tamanho do bolo (grow = 0: tamanho real fixo). */
+  const kitGrow = (K) => 1 + (K.grow || 0) * (clamp(rho, 0.55, 1.45) - 1);
+  // bentô (10 cm): a decoração é em miniatura. As peças grandes — únicas, no palito, coladas na lateral — têm um
+  // teto proporcional ao topo: uma coroa, uma bola ou uma folha do tamanho do bolo não serve
+  const mini = rho < 0.56;
+  const MINI = mini ? 0.7 : 1;
+  /** Maior escala de uma peça única no bentô (back = em pé no fundo, de um lado ao outro do bolo). */
+  const heroCap = (V, back = false) => {
+    if (!mini) return Infinity;
+    const w = 2 * Math.max(...V.sph.map((q) => Math.abs(q[0]) + q[3]));
+    const h = Math.max(...V.sph.map((q) => q[1] + q[3]));
+    return Math.min(((back ? 0.95 : 0.6) * 2 * rho) / w, ((back ? 0.75 : 0.7) * 2 * rho) / h);
+  };
+  const kitSize = (K, r) => K.size[0] + r() * (K.size[1] - K.size[0]);
+  /** Peça do kit apoiada no topo em (x, z): variante v, escala s, girada de rot. */
+  const kitTop = (id, x, z, s, rot, v, more = null) => {
+    const y = topY + (more?.rise || 0);
+    return { t: 'k', v, pose: 'top', x, y, z, s, rot, vol: kitVolume(KIT[id].vars[v], x, y, z, basisTop(rot), s, 'solid'), ...more };
+  };
+  /** Peça do kit colada na lateral, no ponto q = { wx, wz, y, ox, oz } da parede. */
+  const kitSide = (id, q, s, roll, v) => {
+    const K = KIT[id];
+    const sv = K.side.v ?? v;
+    const depth = (K.side.depth || 0) * s;
+    const up = K.side.up || 0;
+    const x = q.wx + q.ox * depth;
+    const z = q.wz + q.oz * depth;
+    const face = K.side.mode === 'face';
+    const B = face ? basisFace(q.ox, q.oz, roll) : basisSide(q.ox, q.oz, up, roll);
+    return { t: 'k', v: sv, pose: 'side', face, side: true, x, y: q.y, z, ox: q.ox, oz: q.oz, up, roll, s, vol: kitVolume(K.vars[sv], x, q.y, z, B, s, 'side') };
+  };
+  Object.keys(KIT).forEach((id) => {
+    const K = KIT[id];
+    if (!SPEC[id]) return;
+    const tops = topVariants(K);
+    if (!ringPiece[id]) {
+      ringPiece[id] = (q, r) => kitTop(id, q.x, q.z, kitSize(K, r) * (0.84 + 0.16 * q.taper) * q.s, faceRot(K.face, q.ox, q.oz, r), pickVariant(K, q.i, r, { only: tops }));
+    }
+    if (K.side && !makeSide[id]) {
+      makeSide[id] = (q, i, r) => kitSide(id, q, kitSize(K, r) * MINI * (0.8 + 0.2 * q.taper), K.side.roll === false ? 0 : (r() - 0.5) * (K.side.roll ?? TAU), pickVariant(K, i, r, { only: tops }));
+    }
+  });
+
+  /**
+   * Uma peça avulsa (lugar escolhido pelo cliente): q = { id, x, z, y, rot, scale, face }.
+   * → peça do plano (com os volumes marcados com o grupo `tag`), ou null se a decoração não aceita esse lugar.
+   */
+  const unitPiece = (q0, tag) => {
+    // o lugar pedido entra arredondado a um décimo de milímetro — do mesmo jeito que é gravado na configuração:
+    // a sondagem (canPlace / nearestFree) e o plano do bolo gravado montam exatamente a mesma peça
+    const r4 = (v) => +(Number(v) || 0).toFixed(4);
+    const q = { ...q0, x: r4(q0.x), z: r4(q0.z) };
+    if (Number.isFinite(Number(q0.y)) && q0.y != null) q.y = r4(q0.y);
+    else delete q.y;
+    const id = q.id;
+    const K = kit(id);
+    const sc = clamp(Number(q.scale) || 1, 0.6, 1.4);
+    const rot = Number(q.rot) || 0;
+    // (o sorteio depende só da decoração e do lugar: a sondagem — canPlace / nearestFree — e o plano final
+    // montam exatamente a mesma peça)
+    const r = rng(hashString(`avulsa${id}${Math.round(q.x * 10000)}_${Math.round(q.z * 10000)}_${q.face === 'lateral' ? Math.round((q.y || 0) * 10000) : 't'}`));
+    let piece = null;
+    if (q.face === 'lateral') {
+      if (!makeSide[id]) return null;
+      const theta = Math.atan2(Number(q.z) || 0, Number(q.x) || 0.0001);
+      const y = Number.isFinite(q.y) ? q.y : r4(sides[0].t.y0 + sides[0].sideH * 0.5);
+      const sd0 = sideOf(y);
+      const w = wallAt(sd0, theta, 0);
+      piece = K ? kitSide(id, { wx: w.x, wz: w.z, y, ox: w.ox, oz: w.oz }, sc * (K.size[0] + K.size[1]) * 0.5, rot, topVariants(K)[0]) : makeSide[id]({ wx: w.x, wz: w.z, y, ox: w.ox, oz: w.oz, taper: sc, u: 0.5 }, 0, r);
+      piece.side = true;
+    } else if (K) {
+      if (!SPEC[id] && !K.hero) return null;
+      piece = kitTop(id, q.x, q.z, sc * (K.size[0] + K.size[1]) * 0.5, rot, pickVariant(K, 0, r, { only: topVariants(K), alt: false }));
+    } else if (ringPiece[id]) {
+      piece = ringPiece[id]({ x: q.x, z: q.z, ox: Math.sin(rot), oz: Math.cos(rot), u: 0.5, taper: 1, i: 0, n: 1, prev: null, s: sc, open: false, size: 1 }, r);
+    }
+    if (!piece) return null;
+    piece.placed = tag;
+    // a altura PEDIDA (a de algumas peças fica um pouco abaixo dela): é ela que volta para a configuração
+    if (q.face === 'lateral') piece.askY = Number.isFinite(q.y) ? q.y : r4(sides[0].t.y0 + sides[0].sideH * 0.5);
+    piece.askX = q.x;
+    piece.askZ = q.z;
+    // cada peça avulsa é um dono: duas da mesma decoração também não se sobrepõem
+    piece.vol = piece.vol.map((v) => [v[0], v[1], v[2], v[3], `${String(v[4] || 'solid').split(':')[0]}:${tag}`]);
+    return piece;
+  };
+  /** '' se a peça cabe; 'fora' (do topo, da lateral livre) ou 'ocupado'. */
+  const whyNot = (o, piece) => {
+    const vol = piece.vol;
+    if (piece.side) {
+      const sd0 = sideOf(piece.y);
+      if (sd0.t.naked) return 'fora';
+      let lo = Infinity;
+      let hi = -Infinity;
+      vol.forEach((v) => {
+        lo = Math.min(lo, v[1] - v[3]);
+        hi = Math.max(hi, v[1] + v[3]);
+      });
+      if (lo < sd0.lo || hi > sd0.hi) return 'fora';
+    }
+    for (let i = 0; i < vol.length; i++) {
+      const v = vol[i];
+      const cls = String(v[4] || 'solid').split(':')[0];
+      if (cls === 'solid' && !inside(v[0], v[2], v[3])) return 'fora';
+    }
+    return fits(o, vol) ? '' : 'ocupado';
+  };
+  /** Procura, em volta do lugar pedido, o ponto livre mais próximo para a peça q. → { q, piece, moved } ou null */
+  const seekFree = (q, tag, o, reachMax = 0.6) => {
+    const first = unitPiece(q, tag);
+    if (!first) return null;
+    if (!whyNot(o, first)) return { q, piece: first, moved: 0 };
+    const lateral = q.face === 'lateral';
+    const y0 = lateral ? first.askY : 0;
+    const th0 = lateral ? Math.atan2(q.z, q.x) : 0;
+    const rad0 = lateral ? rayHit(sideOf(y0).t.frost, 0, 0, th0) || 1 : 0; // raio da parede naquela direção
+    for (let k = 1; k * 0.03 <= reachMax; k++) {
+      const dist = k * 0.03;
+      const n = Math.max(8, Math.round((TAU * dist) / 0.045));
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * TAU + k * 0.37;
+        // na lateral a busca anda ao longo da parede (ângulo) e na altura
+        const cand = lateral
+          ? { ...q, x: Math.cos(th0 + (Math.cos(a) * dist) / rad0), z: Math.sin(th0 + (Math.cos(a) * dist) / rad0), y: y0 + Math.sin(a) * dist }
+          : { ...q, x: q.x + Math.cos(a) * dist, z: q.z + Math.sin(a) * dist };
+        const piece = unitPiece(cand, tag);
+        if (piece && !whyNot(o, piece)) return { q: cand, piece, moved: dist };
+      }
+    }
+    return null;
+  };
+
   /* ══ 1. Topos espetados: nome em acrílico, plaquinha, estrelas, balões ══ */
-  const backDepth = Math.min(0.34, 0.36 * rho);
+  // (no vulcão, as hastes da plaquinha e do nome ficam no anel de massa, atrás do furo)
+  const backDepth = Math.max(Math.min(0.34, 0.36 * rho), hole ? hole + 0.08 : 0);
   let depthP = Math.min(backDepth, Fi - 0.03);
   let depthN = Math.min(backDepth + (message ? 0.045 : 0), Fi - 0.02);
   if (named && message) depthP = depthN - 0.09;
@@ -886,7 +1593,7 @@ function compute(config, m, base) {
     // altura da linha de base: por cima da plaquinha, das velas e do que estiver na coroa por baixo das pontas
     let lift = 0.22;
     if (message) lift = plaqueTopY + 0.1;
-    else if (has('velas')) lift = faisca ? 0.36 : numero ? 0.86 : 0.6;
+    else if (has('velas')) lift = faisca ? 0.36 : letras ? 0.5 : numero ? 0.86 : candleKind === 'longa' ? 0.92 : 0.6;
     else if (has('topo')) lift = 0.3;
     if (groups.length) lift = Math.max(lift, 0.34);
     if (rings.length && maxW / 2 > maxX(zN, 0) - ringW + 0.02) lift = Math.max(lift, ringH + 0.33 * maxEm + 0.05);
@@ -901,15 +1608,40 @@ function compute(config, m, base) {
     party.topper = { x: cx, z: zN, maxW, maxEm, lift, stakeX, tilt, bottom, high, two };
   }
 
+  /* ══ 1b. Peças com lugar escolhido pelo cliente (decor.placed) ══ */
+  notes.placed = [];
+  placedList.forEach((q, i) => {
+    const tag = `a${i}`;
+    const o = own(`avulsa#${i}`);
+    const dec = getDecor(q?.id);
+    const got = dec && dec.unit ? seekFree(q, tag, o) : null;
+    if (!got) {
+      notes.placed.push({ ok: false });
+      return;
+    }
+    reserve(o, got.piece.vol);
+    const pl = P(q.id);
+    if (!pl.zone) pl.zone = 'placed';
+    pl.pieces.push(got.piece);
+    notes.placed.push({ ok: true, x: got.piece.askX, z: got.piece.askZ, ...(q.face === 'lateral' ? { y: got.piece.askY } : {}), moved: +got.moved.toFixed(3) });
+  });
+  {
+    const out = notes.placed.filter((x) => !x.ok).length;
+    const moved = notes.placed.filter((x) => x.ok && x.moved > 0.02).length;
+    if (out) notes.unfit.push(out === 1 ? 'Uma peça colocada à mão não coube onde foi posta (nem ali por perto) · não cobrada.' : `${out} peças colocadas à mão não couberam onde foram postas (nem ali por perto) · não cobradas.`);
+    if (moved) say(moved === 1 ? 'Uma peça colocada à mão foi levada ao lugar livre mais próximo.' : `${moved} peças colocadas à mão foram levadas ao lugar livre mais próximo.`);
+  }
+
   let textDepth = 0; // profundidade guardada para a escrita (quando ela divide o topo com o que vai no meio)
   const groupDiscs = []; // discos dos arranjos do centro
   /* velas clássicas: roda no meio livre, em volta do arranjo do centro, em arco — o primeiro formato que couber */
   const placeCandles = () => {
     const n = clamp(Math.round(d.candles || 1), 1, 9);
-    const h = message ? 0.4 : 0.5;
+    const h = message ? CANDLE[1] : CANDLE[0];
+    const cw = CANDLE[2]; // quanto esta vela é mais larga que a clássica (as de estrela pedem o dobro do espaço)
     const o = own('velas');
     const y0 = topY - 0.03;
-    const volOf = (x, z) => VOL.candle(x, y0, z, h);
+    const volOf = candleKind === 'estrela' ? (x, z) => VOL.candleStar(x, y0, z, h) : (x, z) => VOL.candle(x, y0, z, h);
     const arc = (ox2, oz2, rad, mid, span) => {
       const out = [];
       for (let i = 0; i < n; i++) {
@@ -920,9 +1652,9 @@ function compute(config, m, base) {
     };
     const ok = (pts) => {
       for (let i = 0; i < pts.length; i++) {
-        if (!inside(pts[i][0], pts[i][1], 0.04)) return false;
+        if (!inside(pts[i][0], pts[i][1], 0.04 * cw)) return false;
         if (Math.hypot(pts[i][0] - cx, pts[i][1] - cz) > Fi - 0.035 + 1e-6 && rings.length) return false;
-        for (let j = 0; j < i; j++) if (Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]) < 0.074) return false;
+        for (let j = 0; j < i; j++) if (Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]) < 0.074 * cw) return false;
         if (!fits(o, volOf(pts[i][0], pts[i][1]))) return false;
       }
       return true;
@@ -931,30 +1663,36 @@ function compute(config, m, base) {
     const midC = groupDiscs.length === 1 ? groupDiscs[0] : { x: cx, z: cz };
     const variants = [];
     const F0 = Math.PI / 2;
+    if (hole) {
+      // vulcão: as velas dão a volta no furo, fincadas no anel de massa — ou ficam em arco, na frente dele
+      const rad = Math.min(Math.max(hole + 0.1, (hole + Fi) / 2 - 0.04), Fi - 0.045);
+      if (n >= 4 && (TAU * rad) / n >= 0.105 * cw) variants.push(arc(cx, cz, rad, F0, TAU));
+      [0.15, 0.115].forEach((gap) => variants.push(arc(cx, cz, rad, F0, Math.min(2.7, ((n - 1) * gap * cw) / rad))));
+    }
     if (!groupDiscs.length) {
       // meio livre: roda de velas (ou uma só) no centro do palco livre
-      const want = n === 1 ? 0.06 : Math.max(0.13, (n * 0.105) / TAU + 0.08);
+      const want = n === 1 ? 0.06 : Math.max(0.13, (n * 0.105 * cw) / TAU + 0.08);
       const zPref = cz - (textDepth && !round ? textDepth * 0.5 : 0) + ((message || named || has('baloes')) && !textDepth ? 0.1 * Fi : 0) - (has('topo') && !message && !named ? 0 : 0);
       const M = bestDisc(cx, zPref, want + 0.04, y0, y0 + h + 0.12, o);
       if (M) {
         [1, 0.86, 0.72].forEach((q) => {
           const rad = n === 1 ? 0 : Math.min(want * q, M.r - 0.04);
-          if (n === 1 || rad >= Math.max(0.05, (n * 0.076) / TAU)) variants.push(arc(M.x, M.z, rad, F0, TAU));
+          if (n === 1 || rad >= Math.max(0.05, (n * 0.076 * cw) / TAU)) variants.push(arc(M.x, M.z, rad, F0, TAU));
         });
       }
     } else {
-      const rad = midR + 0.065;
+      const rad = midR + 0.065 * cw;
       variants.push(arc(midC.x, midC.z, rad, F0, TAU));
-      [3.6, 2.8, 2.2, 1.7].forEach((sp) => variants.push(arc(midC.x, midC.z, rad, F0, Math.min(sp, ((n - 1) * 0.105) / rad + 0.6))));
+      [3.6, 2.8, 2.2, 1.7].forEach((sp) => variants.push(arc(midC.x, midC.z, rad, F0, Math.min(sp, ((n - 1) * 0.105 * cw) / rad + 0.6))));
       [3.4, 2.4].forEach((sp) => variants.push(arc(midC.x, midC.z, rad, -F0, sp)));
     }
     // arcos junto à beira do palco: na frente, depois atrás
     [Fi - 0.045, Fi - 0.1, Fi * 0.7].forEach((rad) => {
       if (rad < 0.06) return;
       [F0, -F0].forEach((mid) => {
-        [0.115, 0.095, 0.08].forEach((gap) => {
+        [0.115 * cw, 0.095 * cw, 0.08 * cw].forEach((gap) => {
           const span = Math.min(2.7, ((n - 1) * gap) / rad);
-          if (span >= 2.7 && n > 1 && ((n - 1) * 0.076) / rad > 2.7) return;
+          if (span >= 2.7 && n > 1 && ((n - 1) * 0.076 * cw) / rad > 2.7) return;
           variants.push(arc(cx, cz, rad, mid, span));
         });
       });
@@ -969,7 +1707,7 @@ function compute(config, m, base) {
       for (let rad = Fi - 0.04; rad > 0.02; rad -= 0.07) radii.push(rad);
       for (let rad = Fi + 0.03; rad <= F - 0.04; rad += 0.07) radii.push(rad);
       radii.forEach((rad) => {
-        const m2 = Math.max(6, Math.floor((TAU * rad) / 0.085));
+        const m2 = Math.max(6, Math.floor((TAU * rad) / (0.085 * cw)));
         for (let i = 0; i < m2; i++) {
           const a = F0 + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * (TAU / m2);
           cand.push([cx + Math.cos(a) * rad, cz + Math.sin(a) * rad]);
@@ -978,12 +1716,12 @@ function compute(config, m, base) {
       cand.push([cx, cz]);
       for (let i = 0; i < cand.length && pts.length < n; i++) {
         const [x, z] = cand[i];
-        if (!inside(x, z, 0.04) || pts.some((q) => Math.hypot(q[0] - x, q[1] - z) < 0.074) || !fits(o, volOf(x, z))) continue;
+        if (!inside(x, z, 0.04 * cw) || pts.some((q) => Math.hypot(q[0] - x, q[1] - z) < 0.074 * cw) || !fits(o, volOf(x, z))) continue;
         pts.push([x, z]);
       }
     }
     pts.forEach(([x, z]) => reserve(o, volOf(x, z)));
-    party.candles = { h, y0, spots: pts.map(([x, z]) => ({ x, z, vol: volOf(x, z) })), center: !groupDiscs.length };
+    party.candles = { h, y0, style: candleKind, spots: pts.map(([x, z]) => ({ x, z, vol: volOf(x, z) })), center: !groupDiscs.length };
     counted('velas', pts.length, n);
     if (pts.length < n) {
       notes.unfit.push(
@@ -1059,6 +1797,36 @@ function compute(config, m, base) {
     } else if (party.stars.length < 3) say('O topo de estrelas ficou com menos estrelas para não encostar nas outras peças.');
   }
 
+  /* peças do kit em pé no fundo do palco (arco-íris, bandeirolas, lua e nuvens…): do fundo para o meio, do
+     tamanho cheio ao menor aceitável — fica a primeira posição livre */
+  items.filter((id) => zones[id] === 'fundo').forEach((id) => {
+    const K = kit(id);
+    const pl = P(id);
+    pl.zone = 'fundo';
+    if (!K?.hero) return void (pl.unfit = true);
+    const v = K.hero.vBack ?? 0;
+    const V = K.vars[v];
+    const want = Math.min((K.hero.s?.[1] ?? 1) * kitGrow(K), heroCap(V, true));
+    const min = mini ? want * 0.8 : Math.max(K.minS * want, (K.hero.s?.[0] ?? 0) * kitGrow(K));
+    let done = false;
+    for (let q = 1; q >= 0.5 && !done; q -= 0.1) {
+      const s = want * q;
+      if (s < min) break;
+      const zMin = cz - reach(-Math.PI / 2, edge + Math.min(V.r, V.depth ?? V.r) * s + GAP);
+      for (let k = 0; k <= 8 && !done; k++) {
+        const z = zMin + k * 0.05;
+        if (z > cz + 0.02) break;
+        const piece = kitTop(id, cx, z, s, 0, v);
+        if (put(id, piece)) {
+          done = true;
+          pl.scale = q;
+        }
+      }
+    }
+    if (!done) pl.unfit = true;
+    else if (pl.scale < 0.85) say(`${cap(NAMES[id])} ${many([id]) ? 'ficaram' : 'ficou'} em tamanho menor para caber no topo com as outras peças.`, [id]);
+  });
+
   /** Fileira de peças no palito: tenta posições simétricas, do meio para fora, em várias profundidades. */
   const stickRows = (id, want, { depths, gap, make, minCount = 1 }) => {
     const placed = [];
@@ -1127,13 +1895,14 @@ function compute(config, m, base) {
         },
       });
     };
-    let got = run(1, 0.2);
+    // (no bentô, balões pequenos desde o começo)
+    let got = run(mini ? 0.74 : 1, mini ? 0.16 : 0.2);
     if (got.length < Math.min(3, want0)) {
       const o2 = own('baloes');
       occ.release(o2);
       P('baloes').pieces.length = 0;
-      got = run(0.78, 0.17);
-      if (got.length) P('baloes').scale = 0.78;
+      got = run(mini ? 0.62 : 0.78, mini ? 0.14 : 0.17);
+      if (got.length && !mini) P('baloes').scale = 0.78;
     }
     P('baloes').want = want0;
     P('baloes').zone = 'palito';
@@ -1145,8 +1914,8 @@ function compute(config, m, base) {
   const RES = own('~reserva');
   const textOf = () => {
     const text = String(script).trim().slice(0, 24);
-    const bastao = d.script === 'bastao';
-    const adv = bastao ? 0.66 : 0.41; // avanço médio por letra (em)
+    const bastao = d.script === 'bastao' || d.script === 'gordinha';
+    const adv = d.script === 'gordinha' ? 0.72 : bastao ? 0.66 : d.script === 'classica' ? 0.52 : 0.41; // avanço médio por letra (em)
     const ex = 0.07;
     const block = (parts) => ({ n: parts.length, wb: Math.max(...parts.map((s) => 0.16 + adv * s.length)) + 2 * ex, hb: (parts.length > 1 ? 2.1 : 1.05) + 2 * ex });
     const one = block([text]);
@@ -1241,25 +2010,29 @@ function compute(config, m, base) {
   }
   // velas de número na frente do arranjo: reserva provisória de uma faixa
   let numS = 0;
+  // (letras: velinhas de uns 2,6 cm, oito lado a lado; algarismos: de 4 a 5 cm)
+  const charW = letras ? 0.8 : 0.66;
+  const numMin = letras ? 0.13 : 0.24;
   if (numero) {
-    const digits = String(d.number).replace(/\D/g, '').slice(0, 3);
-    numS = message ? 0.44 : 0.5;
-    const span = (s) => digits.length * 0.66 * s + (digits.length - 1) * 0.07 * s;
+    const digits = digitsOf;
+    numS = letras ? 0.26 : message ? 0.44 : 0.5;
+    const span = (s) => digits.length * charW * s + (digits.length - 1) * 0.07 * s;
     const room = 2 * Fi * (groups.length ? 0.8 : 0.94) - 0.04;
-    if (span(numS) > room) numS = Math.max(0.3, (numS * room) / span(numS));
+    if (span(numS) > room) numS = Math.max(letras ? 0.14 : 0.3, (numS * room) / span(numS));
   }
 
   /* velas de número: escolhem lugar antes dos arranjos do centro (não podem faltar) — na frente do palco quando
      há arranjo no meio, senão no meio; diminuem só o necessário para caber */
   if (numero) {
-    const digits = String(d.number).replace(/\D/g, '').slice(0, 3);
+    const digits = digitsOf;
     const o = own('velas');
+    const tall = letras ? 1.32 : 1; // o acento do "É" passa da altura das outras letras
     const tryAt = (x, z, sz) => {
-      const w = digits.length * 0.66 * sz + (digits.length - 1) * 0.07 * sz;
+      const w = digits.length * charW * sz + (digits.length - 1) * 0.07 * sz;
       const y0 = topY - 0.022 * (sz / 0.5);
-      const vol = VOL.board(x, z, y0 + 0.022 * (sz / 0.5), y0 + sz, w, 0.1 * sz, 0, y0, 'solid');
+      const vol = VOL.board(x, z, y0 + 0.022 * (sz / 0.5), y0 + sz * tall, w, Math.max(0.03, 0.1 * sz), 0, y0, 'solid');
       // chamas: uma por algarismo (o lugar exato é do construtor; a faixa acima dos algarismos fica reservada)
-      const fl = VOL.board(x, z, y0 + sz, y0 + sz + 0.15, w, 0.045, 0, y0, 'fx');
+      const fl = VOL.board(x, z, y0 + sz * tall, y0 + sz * tall + 0.15, w, 0.045, 0, y0, 'fx');
       if (!fits(o, vol) || !fits(o, fl)) return null;
       return { x, z, s: sz, w, y0, vol: [...vol, ...fl] };
     };
@@ -1267,7 +2040,7 @@ function compute(config, m, base) {
     const cand = [];
     [1, 0.86, 0.72, 0.6, 0.5].forEach((q) => {
       const sz = numS * q;
-      if (sz < 0.24) return;
+      if (sz < numMin) return;
       for (let z = zBack + 0.05; z <= zFront - 0.05; z += 0.04) cand.push({ z, sz, score: q - (0.4 * Math.abs(z - zWant)) / Math.max(0.2, F) });
       cand.push({ z: zWant, sz, score: q });
     });
@@ -1276,10 +2049,10 @@ function compute(config, m, base) {
     for (let i = 0; i < cand.length && !got; i++) got = tryAt(cx, cand[i].z, cand[i].sz);
     if (got) {
       reserve(o, got.vol);
-      party.numbers = { ...got, digits };
-      if (got.s < 0.4) say('As velas de número ficaram menores para caber no topo.');
+      party.numbers = { ...got, digits, letters: letras, tall };
+      if (got.s < (letras ? 0.19 : 0.4)) say(letras ? 'As velas de letras ficaram menores para caber no topo.' : 'As velas de número ficaram menores para caber no topo.');
     } else {
-      notes.unfit.push('As velas de número não couberam no topo com as outras peças. Tire uma decoração do topo ou escolha um bolo maior.');
+      notes.unfit.push(`As velas de ${letras ? 'letras' : 'número'} não couberam no topo com as outras peças. Tire uma decoração do topo ou escolha um bolo maior.`);
       notes.unfitIds.push('velas');
     }
   }
@@ -1392,10 +2165,6 @@ function compute(config, m, base) {
     return { s, spots: [{ x: g.x, z: g.z, ox: 0, oz: 1, level: 0, center: true }] };
   };
 
-  const R = (seed) => rng(hashString(`${seed}${m.shape}${m.R}${items.join()}`));
-  const flowerScale = Math.min(1.3, 0.74 + rho * 0.42);
-  const peonyScale = clamp(0.74 + rho * 0.5, 0.95, 1.36);
-
   /** Compõe o arranjo de centro de uma decoração dentro do disco g. */
   const composeCenter = (id, g) => {
     const pl = P(id);
@@ -1463,7 +2232,7 @@ function compute(config, m, base) {
       pl.scale = clamp(mainK / (1.1 * flowerScale * 1.12), 0, 1);
       return;
     }
-    if (id === 'raspas') {
+    if (SHAVED.has(id)) {
       const rad = Math.min(g.r, 0.48 * rho);
       if (rad < 0.1) return void (pl.unfit = true);
       const hgt = 0.1 + rad * 0.2;
@@ -1544,8 +2313,28 @@ function compute(config, m, base) {
       pl.blob = 0.26 * s;
       return;
     }
-    // montinhos: morangos banhados, cerejas, macarons, brigadeiros, bombons, suspiros, marshmallows
+    const K = kit(id);
+    if (K?.hero) {
+      // peça única: do tamanho cheio até onde o disco deixar
+      const V = K.vars[0];
+      const want = Math.min((K.hero.s?.[1] ?? 1) * kitGrow(K), heroCap(V));
+      const least = mini ? want * 0.65 : Math.max(K.minS * want, (K.hero.s?.[0] ?? 0) * kitGrow(K));
+      // (o raio do pé é nominal: se a peça não couber no disco — pontas além dele, vizinho alto —, tenta um pouco menor)
+      let s = Math.min(want, (g.r - 0.002) / V.r);
+      const rot = K.face === 'rand' ? r() * TAU : 0;
+      let ok = false;
+      for (let q = 0; q < 8 && s >= least - 1e-6 && !ok; q++) {
+        ok = add(kitTop(id, g.x, g.z, s, rot, 0));
+        if (!ok) s *= 0.94;
+      }
+      if (!ok) return void (pl.unfit = true);
+      pl.scale = s / want;
+      pl.blob = V.r * s;
+      return;
+    }
+    // montinhos: morangos banhados, cerejas, macarons, brigadeiros, bombons, suspiros, marshmallows e as peças do kit
     const sp = SPEC[id];
+    if (!sp?.pile) return void (pl.unfit = true);
     const [size, count, rise] = sp.pile;
     const { s, spots } = pileSpots(g, size, Math.max(1, Math.round(count * k)), rise, sp.minS);
     if (!spots.length) return void (pl.unfit = true);
@@ -1556,8 +2345,10 @@ function compute(config, m, base) {
       counted(id, spots.length, pl.want);
     }
     pl.scale = s;
+    const tops = K ? topVariants(K) : null;
     spots.forEach((q, i) => {
       const y = topY + (q.rise || 0);
+      if (K) return add(kitTop(id, q.x, q.z, kitSize(K, r) * s, faceRot(K.face, q.ox, q.oz, r), pickVariant(K, i, r, { only: tops }), { rise: q.rise || 0, level: q.level || 0 }));
       if (id === 'morangos') {
         if (q.center) return add({ t: 'U', x: q.x, z: q.z, y: topY + 0.147 * 1.1 * s, s: 1.1 * s, vol: VOL.berryUp(q.x, topY + 0.147 * 1.1 * s, q.z, 1.1 * s) });
         const lean = 1.0 + r() * 0.25;
@@ -1812,7 +2603,105 @@ function compute(config, m, base) {
     }
   }
 
+  /* peças do kit no palito: fileira atrás do que estiver no meio, olhando para a frente */
+  items.filter((id) => zones[id] === 'palito' && kit(id)?.stick).forEach((id) => {
+    const K = KIT[id];
+    const S = K.stick;
+    const k = qty(id);
+    const want0 = S.n[k < 1 ? 0 : k > 1 ? 2 : 1];
+    const o = own(id);
+    const r = rng(hashString(`${id}palito${m.shape}${m.R}`));
+    const vars = K.vars.map((_, i) => i).filter((i) => !K.vars[i].sideOnly && !K.vars[i].topOnly);
+    const anyMid = groupDiscs.length || party.candles || party.numbers || party.sparkler;
+    const midBack = anyMid ? cz - midBackZ() + 0.09 : 0.1 * rho;
+    const boards = Boolean(message) || named;
+    const depths = [midBack, boards ? depthP - 0.16 : 0.44 * rho, 0.1 * rho, 0.32 * Fi, 0.6 * Fi, -0.1 * Fi, -0.4 * Fi, Fi - 0.05];
+    const run = (scale, gap, want) =>
+      stickRows(id, want, {
+        depths,
+        gap,
+        make: (x, z, j, i) => {
+          const v = pickVariant(K, i, r, { only: vars, alt: K.alt ?? true });
+          const V = K.vars[v];
+          let h = S.h[(i + (want === 2 ? 1 : 0)) % S.h.length] * (0.97 + r() * 0.06) * (mini ? 0.8 : 1);
+          const yaw = j * (S.fan ?? 0.3) + (r() - 0.5) * 0.1;
+          const roll = -j * (S.tilt ?? 0.16) + (r() - 0.5) * 0.05;
+          const lean = S.lean ?? 0.07;
+          const B = basisStick(yaw, lean, roll);
+          const s = kitSize(K, r) * scale * kitGrow(K) * MINI;
+          const volAt = (hh) => kitVolume(V, x + B[3] * hh, topY + B[4] * hh, z + B[5] * hh, B, s, 'air');
+          for (let tries = 0; tries < 4; tries++) {
+            if (fits(o, volAt(h))) break;
+            h += 0.14;
+            if (h > (S.max ?? 0.95)) return null;
+          }
+          const vol = [...volAt(h), ...VOL.stick(x, topY, z, x + B[3] * h, topY + B[4] * h, z + B[5] * h, S.r || 0.014)];
+          return { t: 'k', v, pose: 'stick', x, z, y: topY, h, yaw, lean, roll, s, j, px: x + B[3] * h, py: topY + B[4] * h, pz: z + B[5] * h, vol };
+        },
+      });
+    const want = Math.max(1, Math.min(want0, Math.round(want0 * clamp(F / 0.55, 0.34, 1))));
+    let got = run(1, (S.gap ?? 0.3) * MINI, want);
+    if (!got.length) {
+      got = run(0.76, (S.gap ?? 0.3) * 0.8 * MINI, Math.min(want, 2));
+      // (topo pequeno: uma peça só, no meio, vale mais que nenhuma)
+      if (!got.length && want > 1) got = run(0.76, (S.gap ?? 0.3) * 0.8 * MINI, 1);
+      if (got.length) P(id).scale = 0.76;
+    }
+    P(id).want = want0;
+    P(id).zone = 'palito';
+  });
+
   /* ══ 3. Lateral: laço na frente e cascatas ══ */
+  /** Largura do trecho de parede em volta de `at` que olha para o mesmo lado (a normal gira no máximo 55°). */
+  const frontRun = (t, at) => {
+    const path = t.frost;
+    let i0 = 0;
+    let best = Infinity;
+    for (let i = 0; i < path.n; i++) {
+      const dd = (path.x[i] - at.x) ** 2 + (path.z[i] - at.z) ** 2;
+      if (dd < best) {
+        best = dd;
+        i0 = i;
+      }
+    }
+    const lim = Math.cos((55 * Math.PI) / 180);
+    let len = 0;
+    for (const dir of [1, -1]) {
+      let i = i0;
+      for (let k = 0; k < path.n / 2; k++) {
+        const j = (i + dir + path.n) % path.n;
+        if (path.nx[j] * at.nx + path.nz[j] * at.nz < lim) break;
+        len += Math.hypot(path.x[j] - path.x[i], path.z[j] - path.z[i]);
+        i = j;
+      }
+    }
+    return len;
+  };
+  /** Volumes de um decalque dobrado sobre a parede: o x da peça corre ao longo do contorno, o z sai dele. */
+  const wrapVol = (V, path, p, y, sc) => {
+    const q = {};
+    let s0 = 0;
+    let best = Infinity;
+    for (let i = 0; i < 720; i++) {
+      const sx = (i / 720) * path.length;
+      pathAt(path, sx, q);
+      const dd = (q.x - p.x) ** 2 + (q.z - p.z) ** 2;
+      if (dd < best) {
+        best = dd;
+        s0 = sx;
+      }
+    }
+    pathAt(path, s0, q);
+    s0 += (p.x - q.x) * q.tx + (p.z - q.z) * q.tz;
+    pathAt(path, s0, q);
+    const off = (p.x - q.x) * q.nx + (p.z - q.z) * q.nz;
+    const dir = q.tx * p.oz - q.tz * p.ox >= 0 ? 1 : -1;
+    return V.sph.map(([lx, ly, lz, lr, k]) => {
+      pathAt(path, s0 + dir * lx * sc, q);
+      const dd = off + Math.max(0, lz) * sc;
+      return [q.x + q.nx * dd, y + ly * sc, q.z + q.nz * dd, lr * sc, k || 'side'];
+    });
+  };
   /** Faixa de altura que um conjunto de volumes ocupa. */
   const spanY = (vol) => {
     let lo = Infinity;
@@ -1827,7 +2716,9 @@ function compute(config, m, base) {
   const inBand = (s, vol) => {
     const [lo, hi] = spanY(vol);
     if (lo >= s.lo && hi <= s.hi) return true;
-    if (s.why && hi > s.hi && lo >= s.lo) sideLimited = sideLimited || s.why;
+    if (s.block) sideLimited = sideLimited || s.block;
+    else if (s.foot && lo < s.lo) sideLimited = sideLimited || s.foot;
+    else if (s.why && s.why !== s.foot && hi > s.hi && lo >= s.lo) sideLimited = sideLimited || s.why;
     return false;
   };
 
@@ -1839,7 +2730,8 @@ function compute(config, m, base) {
     const at = frontSpot(m);
     const band = s0.hi - s0.lo;
     const full = clamp(0.72 + rho * 0.5, 0.45, 1.3);
-    const s = clamp(Math.min(full, band / 0.56), 0.4, 1.3);
+    // (com o pé da lateral tomado pelo barrado, as pontas do laço param acima dele)
+    const s = clamp(Math.min(full, (band - (s0.foot ? 0.03 : 0)) / 0.56), 0.4, 1.3);
     // o nó fica logo abaixo da borda (ou do que estiver ocupando o alto da lateral)
     const y = Math.min(s0.hi - 0.173 * s, s0.t.y0 + s0.sideH - 0.04 - 0.19 * s);
     const off = 0.004 + s0.out;
@@ -1853,71 +2745,53 @@ function compute(config, m, base) {
     }
   }
 
+  /* peça do kit na frente da lateral do andar de cima (carinha, cílios, escudo…) */
+  items.filter((id) => zones[id] === 'frente' && kit(id)?.front).forEach((id) => {
+    const K = KIT[id];
+    const Fr = K.front;
+    const pl = P(id);
+    pl.zone = 'frente';
+    const s0 = sides[sides.length - 1];
+    if (s0.t.naked) return void (pl.unfit = true);
+    const at = frontSpot(m, Boolean(Fr.pair));
+    const v = Fr.v ?? 0;
+    const V = K.vars[v];
+    // meia altura que a peça ocupa na parede (na escala 1)
+    const face = (K.side?.mode ?? 'face') === 'face';
+    const half = Math.max(...V.sph.map((q) => Math.abs(face ? q[1] : q[2]) + q[3]));
+    const halfW = Math.max(...V.sph.map((q) => Math.abs(q[0]) + q[3]));
+    const band = s0.hi - s0.lo;
+    const full = (Fr.s?.[1] ?? 1) * kitGrow(K);
+    // a peça não dá a volta na quina nem entra na reentrância: cabe no trecho de parede que olha para a frente
+    // (na flor, uma pétala; o par de olhos fica com um olho em cada pétala e não precisa disso)
+    const run = Fr.pair && m.shape === 'flor' ? Infinity : frontRun(m, at);
+    const s = Math.min(full, (band - 0.01) / (2 * half), run / (2 * halfW));
+    if (s < Math.max(K.minS * full, Fr.s?.[0] ?? 0)) {
+      if (s0.why) sideLimited = sideLimited || s0.why;
+      return void (pl.unfit = true);
+    }
+    const y = clamp(s0.t.y0 + s0.sideH * (1 - (Fr.y ?? 0.5)), s0.lo + half * s + 0.004, s0.hi - half * s - 0.004);
+    const off = s0.out + (K.side?.depth || 0.004) * s;
+    const x = at.x + at.nx * off;
+    const z = at.z + at.nz * off;
+    const B = face ? basisFace(at.nx, at.nz, 0) : basisSide(at.nx, at.nz, 0, 0);
+    // o decalque de frente é dobrado sobre a parede (pecas-temas.js → wrapOnWall): os volumes acompanham a mesma
+    // curva — em qualquer formato eles ficam onde a malha fica
+    const vol = face && !round ? wrapVol(V, m.frost, { x, z, ox: at.nx, oz: at.nz }, y, s) : kitVolume(V, x, y, z, B, s, 'side');
+    const piece = { t: 'k', v, pose: 'side', face, side: true, x, y, z, ox: at.nx, oz: at.nz, up: 0, roll: 0, s, vol };
+    if (!put(id, piece)) pl.unfit = true;
+    else {
+      pl.scale = s / full;
+      if (s < full * 0.8) say(`${cap(NAMES[id])} ${many([id]) ? 'ficaram menores' : 'ficou menor'} para caber na lateral livre.`, [id]);
+    }
+  });
+
   /* cascatas: nascem no topo, perto da borda, e descem a lateral em diagonal */
   const cascades = items.filter((id) => zones[id] === 'cascade');
   const total = m.Htot ?? m.Ht;
   // faixas: a primeira na frente (um pouco à direita); as seguintes, paralelas, sem se cruzar
   const LANES = [0.36 * Math.PI, 0.36 * Math.PI - 1.36, 0.36 * Math.PI + 1.36, 0.36 * Math.PI + 2.72, 0.36 * Math.PI - 2.5];
   const usedLanes = new Set();
-  // q = { wx, wz: ponto da parede (já por fora da cerca, se houver) · y · ox, oz: para fora · taper }
-  const makeSide = {
-    frutas: (q, i, r) => {
-      if (i % 3 === 2) {
-        const k = 0.9 * q.taper;
-        const x = q.wx + q.ox * 0.08 * k;
-        const z = q.wz + q.oz * 0.08 * k;
-        return { t: 'R', x, y: q.y - 0.064 * k, z, k, side: true, vol: [[x, q.y, z, 0.092 * k, 'side']] };
-      }
-      const sc = (0.86 + r() * 0.16) * q.taper;
-      const x = q.wx + q.ox * 0.11 * sc;
-      const z = q.wz + q.oz * 0.11 * sc;
-      return { t: 'S', x, y: q.y - 0.098 * sc, z, ox: q.ox, oz: q.oz, s: sc, lean: 1.45, yaw: (r() - 0.5) * 0.5, side: true, vol: VOL.berryLying(x, q.y - 0.098 * sc, z, q.ox, q.oz, sc, 1.45, 'side') };
-    },
-    flores: (q, i, r) => {
-      const sc = (0.6 + r() * 0.24) * q.taper * flowerScale;
-      if (i % 3 !== 1) return { t: 'rose', x: q.wx, y: q.y, z: q.wz, ox: q.ox, oz: q.oz, K: sc, side: true, leaf: true, vol: VOL.roseSide(q.wx, q.y, q.wz, q.ox, q.oz, sc) };
-      const k = sc * 1.25;
-      return { t: 'blossom', x: q.wx, y: q.y, z: q.wz, ox: q.ox, oz: q.oz, k, side: true, leaf: true, vol: [[q.wx + q.ox * 0.02, q.y, q.wz + q.oz * 0.02, 0.085 * k, 'side']] };
-    },
-    margaridas: (q, i, r) => {
-      const s = (i % 2 ? 0.8 : 1.0) * q.taper;
-      const l = Math.hypot(1, 0.3);
-      const x = q.wx + q.ox * 0.006;
-      const z = q.wz + q.oz * 0.006;
-      return { t: 'daisy', x, y: q.y, z, ox: q.ox, oz: q.oz, s, up: 0.3, roll: r() * TAU, side: true, leaf: i % 2 === 0, vol: VOL.daisySide(x, q.y, z, q.ox / l, 0.3 / l, q.oz / l, s) };
-    },
-    peonias: (q, i, r) => {
-      const s = peonyScale * q.taper * (0.5 + r() * 0.18) * 0.84;
-      const x = q.wx + q.ox * 0.02 * s;
-      const z = q.wz + q.oz * 0.02 * s;
-      return { t: 'peony', x, y: q.y, z, ox: q.ox, oz: q.oz, s, side: true, spin: r() * TAU, leaf: true, vol: VOL.peony(x, q.y, z, s, q.ox, q.oz, Math.atan2(1, 0.16), 'side') };
-    },
-    macarons: (q, i, r) => {
-      // colados pela casquinha de baixo, de frente para fora; um sim, um não, apoiado sobre os vizinhos
-      const over = i % 2;
-      const s = 0.9 + 0.1 * q.taper - (i % 3 === 2 ? 0.08 : 0);
-      const up = over * 0.2 + (r() - 0.5) * 0.1;
-      const l = Math.hypot(1, up);
-      const depth = 0.074 * s + over * 0.05;
-      const x = q.wx + q.ox * depth;
-      const z = q.wz + q.oz * depth;
-      return { t: 'mac', x, y: q.y, z, nx: q.ox / l, ny: up / l, nz: q.oz / l, s, side: true, roll: r() * TAU, vol: VOL.macaron(x, q.y, z, q.ox / l, up / l, q.oz / l, s, 'side') };
-    },
-    ouro: (q) => {
-      const x = q.wx + q.ox * 0.004;
-      const z = q.wz + q.oz * 0.004;
-      return { t: 'gold', x, y: q.y, z, ox: q.ox, oz: q.oz, side: true, spread: 0.09 * q.taper, vol: [[x, q.y, z, 0.1 * q.taper, 'coating']] };
-    },
-    borboletas: (q, i, r) => {
-      const s = (0.85 + r() * 0.3) * (0.8 + 0.2 * q.taper);
-      const open = 0.75 + r() * 0.45;
-      const up = 0.2 + r() * 0.3;
-      const l = Math.hypot(1, up);
-      const x = q.wx + q.ox * 0.004;
-      const z = q.wz + q.oz * 0.004;
-      return { t: 'fly', x, y: q.y, z, ox: q.ox, oz: q.oz, s, open, up, side: true, vol: VOL.butterfly(x, q.y, z, s, open, q.ox / l, up / l, q.oz / l, 'side') };
-    },
-  };
   const makeTop = {
     frutas: (x, z, ox, oz, i, r) => {
       if (i % 3 === 2) return { t: 'R', x, y: topY - 0.004, z, k: 0.95, vol: VOL.raspberry(x, topY - 0.004, z, 0.95) };
@@ -1954,6 +2828,13 @@ function compute(config, m, base) {
   };
   // raio que a peça ocupa no topo (para recuar da borda) e na lateral (para o espaçamento)
   const TOP_R = { frutas: 0.17, flores: 0.2, margaridas: 0.145, peonias: 0.27 * peonyScale * 0.8, macarons: 0.165, ouro: 0.1, borboletas: 0.14 };
+  Object.keys(KIT).forEach((id) => {
+    const K = KIT[id];
+    if (!K.casc || !SPEC[id] || makeTop[id]) return;
+    const tops = topVariants(K);
+    makeTop[id] = (x, z, ox, oz, i, r) => kitTop(id, x, z, kitSize(K, r), faceRot(K.face, ox, oz, r), pickVariant(K, i, r, { only: tops }));
+    TOP_R[id] = SPEC[id].r * 1.06;
+  });
   const volR = (vol) => vol.reduce((best, v) => Math.max(best, v[3]), 0);
   cascades.forEach((id) => {
     const sp = SPEC[id];
@@ -1993,7 +2874,7 @@ function compute(config, m, base) {
         const t = (step + 0.4) / 90;
         const y = total * (1 - t) * 0.94 + 0.03;
         const s = sideOf(y);
-        if (s.t.naked && (id === 'ouro' || id === 'borboletas' || id === 'margaridas')) continue;
+        if (s.t.naked && (id === 'ouro' || id === 'borboletas' || id === 'margaridas' || kit(id)?.side?.mode === 'face')) continue;
         const theta = a0 + 0.1 + t * 1.15;
         const w = wallAt(s, theta, 0);
         const rr0 = (sp.sideR || size) * 0.9;
@@ -2198,113 +3079,6 @@ function compute(config, m, base) {
     pl.scale = ringScale;
   });
 
-  /** Peça de coroa / meia-lua de cada decoração. q = { x, z, ox, oz, u, taper, i, n, prev, s } */
-  const ringPiece = {
-    frutas: (q, r) => {
-      if (q.i % 2 === 0) {
-        const lean = 1.0 + r() * 0.3;
-        const sc = (0.88 + r() * 0.14) * q.taper * q.s;
-        return { t: 'S', x: q.x, y: topY, z: q.z, ox: q.ox, oz: q.oz, s: sc, lean, yaw: (r() - 0.5) * 0.4, vol: VOL.berryLying(q.x, topY, q.z, q.ox, q.oz, sc, lean) };
-      }
-      // entre dois morangos: framboesa na frente e mirtilos por dentro
-      const k = 0.92 * q.taper * q.s;
-      const x = q.x + q.ox * 0.05 * q.s;
-      const z = q.z + q.oz * 0.05 * q.s;
-      return { t: 'R', x, y: topY - 0.004, z, k, extra: [[-0.115, 0], [-0.03, 0.105], [-0.2, 0.05]], ox: q.ox, oz: q.oz, vol: VOL.raspberry(x, topY - 0.004, z, k) };
-    },
-    morangos: (q, r) => {
-      const lean = 0.92 + r() * 0.25;
-      const sc = (0.9 + r() * 0.14) * q.taper * q.s;
-      return { t: 'S', x: q.x, y: topY, z: q.z, ox: q.ox, oz: q.oz, s: sc, lean, yaw: (r() - 0.5) * 0.4, vol: VOL.berryLying(q.x, topY, q.z, q.ox, q.oz, sc, lean) };
-    },
-    cerejas: (q, r) => {
-      const sc = (0.9 + r() * 0.14) * q.taper * q.s;
-      const a = Math.atan2(q.oz, q.ox) + (q.i % 2 ? 1 : -1) * (Math.PI / 2 + r() * 0.5);
-      const tilt = 0.08 + r() * 0.26;
-      const spin = r() * TAU;
-      const v = r() < 0.5 ? 0 : 1;
-      return { t: 'cherry', x: q.x, y: topY, z: q.z, s: sc, a, tilt, spin, v, vol: VOL.cherry(q.x, topY, q.z, sc, a, tilt, spin, v) };
-    },
-    flores: (q, r) => {
-      const ends = q.open && (q.i === 0 || q.i === q.n - 1) && q.n > 2;
-      if (ends) {
-        const k = 0.9 * flowerScale * q.s;
-        return { t: 'blossom', x: q.x, y: topY, z: q.z, k, vol: VOL.blossom(q.x, topY, q.z, k) };
-      }
-      const K = (q.open ? 0.66 + 0.3 * Math.sin(Math.PI * q.u) : 0.74 + (q.i % 2) * 0.12) * flowerScale * 1.12 * q.s;
-      return { t: 'rose', x: q.x, y: topY, z: q.z, K, tx: q.ox, tz: q.oz, tilt: 0.2 + r() * 0.1, leaves: true, inner: true, ox: q.ox, oz: q.oz, vol: VOL.rose(q.x, topY, q.z, K) };
-    },
-    margaridas: (q) => {
-      const s = (q.i % 2 ? 0.8 : 1.02) * q.taper * q.s;
-      return { t: 'daisy', x: q.x, y: topY + (q.i % 2) * 0.004, z: q.z, ox: q.ox, oz: q.oz, s, leaf: q.i % 2 === 0, garland: q.i % 2 === 0, vol: VOL.daisy(q.x, topY, q.z, s) };
-    },
-    peonias: (q) => {
-      const s = q.size * q.s * (0.62 + 0.4 * Math.sin(Math.PI * q.u)) * 0.8;
-      return { t: 'peony', x: q.x, y: topY, z: q.z, s, ox: q.ox, oz: q.oz, tilt: 0.22, leaves: true, vol: VOL.peony(q.x, topY, q.z, s, q.ox, q.oz, 0.22) };
-    },
-    macarons: (q) => {
-      // em fila, cada um deitado sobre o anterior (dominós caídos); o primeiro do grupo fica deitado
-      const s = q.s;
-      const stepLen = q.prev ? Math.hypot(q.x - q.prev.x, q.z - q.prev.z) : 0;
-      const elev = q.prev ? Math.acos(clamp((MAC_T * s * 0.97) / stepLen, 0, 1)) : Math.PI / 2 - 0.04;
-      // tangente no sentido da fila
-      const tx = -q.oz;
-      const tz = q.ox;
-      const nx = tx * Math.cos(elev);
-      const ny = Math.sin(elev);
-      const nz = tz * Math.cos(elev);
-      const yc = topY + (MAC_R * Math.cos(elev) + (MAC_T / 2) * Math.sin(elev)) * s - 0.004;
-      return { t: 'mac', x: q.x, y: yc, z: q.z, nx, ny, nz, s, dx: tx, dz: tz, elev, vol: VOL.macaron(q.x, yc, q.z, nx, ny, nz, s) };
-    },
-    brigadeiros: (q, r) => {
-      const sc = (0.96 + r() * 0.06) * (0.8 + 0.2 * q.taper) * q.s;
-      return { t: 'brig', x: q.x, y: topY, z: q.z, s: sc, vol: VOL.brigadeiro(q.x, topY, q.z, sc) };
-    },
-    bombons: (q, r) => {
-      const sc = (0.94 + r() * 0.08) * (0.82 + 0.18 * q.taper) * q.s;
-      return { t: 'bombom', x: q.x, y: topY, z: q.z, s: sc, vol: VOL.bombom(q.x, topY, q.z, sc) };
-    },
-    suspiros: (q, r) => {
-      const sc = (q.i % 2 ? 0.84 : 1.0) * (0.8 + 0.2 * q.taper) * q.s;
-      const tall = 0.94 + r() * 0.12;
-      return { t: 'meringue', x: q.x, y: topY, z: q.z, s: sc, tall, vol: VOL.meringue(q.x, topY, q.z, sc, tall) };
-    },
-    marshmallows: (q, r) => {
-      const sc = (0.9 + r() * 0.1) * q.taper * q.s;
-      const lying = q.i % 3 === 2;
-      const squash = lying ? 1 : 0.9 + r() * 0.12;
-      const yc = topY + 0.1 * sc * squash - 0.004;
-      return { t: 'marsh', x: q.x, y: yc, z: q.z, s: sc, lying, squash, vol: VOL.marshmallow(q.x, yc, q.z, sc) };
-    },
-    biscoitos: (q, r) => {
-      // em pé, fincados na cobertura, com a face em relevo virada para fora; apertados, giram e se sobrepõem
-      const s = (0.86 + 0.14 * q.taper) * q.s;
-      const stepLen = q.prev ? Math.hypot(q.x - q.prev.x, q.z - q.prev.z) : 1;
-      const yaw = stepLen < 0.3 * s ? Math.acos(clamp((stepLen / s - 0.02) / 0.31, 0.3, 1)) : (r() - 0.5) * 0.2;
-      const a = Math.atan2(q.oz, q.ox) + yaw;
-      const elev = 0.2 + r() * 0.1;
-      const nx = Math.cos(a) * Math.cos(elev);
-      const ny = Math.sin(elev);
-      const nz = Math.sin(a) * Math.cos(elev);
-      const yc = topY + (COOKIE_R * Math.cos(elev) + (COOKIE_T / 2) * Math.sin(elev)) * s - 0.034;
-      return { t: 'cookie', x: q.x, y: yc, z: q.z, nx, ny, nz, s, a, elev, vol: VOL.cookie(q.x, yc, q.z, nx, ny, nz, s) };
-    },
-    ouro: (q) => ({ t: 'gold', x: q.x, y: topY, z: q.z, spread: 0.05, n: 3, vol: [[q.x, topY, q.z, 0.06, 'coating']] }),
-    coracoes: (q, r) => {
-      const s = (q.i % 2 ? 0.92 : 1.16) * (0.8 + 0.2 * q.taper) * q.s;
-      const lean = 0.16 + r() * 0.12;
-      const yc = topY + 0.07 * Math.cos(lean) * s - 0.014;
-      const x = q.x - q.ox * 0.07 * Math.sin(lean) * s * 0.5;
-      const z = q.z - q.oz * 0.07 * Math.sin(lean) * s * 0.5;
-      return { t: 'heart', x: q.x, y: yc, z: q.z, ox: q.ox, oz: q.oz, s, lean, roll: (r() - 0.5) * 0.2, stand: true, vol: VOL.heart(x, yc, z, s) };
-    },
-    borboletas: (q, r) => {
-      const s = (0.85 + r() * 0.3) * (0.8 + 0.2 * q.taper) * q.s;
-      const open = 0.75 + r() * 0.45;
-      return { t: 'fly', x: q.x, y: topY + 0.002, z: q.z, s, open, vol: VOL.butterfly(q.x, topY + 0.002, q.z, s, open) };
-    },
-  };
-
   const ringCount = {};
   sectors.forEach((sec) => {
     const id = sec.id;
@@ -2315,7 +3089,7 @@ function compute(config, m, base) {
     const r = R(`anel${id}${sec.a.toFixed(2)}`);
     const o = own(id);
     const s = ringScale;
-    if (id === 'raspas') {
+    if (SHAVED.has(id)) {
       // faixa de raspas ao longo do setor (a região inteira é reservada; o construtor espalha dentro dela)
       const bw = 0.085;
       sectorSpots(edge + bw + GAP, sec.a, sec.b, bw * 1.7, bw, sec.closed).forEach((p, i, all) => {
@@ -2377,12 +3151,12 @@ function compute(config, m, base) {
   // coroa fechada de macarons: o primeiro apoia no último (se os dois existirem lado a lado)
   rings.forEach((id) => {
     const pl = P(id);
-    if (id !== 'raspas' && !pl.pieces.length && !pl.regions.length) pl.unfit = true;
-    else if (id !== 'raspas' && ringCount[id] && (pl.placedRing || 0) <= ringCount[id] * 0.6 && ringCount[id] - (pl.placedRing || 0) >= 2) {
+    if (!SHAVED.has(id) && !pl.pieces.length && !pl.regions.length) pl.unfit = true;
+    else if (!SHAVED.has(id) && ringCount[id] && (pl.placedRing || 0) <= ringCount[id] * 0.6 && ringCount[id] - (pl.placedRing || 0) >= 2) {
       say(`Reduzimos a quantidade de ${bare(id)} na borda para não encostar nas outras peças.`);
       counted(id, pl.placedRing || 0, ringCount[id], 0.55);
     }
-    if (id === 'raspas' && !pl.regions.length) pl.unfit = true;
+    if (SHAVED.has(id) && !pl.regions.length) pl.unfit = true;
   });
 
   /* ══ 5. Espalhados: ocupam o que sobrou do topo (e, em algumas decorações, a lateral) ══ */
@@ -2436,6 +3210,20 @@ function compute(config, m, base) {
     return got;
   };
   const topSide = sides[sides.length - 1];
+  /** Peças do kit espalhadas pela lateral (de todos os andares, ou só do de cima). → quantas entraram */
+  const kitSideScatter = (id, k) => {
+    const K = KIT[id];
+    const Sc = K.scatSide;
+    const tops = topVariants(K);
+    const sv = K.vars[K.side.v ?? tops[0]];
+    const rP = Math.max(...sv.sph.map((q) => q[3] + Math.hypot(q[0], K.side.mode === 'face' ? q[1] : q[2])));
+    let got = 0;
+    (Sc.all === false ? [topSide] : sides).forEach((s) => {
+      const n = Math.max(1, Math.round(s.t.frost.length * (Sc.per ?? 1.2) * k));
+      got += scatterSide(id, s, n, rP, 0, (r, ss) => ss.t.y0 + ss.sideH * ((Sc.lo ?? 0.18) + ((Sc.hi ?? 0.88) - (Sc.lo ?? 0.18)) * r()), (q, i, r) => kitSide(id, { wx: q.x, wz: q.z, y: q.y, ox: q.ox, oz: q.oz }, kitSize(K, r) * MINI, K.side.roll === false ? 0 : (r() - 0.5) * (K.side.roll ?? TAU), pickVariant(K, i, r, { only: tops, alt: false })));
+    });
+    return got;
+  };
   const scatters = items.filter((id) => zones[id] === 'scatter' && SPEC[id]?.scat);
   // primeiro as peças maiores: as miúdas preenchem depois
   [...scatters]
@@ -2530,12 +3318,27 @@ function compute(config, m, base) {
           return { t: 'fly', x, y: topY + 0.002, z, s, open, vol: VOL.butterfly(x, topY + 0.002, z, s, open) };
         });
       }
+      if (kit(id) && !got) {
+        const K = KIT[id];
+        const tops = topVariants(K);
+        got = scatterTop(id, size, sp.r, want, (x, z, ox, oz, i, r) => kitTop(id, x, z, kitSize(K, r), faceRot(K.face === 'out' || K.face === 'in' ? 'rand' : K.face, ox, oz, r), pickVariant(K, i, r, { only: tops, alt: false })));
+        if (K.scatSide && K.side && !fenced) got += kitSideScatter(id, k);
+      }
       if (!got) pl.unfit = true;
       else if (got < want * 0.4 && want - got >= 4) {
         say(`Couberam menos ${bare(id)} que o normal: o topo já está cheio.`);
         counted(id, got, want);
       }
     });
+
+  /* peças do kit só na lateral (pegadas, joaninhas subindo, flores prensadas…) */
+  items.filter((id) => zones[id] === 'lateral' && id !== 'fita' && id !== 'wafer').forEach((id) => {
+    const K = kit(id);
+    const pl = P(id);
+    pl.zone = 'lateral';
+    if (!K?.scatSide || !K.side || fenced) return void (pl.unfit = true);
+    if (!kitSideScatter(id, qty(id))) pl.unfit = true;
+  });
 
   /* guirlanda de margaridas: quem está em coroa ganha algumas flores na lateral, logo abaixo da borda */
   if (has('margaridas') && (zones.margaridas === 'crown' || zones.margaridas === 'half') && !m.naked) {
@@ -2682,22 +3485,56 @@ function compute(config, m, base) {
     extra.forEach((piece) => pl.pieces.push(piece));
   });
 
+  /* ══ 6b. Bico que cobre o topo inteiro: voltas por dentro da borda, só onde sobrou lugar ══ */
+  let cover = null;
+  if (pp.cover && base.pipeTop && spec) {
+    cover = [];
+    const [rad0, lift] = pipeBlob(pp.kind);
+    const unit = spec.scale || 1;
+    const step = spec.step;
+    const pt = {};
+    // (a escala de cada peça é decidida aqui e o construtor desenha exatamente com ela: o lugar reservado é o da peça)
+    const tryAdd = (x, z, a, k, i) => {
+      if (!inside(x, z, 0)) return;
+      const sc = clamp(k, 0.9, 1.12) * unit * (pp.kind === 'pitangas' ? (i % 2 ? 0.8 : 1.14) : 1);
+      const rr = rad0 * sc;
+      for (let q = 0; q < cover.length; q++) if (Math.hypot(cover[q].x - x, cover[q].z - z) < step * 0.74) return;
+      if (occ.hitCyl(x, z, rr, topY + 0.004, topY + rr * (1 + lift) + 0.006, 0.004)) return;
+      cover.push({ x, z, a, s: sc });
+    };
+    let ringI = 1;
+    for (let dist = spec.r * spec.inset + step * 0.86; dist < rho - step * 0.3; dist += step * 0.86, ringI++) {
+      const path = cleanOffset(flat, -dist);
+      const n = Math.max(3, Math.round(path.length / (step * 0.96)));
+      const k = path.length / n / step;
+      for (let i = 0; i < n; i++) {
+        pathAt(path, ((i + (ringI % 2) * 0.5) / n) * path.length, pt);
+        tryAdd(pt.x, pt.z, Math.atan2(pt.tz, pt.tx), k, i + ringI);
+      }
+    }
+    tryAdd(cx, cz, 0, 1, 0); // o miolo
+    const COB = own('~cobre');
+    cover.forEach((c) => occ.add(COB, c.x, topY + rad0 * c.s * lift, c.z, rad0 * c.s, 'pipe'));
+  }
+
   /* ══ 7. O que não coube, alturas e chave ══ */
   const unfit = [];
   items.forEach((id) => {
     const pl = plan[id];
     if (id === 'velas' || id === 'topo') return;
-    if (id === 'baloes' || id === 'pirulitos') {
+    if (id === 'baloes' || id === 'pirulitos' || (zones[id] === 'palito' && kit(id)?.stick)) {
       if (!pl || !pl.pieces.length) unfit.push(id);
       else if (pl.pieces.length < pl.want && pl.want - pl.pieces.length >= 2) {
         say(`Cabem ${pl.pieces.length} ${bare(id)} neste topo (o normal seriam ${pl.want}).`);
         counted(id, pl.pieces.length, pl.want);
       }
-      if (pl && pl.scale < 0.9 && pl.pieces.length) say(`${cap(NAMES[id])} ficaram menores para caber no topo com as outras peças.`);
+      if (pl && pl.scale < 0.9 && pl.pieces.length) say(`${cap(NAMES[id])} ${many([id]) ? 'ficaram menores' : 'ficou menor'} para caber no topo com as outras peças.`);
       return;
     }
     if (pl && pl.unfit) unfit.push(id);
     if (id === 'coracoes' && zones.coracoes === 'palito' && pl && !pl.pieces.length) unfit.push(id);
+    // rede de segurança: decoração do kit que acabou sem peça nenhuma no bolo não coube (e não é cobrada)
+    if (kit(id) && !kit(id).coat && (!pl || (!pl.pieces.length && !pl.regions.length))) unfit.push(id);
   });
   if (notes.unfitIds.includes('topo')) unfit.push('topo');
   const uniq = [...new Set(unfit)];
@@ -2709,7 +3546,18 @@ function compute(config, m, base) {
     // quem não coube não pode aparecer também como "ficou menor" ou "dividiu a borda"
     notes.messages = notes.messages.filter((msg) => !(about.get(msg) || []).some((id) => uniq.includes(id)));
   }
-  if (sideLimited) say(sideLimited === 'calda' ? 'Com a calda escorrendo, as peças da lateral ficam abaixo das gotas.' : 'Com as guirlandas do acabamento vintage, as peças da lateral ficam abaixo delas.');
+  if (sideLimited) {
+    const styled = stack.find((t) => !t.naked && COVER_SIDE[t.style]);
+    const SIDE_SAY = {
+      calda: 'Com a calda escorrendo, as peças da lateral ficam abaixo das gotas.',
+      bico: 'Com o bico tomando a lateral, as peças da lateral não entram neste bolo.',
+      vulcao: 'No vulcão a lateral é a própria massa, com o creme escorrendo: as peças da lateral não entram neste bolo.',
+      estilo: `Com ${styled ? COVER_SIDE[styled.style] : 'o estilo da cobertura'} tomando a lateral, as peças da lateral não entram neste bolo.`,
+      barrado: 'Com o barrado no pé do bolo, as peças da lateral ficam acima dele.',
+      chuva: 'Com os confeitos subindo pelo pé do bolo, as peças da lateral ficam acima deles.',
+    };
+    say(SIDE_SAY[sideLimited] || 'Com as guirlandas do acabamento, as peças da lateral ficam abaixo delas.');
+  }
   notes.unfit.forEach((msg) => {
     if (!notes.messages.includes(msg)) notes.messages.push(msg);
   });
@@ -2763,7 +3611,22 @@ function compute(config, m, base) {
     occ,
     edge,
     necklace,
-    sides: sides.map((s) => ({ lo: s.lo, hi: s.hi, out: s.out, why: s.why, sideH: s.sideH })),
+    sides: sides.map((s) => ({ lo: s.lo, hi: s.hi, out: s.out, why: s.why, sideH: s.sideH, piped: s.piped, waist: s.waist, ribbon: s.ribbon })),
+    cover,
+    /** A peça q = { id, x, z, y, rot, scale, face } cabe, com tudo o que está neste plano? → { ok, why } */
+    probe(q) {
+      const dec = getDecor(q?.id);
+      const piece = dec && dec.unit ? unitPiece(q, 'sonda') : null;
+      if (!piece) return { ok: false, why: 'desconhecida' };
+      const why = whyNot(-2, piece);
+      return { ok: !why, why };
+    },
+    /** O ponto livre mais próximo para a peça q, neste plano. → { x, z, y?, moved } ou null */
+    seek(q, reachMax) {
+      const dec = getDecor(q?.id);
+      const got = dec && dec.unit ? seekFree(q, 'sonda', -2, reachMax) : null;
+      return got ? { x: got.piece.askX, z: got.piece.askZ, ...(q.face === 'lateral' ? { y: got.piece.askY } : {}), moved: got.moved } : null;
+    },
     fenceOut,
     heights: fam,
     stage: { r: Fi, free: F, ringW, ringScale, mid: midR },
@@ -2771,9 +3634,37 @@ function compute(config, m, base) {
   };
 }
 
+/**
+ * A peça cabe onde o cliente pediu, com tudo o que já está no bolo (arranjos automáticos e peças já colocadas)?
+ * piece = { id, x, z, rot, scale, face: 'topo' | 'lateral', y? }  →  { ok, why: '' | 'desconhecida' | 'fora' | 'ocupado' }
+ */
+export function canPlace(config, piece) {
+  const found = planFor(config);
+  if (!found?.plan?.probe) return { ok: false, why: 'desconhecida' };
+  return found.plan.probe(piece);
+}
+
+/**
+ * O lugar livre mais próximo de onde o cliente soltou a peça (até `reach` de distância, 6 cm por padrão).
+ * → { x, z, y?, moved } (moved = 0 quando ela já cabe onde está) ou null (não há lugar por perto).
+ */
+export function nearestFree(config, piece, { reach = 0.6 } = {}) {
+  const found = planFor(config);
+  if (!found?.plan?.seek) return null;
+  return found.plan.seek(piece, reach);
+}
+
 /** Ponto da lateral de um andar que olha de frente para quem vê o bolo (no coração, o flanco direito). */
-export function frontSpot(t) {
+export function frontSpot(t, pair = false) {
   const path = t.frost;
+  if (t.shape === 'flor') {
+    // na flor, bem de frente fica um encontro de pétalas. Um par (os olhos) vai centrado nele — um olho em cada
+    // pétala; uma peça só vai na ponta da pétala que olha para quem vê o bolo (a 60°)
+    const a = pair ? Math.PI / 2 : Math.PI / 3;
+    const hit = raySpot(path, 0, 0, a);
+    const pt = pathAt(path, hit.s, {});
+    return { x: pt.x, z: pt.z, nx: Math.cos(a), nz: Math.sin(a), flat: false };
+  }
   const fx = t.shape === 'heart' ? 0.62 : t.shape === 'round' ? 0.3 : 0;
   const fz = t.shape === 'heart' ? 0.78 : t.shape === 'round' ? 0.954 : 1;
   let best = 0;

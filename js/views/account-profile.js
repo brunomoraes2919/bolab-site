@@ -193,7 +193,7 @@ export default {
         applyErrors(form, { [res.field || 'current']: res.message });
         return;
       }
-      toast(social ? 'Senha criada. Agora você também entra com e-mail e senha.' : 'Senha alterada com sucesso.', { type: 'success' });
+      toast(social ? 'Senha criada. Agora você também entra com e-mail e senha.' : 'Senha alterada.', { type: 'success' });
       if (social) {
         ctx.rerender();
         return;

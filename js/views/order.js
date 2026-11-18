@@ -1,20 +1,33 @@
 // BOLAB — acompanhamento de um pedido (#/pedido/:id).
-import { html, raw, icon, money, dateTime, plural, on, toast, confirmDialog, copyText, confetti } from '../ui.js';
+//
+// SEM SERVIDOR (SITE.demo): o pedido fechado fica só neste aparelho. Quem leva o pedido até a
+// confeitaria é o cliente, pelo botão "Enviar pedido pelo WhatsApp" (js/pedido-whatsapp.js). A tela
+// só afirma o que a loja sabe de verdade: pedido montado, WhatsApp aberto com a mensagem
+// ("Aguardando confirmação da BOLAB") e data combinada. Pagamento, produção e entrega são
+// combinados e avisados no WhatsApp; nada aqui finge "pago" ou "em produção". O Pix com QR Code
+// continua disponível só como demonstração, recolhido e com esse nome.
+import { html, raw, icon, money, dateTime, plural, on, toast, confirmDialog, copyText, confetti, openDialog } from '../ui.js';
 import { lineThumb, pageHead, totalsSummary, listRow, dayLabel, slotLabel } from '../components.js';
 import { addresses, auth, orders } from '../store.js';
 import { navigate } from '../router.js';
 import { SITE } from '../data/site.js';
 import { getProduct, isCake } from '../data/products.js';
 import { whenStore, keepFocus } from './cart.js';
+import { canal, carregarBolos, montarMensagem, avisoDeCancelamento } from '../pedido-whatsapp.js';
 
 const STEP_ICONS = { received: 'receipt', paid: 'credit-card', preparing: 'cake', ready: 'gift', out: 'truck', delivered: 'home' };
-const BADGE_TONES = { amber: 'badge--amber', gold: 'badge--gold', green: 'badge--green', red: 'badge--red', rose: 'badge--rose' };
+const BADGE_TONES = { amber: 'badge--amber', gold: 'badge--gold', green: 'badge--green', red: 'badge--red', rose: 'badge--rose', neutral: '' };
 
 const celebrated = new Set(); // pedidos que já ganharam confete nesta visita
 const PIX_KEY = 'bolab:pix'; // sessionStorage: pedido → momento em que um novo código Pix foi gerado
 const pixRestart = new Map(loadPixRestarts());
 const qrOpen = new Set(); // pedidos com o QR Code aberto no celular
 const copied = new Set(); // pedidos cujo código acabou de ser copiado
+const demoPayOpen = new Set(); // pedidos com a demonstração do Pix aberta
+const messages = new Map(); // pedido (número + momento em que foi feito) → mensagem do WhatsApp já montada
+/** Chave do pedido no cache: o número pode se repetir depois de "apagar os dados" na mesma visita. */
+const msgKey = (order) => `${order.id}:${order.createdAt}`;
+const justSent = new Set(); // pedidos recém-marcados como enviados: o leitor de tela é avisado uma vez
 
 function loadPixRestarts() {
   try {
@@ -50,6 +63,9 @@ export function statusInfo(order) {
   const st = orders.statusOf(order);
   if (st.expired) return { label: 'Expirado', tone: 'red', icon: 'clock' };
   if (st.canceled) return { label: 'Cancelado', tone: 'red', icon: 'x' };
+  // Sem servidor: a situação é a do envio pelo WhatsApp (ver orders.statusOf em js/store.js).
+  if (SITE.demo && st.index <= 1) return st.sent ? { label: 'Aguardando confirmação', tone: 'rose', icon: 'whatsapp' } : { label: 'Falta enviar', tone: 'amber', icon: 'send' };
+  if (SITE.demo && st.label === 'Encerrado') return { label: 'Encerrado', tone: 'neutral', icon: 'check' };
   if (!order.payment.paidAt) return { label: order.payment.method === 'pix' ? 'Aguardando Pix' : 'Aguardando pagamento', tone: 'amber', icon: 'clock' };
   if (st.id === 'preparing') return { label: st.label, tone: 'rose', icon: 'cake' };
   if (st.id === 'ready') return { label: st.label, tone: 'green', icon: 'gift' };
@@ -61,6 +77,28 @@ export function statusInfo(order) {
 export function statusBadge(order) {
   const info = statusInfo(order);
   return html`<span class="badge ${BADGE_TONES[info.tone]} ord-badge">${icon(info.icon)}${info.label}</span>`;
+}
+
+/** Pedido em andamento que a BOLAB ainda não recebeu: falta o cliente enviar pelo WhatsApp. */
+export const needsSend = (order) => SITE.demo && !isClosed(order) && !orders.statusOf(order).sent;
+
+/**
+ * "Pedir de novo": devolve os itens ao carrinho e leva a pessoa até lá. Item que saiu do cardápio
+ * não volta, e a pessoa fica sabendo.
+ */
+export function reorderAndGo(id) {
+  const order = orders.get(id);
+  if (!order) return;
+  const n = orders.reorder(id);
+  const total = order.items.length;
+  if (!n) {
+    toast(total === 1 ? 'Este item não está mais no cardápio.' : 'Estes itens não estão mais no cardápio.', { type: 'error' });
+    return;
+  }
+  const missing = total - n;
+  if (missing > 0) toast(`${missing === 1 ? '1 item saiu do cardápio e ficou de fora' : `${missing} itens saíram do cardápio e ficaram de fora`}. O restante está no carrinho.`, { duration: 6000 });
+  else toast(n === 1 ? 'O item voltou para o carrinho.' : 'Os itens voltaram para o carrinho.', { type: 'success' });
+  navigate('/carrinho');
 }
 
 /** "14:00 – 16:00" → "14h–16h" (o formatador mora em js/components.js: slotLabel). */
@@ -125,6 +163,19 @@ function headline(order, st) {
   const pickup = isPickup(order);
   const cake = order.items.some((l) => l.kind === 'custom' || isCake(getProduct(l.productId) || { cat: 'acess' }));
   const thing = cake ? 'bolo' : 'pedido';
+  if (SITE.demo) {
+    if (st.expired) return { title: 'Pedido expirado', sub: 'Este pedido não foi enviado à BOLAB e a data escolhida já passou. Nada foi cobrado.', tone: 'off' };
+    if (st.canceled) {
+      return {
+        title: 'Pedido cancelado',
+        sub: st.sent ? 'Cancelado neste aparelho. Avise a BOLAB pelo WhatsApp para ela não começar a produção.' : 'Cancelado antes do envio. A BOLAB não chegou a receber e nada foi cobrado.',
+        tone: 'off',
+      };
+    }
+    if (st.label === 'Encerrado') return { title: 'Pedido encerrado', sub: 'A data combinada já passou. Se ficou alguma pendência, fale com a BOLAB pelo WhatsApp.', tone: 'done' };
+    if (!st.sent) return { title: 'Pedido ainda não enviado', sub: 'Ele fica guardado neste aparelho até você enviar.', tone: 'wait' };
+    if (st.index <= 1) return { title: 'Aguardando confirmação da BOLAB', sub: 'A resposta chega pelo WhatsApp, com a confirmação do horário e a forma de pagar.', tone: 'go' };
+  }
   if (st.expired) return { title: 'Pedido expirado', sub: 'O pagamento não foi feito e a data combinada já passou. Nada foi cobrado.', tone: 'off' };
   if (st.canceled) {
     return {
@@ -164,6 +215,116 @@ function confirmBanner(order) {
   `;
 }
 
+/* ───────── Pedido pelo WhatsApp (sem servidor) ───────── */
+
+/** A mensagem já montada, ou null enquanto o módulo dos bolos 3D não chegou (ver mount). */
+function messageOf(order) {
+  const hit = messages.get(msgKey(order));
+  if (hit) return hit;
+  if (order.items.some((l) => l.kind === 'custom' && l.config)) return null;
+  const msg = montarMensagem(order, null);
+  messages.set(msgKey(order), msg);
+  return msg;
+}
+
+/**
+ * O cartão principal do pedido em andamento: enviar (ou reenviar) o pedido pelo WhatsApp.
+ * O botão é um link comum: quem abre o WhatsApp é o toque do cliente, nunca a loja sozinha.
+ */
+function waCard(order, st, isNew) {
+  const ch = canal();
+  const msg = messageOf(order);
+  const first = (order.contact.name || auth.user()?.name || '').trim().split(/\s+/)[0];
+  const sent = st.sent;
+  const title = sent ? 'Pedido enviado pelo WhatsApp' : isNew && first ? `Quase lá, ${first}. Envie o pedido para a BOLAB` : 'Envie o pedido para a BOLAB';
+  const text = sent
+    ? `Você abriu o WhatsApp com este pedido em ${dateTime(order.sentAt)}. Se não chegou a enviar a mensagem, envie de novo.`
+    : msg?.oversize
+      ? 'Este pedido é grande. O botão copia o pedido completo e abre o WhatsApp. Lá, cole a mensagem e envie.'
+      : 'A BOLAB só recebe o pedido quando você envia. O botão abre o WhatsApp com a mensagem pronta; é só enviar.';
+  const label = msg?.oversize ? 'Copiar pedido e abrir o WhatsApp' : sent ? 'Enviar de novo pelo WhatsApp' : 'Enviar pedido pelo WhatsApp';
+  const button = !ch.valid
+    ? html`<p class="notice notice--amber">${icon('alert')}<span>O WhatsApp da loja ainda não foi configurado. Fale com a BOLAB pelo atendimento.</span></p>`
+    : msg
+      ? html`<a class="btn ${sent ? 'btn--secondary' : 'btn--lg'} btn--block ord-wa__btn" id="ord-wa-send" href="${msg.url}" target="_blank" rel="noopener" data-wa-send>${icon('whatsapp')}${label}</a>`
+      : html`<button class="btn ${sent ? 'btn--secondary' : 'btn--lg'} btn--block ord-wa__btn" id="ord-wa-send" type="button" disabled aria-busy="true">Preparando a mensagem…</button>`;
+  return html`
+    <section class="card ord-wa ${sent ? 'is-sent' : ''}" aria-labelledby="ord-wa-t">
+      <div class="ord-wa__head">
+        <span class="ord-wa__icon">${icon(sent ? 'check' : 'whatsapp')}</span>
+        <div>
+          <h2 id="ord-wa-t">${title}</h2>
+          <p>${text}</p>
+        </div>
+      </div>
+      ${button}
+      <div class="ord-wa__foot">
+        ${msg && ch.valid ? html`<button class="link" type="button" id="ord-wa-peek" data-wa-peek>${sent ? 'Ver a mensagem' : 'Ver a mensagem antes de enviar'}</button>` : ''}
+      </div>
+      ${ch.demo && ch.valid
+        ? html`<p class="ord-wa__demo">${icon('info')}<span>Demonstração: o WhatsApp da loja ainda é um número de exemplo, ${ch.label}. Por enquanto a mensagem não chega à BOLAB.</span></p>`
+        : ''}
+    </section>
+  `;
+}
+
+/** Etapas que a loja conhece sem servidor. As duas primeiras acontecem aqui; as outras, no WhatsApp. */
+function honestSteps(order, st) {
+  const pickup = isPickup(order);
+  return [
+    { icon: 'receipt', label: 'Pedido montado', text: dateTime(order.createdAt), done: true, current: false },
+    {
+      icon: 'send',
+      label: st.sent ? 'Enviado pelo WhatsApp' : 'Enviar pelo WhatsApp',
+      text: st.sent ? dateTime(order.sentAt) : 'Toque em “Enviar pedido pelo WhatsApp”.',
+      done: st.sent,
+      current: !st.sent,
+    },
+    { icon: 'whatsapp', label: 'Confirmação da BOLAB', text: 'A BOLAB confirma o horário e combina o pagamento.', done: false, current: st.sent },
+    { icon: 'cake', label: 'Produção', text: '', done: false, current: false },
+    { icon: pickup ? 'store' : 'truck', label: pickup ? 'Retirada no ateliê' : 'Entrega', text: '', done: false, current: false },
+  ];
+}
+
+/** Acompanhamento sem servidor: só o que a loja sabe de verdade (montado, enviado, data combinada). */
+function honestTrack(order, st) {
+  const head = headline(order, st);
+  const ended = st.canceled || st.label === 'Encerrado';
+  const steps = honestSteps(order, st);
+  const at = steps.findIndex((s) => s.current);
+  return html`
+    <section class="card ord-track ord-track--${head.tone}" aria-labelledby="ord-track-t">
+      ${st.canceled ? '' : html`<p class="ord-track__when">${icon(isPickup(order) ? 'store' : 'truck')}${whenShort(order)}</p>`}
+      <h2 class="ord-track__title" id="ord-track-t">${head.title}</h2>
+      <p class="ord-track__sub">${head.sub}</p>
+      ${st.canceled && st.sent && !st.expired && canal().valid
+        ? html`<a class="btn btn--secondary btn--block ord-track__cta" id="ord-wa-cancel" href="${avisoDeCancelamento(order)}" target="_blank" rel="noopener">${icon('whatsapp')}Avisar a BOLAB do cancelamento</a>`
+        : ''}
+      ${ended
+        ? ''
+        : html`
+            <div class="ord-bar" role="img" aria-label="Etapa ${at + 1} de ${steps.length}: ${steps[at].label}">
+              ${steps.map((s) => html`<i class="${s.done ? 'is-done' : s.current ? 'is-current' : ''}"></i>`)}
+            </div>
+            <ol class="ord-tl">
+              ${steps.map(
+                (s) => html`
+                  <li class="ord-tl__step ${s.done ? 'is-done' : s.current ? 'is-current' : ''}" ${s.current ? raw('aria-current="step"') : ''}>
+                    <span class="ord-tl__dot">${icon(s.done ? 'check' : s.icon)}</span>
+                    <div class="ord-tl__text">
+                      <strong>${s.label}<span class="sr-only"> (${s.done ? 'feito' : s.current ? 'etapa atual' : 'a seguir'})</span></strong>
+                      ${(s.done || s.current) && s.text ? html`<span>${s.text}</span>` : ''}
+                    </div>
+                  </li>
+                `,
+              )}
+            </ol>
+            <p class="ord-track__note">${icon('info')}<span>Daqui em diante, o andamento do pedido é combinado com a BOLAB pelo WhatsApp.</span></p>
+          `}
+    </section>
+  `;
+}
+
 function pixPanel(order, isNew) {
   const left = pixExpiresAt(order) - Date.now();
   const expired = left <= 0;
@@ -184,7 +345,7 @@ function pixPanel(order, isNew) {
       <div class="ord-pix__body">
         <div class="ord-pix__top">
           <div>
-            <h2 id="ord-pix-t">${isNew ? 'Falta só o Pix' : 'Pague com Pix'}</h2>
+            <h2 id="ord-pix-t">${SITE.demo ? 'Pix pelo site' : isNew ? 'Falta só o Pix' : 'Pague com Pix'}</h2>
             <p class="ord-pix__amount">${money(order.totals.total)}</p>
           </div>
           <p class="ord-pix__timer ${expired ? 'is-over' : ''}" data-pix-timer>
@@ -209,7 +370,7 @@ function pixPanel(order, isNew) {
                 <ol class="ord-pix__how">
                   <li><span>Toque em <strong>Copiar código Pix</strong>.</span></li>
                   <li><span>No app do seu banco, escolha <strong>Pix copia e cola</strong>.</span></li>
-                  <li><span>Cole e confirme. A aprovação aparece aqui em segundos.</span></li>
+                  <li><span>Cole e confirme o valor no app do banco.</span></li>
                 </ol>
               </div>
 
@@ -217,7 +378,7 @@ function pixPanel(order, isNew) {
                 <ol class="ord-pix__how">
                   <li><span>Abra o app do seu banco e escolha <strong>Pix</strong>.</span></li>
                   <li><span>Aponte a câmera para o QR Code ou cole o código abaixo.</span></li>
-                  <li><span>Confirme o valor. A aprovação aparece aqui em segundos.</span></li>
+                  <li><span>Confirme o valor no app do banco.</span></li>
                 </ol>
                 <div class="field">
                   <label for="ord-pix-code">Pix copia e cola</label>
@@ -242,7 +403,7 @@ function pixPanel(order, isNew) {
               <div class="notice notice--amber ord-pix__demo">
                 ${icon('info')}
                 <div>
-                  <p><strong>Modo demonstração:</strong> o código e o QR Code são ilustrativos e nada é cobrado. Use o botão abaixo para ver o pedido ser confirmado.</p>
+                  <p><strong>Demonstração:</strong> o código e o QR Code são ilustrativos, não dá para pagar com eles e nada é cobrado. O pagamento de verdade é combinado com a BOLAB no WhatsApp.</p>
                   <button class="btn btn--secondary btn--block ord-pix__sim" type="button" id="ord-pix-pay" data-pix-pay>${icon('pix')}Simular pagamento do Pix</button>
                 </div>
               </div>
@@ -350,16 +511,32 @@ function receiptCard(order) {
   const off = isOff(order);
   const isCard = p.method === 'card';
   const n = p.installments || 1;
-  const payTitle = isCard ? `${p.brand || 'Cartão'} final ${p.last4 || '····'}` : 'Pix';
-  const paySub = off
-    ? p.paidAt
-      ? 'Valor estornado'
-      : 'Nenhum valor cobrado'
-    : isCard
-      ? `${n}x de ${money(order.totals.total / n)} sem juros`
+  // Sem servidor nada é cobrado: a linha diz a forma escolhida e que o pagamento é combinado no WhatsApp.
+  const demo = SITE.demo;
+  const parcels = `${n}x de ${money(order.totals.total / n)} sem juros`;
+  const payTitle = demo ? (isCard ? 'Cartão de crédito' : 'Pix') : isCard ? `${p.brand || 'Cartão'} final ${p.last4 || '····'}` : 'Pix';
+  const paySub = demo
+    ? off
+      ? 'Nenhum valor cobrado'
+      : `${isCard ? `${parcels} · ` : ''}${p.paidAt ? 'Pagamento simulado: nada foi cobrado' : 'A combinar com a BOLAB no WhatsApp'}`
+    : off
+      ? p.paidAt
+        ? 'Valor estornado'
+        : 'Nenhum valor cobrado'
+      : isCard
+        ? parcels
+        : p.paidAt
+          ? `Pago em ${dateTime(p.paidAt)}`
+          : 'Aguardando pagamento';
+  const payBadge = off
+    ? ''
+    : demo
+      ? p.paidAt
+        ? html`<span class="badge badge--amber">Simulado</span>`
+        : html`<span class="badge">A combinar</span>`
       : p.paidAt
-        ? `Pago em ${dateTime(p.paidAt)}`
-        : 'Aguardando pagamento';
+        ? html`<span class="badge badge--green">${icon('check')}Pago</span>`
+        : html`<span class="badge badge--amber">Pendente</span>`;
   return html`
     <section class="card ord-box ord-box--receipt" aria-labelledby="ord-items-t">
       <h2 id="ord-items-t">Itens <small>${plural(count, 'item', 'itens')}</small></h2>
@@ -387,14 +564,27 @@ function receiptCard(order) {
           <strong>${payTitle}</strong>
           <span>${paySub}</span>
         </div>
-        ${off ? '' : p.paidAt ? html`<span class="badge badge--green">${icon('check')}Pago</span>` : html`<span class="badge badge--amber">Pendente</span>`}
+        ${payBadge}
       </div>
     </section>
   `;
 }
 
-function actions(order, st) {
-  const canAdvance = SITE.demo && !st.canceled && st.index < st.steps.length - 1;
+/** Demonstração do Pix pelo site, recolhida: não muda a situação do pedido. */
+function demoPay(order, isNew) {
+  return html`
+    <details class="card ord-demopay" data-demo-pay ${demoPayOpen.has(order.id) ? raw('open') : ''}>
+      <summary>
+        <span class="row__icon">${icon('pix')}</span>
+        <span class="ord-demopay__text"><strong>Demonstração: Pix pelo site</strong><span>Veja como o pagamento on-line vai funcionar. Não é cobrança.</span></span>
+        ${icon('chevron-down')}
+      </summary>
+      ${pixPanel(order, isNew)}
+    </details>
+  `;
+}
+
+function actions(order) {
   const closed = isClosed(order);
   const wa = `https://wa.me/${SITE.whatsapp}?text=${encodeURIComponent(`Olá! É sobre o pedido ${order.id}.`)}`;
   const reorderRow = listRow({ iconName: 'repeat', title: 'Pedir de novo', desc: 'Coloca os mesmos itens no carrinho', attrs: 'data-reorder' });
@@ -408,17 +598,6 @@ function actions(order, st) {
       </div>
       ${orders.canCancel(order) ? html`<button class="ord-cancel" type="button" id="ord-cancel" data-cancel>Cancelar pedido</button>` : ''}
     </div>
-    ${canAdvance
-      ? html`
-          <div class="notice notice--amber ord-demo">
-            ${icon('info')}
-            <div>
-              <p><strong>Modo demonstração:</strong> veja o acompanhamento evoluir sem esperar o dia da entrega.</p>
-              <button class="btn btn--secondary btn--sm" type="button" id="ord-advance" data-advance>Avançar etapa (demonstração)</button>
-            </div>
-          </div>
-        `
-      : ''}
   `;
 }
 
@@ -450,13 +629,28 @@ export default {
     const st = orders.statusOf(order);
     const isNew = ctx.query.novo === '1' && !isClosed(order); // a comemoração vale enquanto o pedido está em andamento
     const pending = isPixPending(order);
+    if (SITE.demo) {
+      // Sem servidor: o que importa é o pedido chegar à BOLAB. O cartão do WhatsApp vem primeiro.
+      const active = !isClosed(order);
+      return html`
+        <div class="container ord">
+          <div class="ord-head">${pageHead(`Pedido ${order.id}`, { back: '/pedidos', sub: `Feito em ${dateTime(order.createdAt)}` })}</div>
+          ${active ? waCard(order, st, isNew) : ''}
+          <p class="sr-only" role="status" data-ord-live></p>
+          <div class="ord-layout">
+            <div class="ord-main">${honestTrack(order, st)} ${receiptCard(order)} ${pending ? demoPay(order, isNew) : ''}</div>
+            <div class="ord-side">${deliveryCard(order)} ${actions(order)}</div>
+          </div>
+        </div>
+      `;
+    }
     return html`
       <div class="container ord">
         <div class="ord-head">${pageHead(`Pedido ${order.id}`, { back: '/pedidos', sub: `Feito em ${dateTime(order.createdAt)}` })}</div>
         ${isNew && !pending && st.index <= 1 ? confirmBanner(order) : ''} ${pending ? pixPanel(order, isNew) : ''}
         <div class="ord-layout">
           <div class="ord-main">${trackCard(order, st)} ${receiptCard(order)}</div>
-          <div class="ord-side">${deliveryCard(order)} ${actions(order, st)}</div>
+          <div class="ord-side">${deliveryCard(order)} ${actions(order)}</div>
         </div>
       </div>
     `;
@@ -469,8 +663,72 @@ export default {
     const order = orders.get(id);
     if (!order) return off;
 
+    /* Pedido pelo WhatsApp */
+    let alive = true;
+    const key = msgKey(order);
+    if (SITE.demo && !isClosed(order) && !messages.has(key)) {
+      // Pedido com bolo 3D: o texto do bolo vem de um módulo carregado só agora.
+      carregarBolos(order)
+        .catch(() => null) // sem rede: a mensagem segue só com o resumo em texto
+        .then((share) => {
+          if (!messages.has(key)) messages.set(key, montarMensagem(order, share));
+          if (alive) keepFocus(() => ctx.rerender());
+        });
+    }
+
+    on(page, 'click', '[data-wa-send]', () => {
+      const msg = messages.get(key);
+      if (msg?.oversize) {
+        copyText(msg.full).then((ok) =>
+          toast(ok === false ? 'Não deu para copiar. Use "Ver a mensagem" e copie por lá.' : 'Pedido copiado. No WhatsApp, cole a mensagem e envie.', { type: ok === false ? 'error' : 'success', duration: 6000 }),
+        );
+      }
+      // O link abre o WhatsApp (ação do próprio toque). A marcação vem um instante depois, para a
+      // tela não ser redesenhada no meio do toque.
+      setTimeout(() => {
+        justSent.add(id);
+        orders.markSent(id);
+      }, 500);
+    });
+    if (justSent.delete(id)) {
+      requestAnimationFrame(() => {
+        const live = page.querySelector('[data-ord-live]');
+        if (live) live.textContent = 'Pedido marcado como enviado pelo WhatsApp. Aguardando confirmação da BOLAB.';
+      });
+    }
+
+    on(page, 'click', '[data-wa-peek]', () => {
+      const msg = messages.get(key);
+      if (!msg) return;
+      const text = msg.oversize ? msg.full : msg.text;
+      const dlg = openDialog({
+        title: 'Mensagem do pedido',
+        body: html`
+          <p class="ord-msg__lead">${msg.oversize ? 'É esta mensagem que você cola no WhatsApp.' : 'É esta mensagem que abre no WhatsApp. Você pode editar lá antes de enviar.'}</p>
+          <pre class="ord-msg" tabindex="0" role="region" aria-label="Texto da mensagem">${text}</pre>
+        `,
+        footer: html`<button class="btn btn--secondary" type="button" data-msg-copy>${icon('copy')}Copiar mensagem</button><button class="btn" type="button" data-dialog-close>Fechar</button>`,
+      });
+      dlg.el.addEventListener('click', async (ev) => {
+        if (!ev.target.closest('[data-msg-copy]')) return;
+        const ok = await copyText(text);
+        toast(ok === false ? 'Selecione o texto e copie manualmente.' : 'Mensagem copiada.', { type: ok === false ? 'error' : 'success' });
+      });
+    });
+
+    // Demonstração do Pix: lembra se estava aberta (o evento "toggle" não sobe, por isso a captura).
+    page.addEventListener(
+      'toggle',
+      (ev) => {
+        if (!ev.target.matches?.('[data-demo-pay]')) return;
+        if (ev.target.open) demoPayOpen.add(id);
+        else demoPayOpen.delete(id);
+      },
+      true,
+    );
+
     // Comemora uma vez só: ao chegar com o pedido pago ou quando o Pix é confirmado.
-    if (ctx.query.novo === '1' && order.payment.paidAt && !order.canceled && !celebrated.has(id)) {
+    if (!SITE.demo && ctx.query.novo === '1' && order.payment.paidAt && !order.canceled && !celebrated.has(id)) {
       celebrated.add(id);
       confetti();
     }
@@ -532,6 +790,13 @@ export default {
 
     on(page, 'click', '[data-pix-pay]', () => {
       if (pixRestart.delete(id)) savePixRestarts();
+      if (SITE.demo) {
+        // Só demonstração: nada foi pago e a situação do pedido continua a mesma.
+        demoPayOpen.delete(id);
+        orders.markPaid(id);
+        toast('Pix simulado. Nada foi cobrado.', { type: 'success' });
+        return;
+      }
       celebrated.add(id);
       orders.markPaid(id);
       confetti();
@@ -541,32 +806,35 @@ export default {
     });
 
     /* Ações */
-    on(page, 'click', '[data-reorder]', () => {
-      const n = orders.reorder(id);
-      if (!n) return;
-      toast(n === 1 ? 'O item voltou para o carrinho.' : 'Os itens voltaram para o carrinho.', { type: 'success' });
-      navigate('/carrinho');
-    });
+    on(page, 'click', '[data-reorder]', () => reorderAndGo(id));
 
     on(page, 'click', '[data-cancel]', async () => {
-      const paid = Boolean(orders.get(id)?.payment.paidAt);
+      const now = orders.get(id);
+      const paid = Boolean(now?.payment.paidAt);
+      const sent = Boolean(now?.sentAt);
       const yes = await confirmDialog({
         title: 'Cancelar este pedido?',
-        message: paid
-          ? 'Seu pedido ainda não entrou em produção, então o cancelamento é gratuito e o valor pago volta integralmente.'
-          : 'Seu pedido ainda não foi pago, então é só confirmar: nada será cobrado.',
+        message: SITE.demo
+          ? sent
+            ? 'A BOLAB pode já ter recebido este pedido. Depois de cancelar aqui, avise pelo WhatsApp para ela não começar a produção.'
+            : 'Este pedido ainda não foi enviado à BOLAB, então é só confirmar. Nada foi cobrado.'
+          : paid
+            ? 'Seu pedido ainda não entrou em produção, então o cancelamento é gratuito e o valor pago volta integralmente.'
+            : 'Seu pedido ainda não foi pago, então é só confirmar: nada será cobrado.',
         confirmLabel: 'Sim, cancelar',
         cancelLabel: 'Manter pedido',
         danger: true,
       });
       if (!yes) return;
-      if (orders.cancel(id)) toast('Pedido cancelado.', { type: 'success' });
-      else toast('Este pedido já entrou em produção. Fale com a gente pelo atendimento.', { type: 'error' });
+      if (orders.cancel(id)) {
+        toast(SITE.demo && sent ? 'Pedido cancelado aqui. Avise a BOLAB pelo WhatsApp.' : 'Pedido cancelado.', { type: 'success', duration: SITE.demo && sent ? 6000 : 3200 });
+        // O aviso à BOLAB fica logo no alto da tela.
+        if (SITE.demo && sent) requestAnimationFrame(() => document.getElementById('ord-wa-cancel')?.focus());
+      } else toast('Não dá mais para cancelar por aqui. Fale com a BOLAB pelo WhatsApp.', { type: 'error' });
     });
 
-    on(page, 'click', '[data-advance]', () => orders.advance(id));
-
     return () => {
+      alive = false;
       off();
       clearInterval(timer);
       clearTimeout(copiedTimer);

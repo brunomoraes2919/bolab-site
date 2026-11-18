@@ -107,7 +107,10 @@
   /* Layout */
   --container: 1200px;
   --gutter: 16px;
-  --header-h: 56px;
+  /* 56 px com o texto no tamanho padrão. A parte em rem faz o cabeçalho crescer junto quando a
+     pessoa aumenta o texto do aparelho (a 200% vira 68 px): as duas linhas do contexto de entrega
+     continuam cabendo, e tudo o que se prende abaixo dele (abas do cardápio, avisos) acompanha. */
+  --header-h: calc(44px + 0.75rem);
   --tabbar-h: 60px;
   --cartbar-h: 0px; /* espaço da barra "Ver carrinho" (css/shell.css troca o valor quando ela aparece) */
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -125,10 +128,25 @@
   --z-toast: 200;
 }
 
+/* A partir de 600 px (celular grande, dobrável aberto) as margens crescem. De 720 a 899 px
+   (tablet) a loja continua com cara de aplicativo (barra inferior, folhas), mas o cabeçalho
+   ganha a logo inteira, a busca e o carrinho com o valor. */
+@media (min-width: 600px) {
+  :root {
+    --gutter: 24px;
+  }
+}
+
+@media (min-width: 720px) {
+  :root {
+    --header-h: calc(52px + 0.75rem); /* 64 px */
+  }
+}
+
 @media (min-width: 900px) {
   :root {
     --gutter: 32px;
-    --header-h: 72px;
+    --header-h: calc(60px + 0.75rem); /* 72 px */
   }
 }
 

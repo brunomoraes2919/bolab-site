@@ -1,0 +1,1336 @@
+/* BOLAB — Ateliê: a Bô (mascote, balão de fala e atalhos).
+   Carregado pelo próprio módulo js/atelier/bo/index.js (um <link> só, na primeira vez).
+   Só usa os tokens de css/tokens.css. Prefixo das classes: .bo-…
+   Movimento: só transform e opacity; curto (120–380 ms); contínuo apenas o respirar e o piscar,
+   que param fora da tela (.is-away) e com "reduzir movimento" ligado. */
+
+/* ───────── Camada sobre o palco ───────── */
+.bo {
+  --bo-size: 52px;
+  --bo-gap: 8px;
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  pointer-events: none;
+  font-family: var(--font-body);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.bo[data-size="l"] {
+  --bo-size: 86px;
+  --bo-gap: 12px;
+}
+
+.bo[hidden] {
+  display: none;
+}
+
+/* Âncora: o canto de cima da mascote. O JS só mexe em --bo-x / --bo-y (transform). */
+.bo-anchor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--bo-size);
+  transform: translate3d(var(--bo-x, 8px), var(--bo-y, 8px), 0);
+  transition: transform 320ms var(--ease);
+}
+
+.bo.is-dragging .bo-anchor,
+.bo.is-instant .bo-anchor {
+  transition: none;
+}
+
+/* ───────── A mascote (botão) ───────── */
+.bo-avatar {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: opacity var(--t-med) var(--ease), transform var(--t-med) var(--ease);
+}
+
+/* alvo de toque de 44 px no mínimo, mesmo com a mascote pequena */
+.bo-avatar::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.bo-avatar:focus-visible {
+  outline: 2.5px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.bo.is-dragging .bo-avatar {
+  cursor: grabbing;
+}
+
+.bo-avatar:active .bo-av {
+  transform: scale(0.95);
+}
+
+/* pessoa concentrada: ela encolhe e fica translúcida, sem sumir */
+.bo[data-presence="discreta"] .bo-avatar {
+  opacity: 0.72;
+  transform: scale(0.86);
+  transform-origin: 50% 100%;
+}
+
+.bo[data-presence="discreta"][data-talking="true"] .bo-avatar,
+.bo[data-presence="discreta"] .bo-avatar:hover,
+.bo[data-presence="discreta"] .bo-avatar:focus-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* bolinha de "tenho algo a dizer" (modo mudo) */
+.bo-dot {
+  position: absolute;
+  top: 2px;
+  right: -2px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--white);
+  border-radius: 50%;
+  background: var(--action);
+  transform: scale(0);
+  transition: transform var(--t-med) var(--ease);
+}
+
+.bo-dot.is-on {
+  transform: scale(1);
+}
+
+/* ───────── O desenho ───────── */
+.bo-av {
+  --bo-mouth: 0;
+  --bo-lx: 0px;
+  --bo-ly: 0px;
+  display: block;
+  width: 100%;
+  aspect-ratio: 120 / 158;
+  transition: transform var(--t-fast) var(--ease);
+}
+
+.bo-av__fig {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 96%;
+  filter: drop-shadow(0 1px 1.5px color-mix(in srgb, var(--cocoa-900) 34%, transparent));
+  animation: bo-breathe 4.2s ease-in-out infinite;
+}
+
+.bo-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.bo-s {
+  stroke: var(--white);
+  stroke-width: 8;
+  stroke-linejoin: round;
+  paint-order: stroke;
+}
+
+.bo-c-skin {
+  fill: var(--rose-500);
+}
+
+.bo-c-white {
+  fill: var(--white);
+}
+
+.bo-c-ink {
+  fill: var(--cocoa-900);
+}
+
+.bo-c-mouth {
+  fill: var(--rose-900);
+}
+
+.bo-c-tongue {
+  fill: var(--rose-400);
+}
+
+.bo-l-ink {
+  fill: none;
+  stroke: var(--cocoa-900);
+  stroke-width: 3.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bo-ground {
+  fill: var(--cocoa-900);
+  opacity: 0.16;
+}
+
+.bo-shine {
+  fill: none;
+  stroke: var(--rose-300);
+  stroke-width: 3.4;
+  stroke-linecap: round;
+  opacity: 0.8;
+}
+
+.bo-hat-line {
+  fill: none;
+  stroke: var(--rose-200);
+  stroke-width: 1.9;
+  stroke-linecap: round;
+}
+
+.bo-cheek {
+  fill: var(--rose-700);
+  opacity: 0.3;
+}
+
+/* partes que se mexem: a origem é o centro da própria parte */
+.bo-eye,
+.bo-pupils,
+.bo-brow,
+.bo-jaw,
+.bo-arm,
+.bo-sweat,
+.bo-sparks path,
+.bo-zz path,
+.bo-dots circle {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+
+.bo-head {
+  transform-origin: 60px 100px;
+  transition: transform 240ms var(--ease);
+}
+
+.bo-hat {
+  transform-origin: 60px 26px;
+  transition: transform 240ms var(--ease);
+}
+
+.bo-arm {
+  transition: transform 240ms var(--ease);
+}
+
+.bo-face {
+  transform: translate(var(--bo-lx), var(--bo-ly));
+  transition: transform 280ms var(--ease);
+}
+
+.bo-pupils {
+  transition: transform 180ms var(--ease);
+}
+
+.bo-brow {
+  transition: transform 180ms var(--ease), opacity 100ms linear;
+}
+
+/* rosto: cada estado acende um jogo de olhos, uma boca e (às vezes) sobrancelhas */
+.bo-eye,
+.bo-mouth,
+.bo-brow,
+.bo-extra {
+  opacity: 0;
+}
+
+.bo-eye,
+.bo-mouth {
+  transition: opacity 70ms linear;
+}
+
+.bo-av[data-eyes="open"] .bo-eye--open,
+.bo-av[data-eyes="wide"] .bo-eye--open,
+.bo-av[data-eyes="look"] .bo-eye--open,
+.bo-av[data-eyes="arc"] .bo-eye--arc,
+.bo-av[data-eyes="shut"] .bo-eye--shut,
+.bo-av[data-mouth="smile"] .bo-mouth--smile,
+.bo-av[data-mouth="grin"] .bo-mouth--grin,
+.bo-av[data-mouth="open"] .bo-mouth--open,
+.bo-av[data-mouth="o"] .bo-mouth--o,
+.bo-av[data-mouth="wavy"] .bo-mouth--wavy,
+.bo-av[data-mouth="flat"] .bo-mouth--flat,
+.bo-av[data-mouth="zz"] .bo-mouth--zz {
+  opacity: 1;
+}
+
+.bo-eye--open {
+  animation: bo-blink 5.4s linear infinite;
+}
+
+.bo-av[data-eyes="wide"] .bo-pupils {
+  transform: scale(1.16);
+}
+
+.bo-av[data-eyes="look"] .bo-pupils {
+  transform: translate(2.4px, -2.8px);
+}
+
+/* a boca que fala: abre para baixo conforme o volume da voz */
+.bo-jaw {
+  transform-origin: 50% 0%;
+  transform: scaleY(calc(0.24 + 0.76 * var(--bo-mouth)));
+}
+
+.bo-av[data-brows="up"] .bo-brow {
+  opacity: 1;
+  transform: translateY(-3.6px);
+}
+
+.bo-av[data-brows="worried"] .bo-brow {
+  opacity: 1;
+}
+
+.bo-av[data-brows="worried"] .bo-brow--l {
+  transform: translateY(-1px) rotate(-17deg);
+}
+
+.bo-av[data-brows="worried"] .bo-brow--r {
+  transform: translateY(-1px) rotate(17deg);
+}
+
+.bo-av[data-brows="one"] .bo-brow {
+  opacity: 1;
+}
+
+.bo-av[data-brows="one"] .bo-brow--r {
+  transform: translateY(-4px) rotate(-9deg);
+}
+
+/* poses do corpo */
+.bo-av[data-state="ouvindo"] .bo-head {
+  transform: rotate(6deg);
+}
+
+.bo-av[data-state="pensando"] .bo-head {
+  transform: rotate(-5deg);
+}
+
+.bo-av[data-state="pensando"] .bo-arm--r {
+  transform: translate(-8px, -25px);
+}
+
+.bo-av[data-state="falando"] .bo-head {
+  transform: translateY(calc(var(--bo-mouth) * -1.4px));
+  transition: none;
+}
+
+.bo-av[data-state="falando"] .bo-arm--r {
+  transform: translate(3px, calc(-3px - var(--bo-mouth) * 5px));
+  transition: none;
+}
+
+.bo-av[data-state="feliz"] .bo-arm--l {
+  transform: translate(-3px, -8px);
+}
+
+.bo-av[data-state="feliz"] .bo-arm--r {
+  transform: translate(3px, -8px);
+}
+
+.bo-av[data-state="comemorando"] .bo-arm--l,
+.bo-av[data-extra="sparks"] .bo-arm--l {
+  transform: translate(-6px, -20px);
+}
+
+.bo-av[data-state="comemorando"] .bo-arm--r,
+.bo-av[data-extra="sparks"] .bo-arm--r {
+  transform: translate(5px, -20px);
+}
+
+.bo-av[data-state="surpresa"] .bo-arm--l {
+  transform: translate(-6px, -9px);
+}
+
+.bo-av[data-state="surpresa"] .bo-arm--r {
+  transform: translate(6px, -9px);
+}
+
+.bo-av[data-state="surpresa"] .bo-hat {
+  transform: translateY(-6px) rotate(-6deg);
+}
+
+.bo-av[data-state="preocupada"] .bo-arm--l {
+  transform: translate(6px, -13px);
+}
+
+.bo-av[data-state="preocupada"] .bo-arm--r {
+  transform: translate(-7px, -11px);
+}
+
+.bo-av[data-state="dormindo"] .bo-head {
+  transform: translateY(2.5px) rotate(8deg);
+}
+
+.bo-av[data-state="dormindo"] .bo-hat {
+  transform: rotate(7deg) translateY(1px);
+}
+
+.bo-av[data-state="dormindo"] .bo-av__fig {
+  animation-duration: 6.4s;
+}
+
+/* extras */
+.bo-sweat {
+  fill: var(--white);
+  stroke: var(--rose-300);
+  stroke-width: 1.4;
+}
+
+.bo-av[data-extra="sweat"] .bo-sweat {
+  opacity: 0.95;
+  animation: bo-sweat 1.5s var(--ease) 2 both;
+}
+
+.bo-dots circle {
+  fill: var(--white);
+  stroke: var(--rose-400);
+  stroke-width: 1.4;
+}
+
+.bo-av[data-extra="dots"] .bo-dots {
+  opacity: 1;
+}
+
+.bo-av[data-extra="dots"] .bo-dots circle {
+  animation: bo-dot 1.3s ease-in-out infinite both;
+}
+
+.bo-av[data-extra="dots"] .bo-dots circle:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.bo-av[data-extra="dots"] .bo-dots circle:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+.bo-zz path {
+  fill: none;
+  stroke: var(--rose-500);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bo-zz path.bo-zz__o {
+  stroke: var(--white);
+  stroke-width: 6;
+}
+
+.bo-av[data-extra="zz"] .bo-zz {
+  opacity: 1;
+}
+
+.bo-av[data-extra="zz"] .bo-zz path {
+  animation: bo-zz 3.6s ease-in-out infinite both;
+}
+
+.bo-av[data-extra="zz"] .bo-zz path:nth-child(n + 3) {
+  animation-delay: 1.2s;
+}
+
+.bo-sparks path {
+  fill: var(--gold);
+  stroke: var(--white);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  paint-order: stroke;
+}
+
+.bo-av[data-extra="sparks"] .bo-sparks {
+  opacity: 1;
+}
+
+.bo-av[data-extra="sparks"] .bo-sparks path {
+  animation: bo-spark 900ms var(--ease) both;
+}
+
+.bo-av[data-extra="sparks"] .bo-sparks path:nth-child(2) {
+  animation-delay: 110ms;
+}
+
+.bo-av[data-extra="sparks"] .bo-sparks path:nth-child(3) {
+  animation-delay: 220ms;
+}
+
+/* gestos (uma vez, quando o estado muda) */
+.bo-av__fig[data-anim="pop"] {
+  animation: bo-pop 380ms var(--ease) both;
+}
+
+.bo-av__fig[data-anim="out"] {
+  animation: bo-out 180ms ease-in both;
+}
+
+.bo-av__fig[data-anim="hop"] {
+  animation: bo-hop 480ms var(--ease) both;
+}
+
+.bo-av__fig[data-anim="cheer"] {
+  animation: bo-hop 440ms var(--ease) 2 both;
+}
+
+.bo-av__fig[data-anim="jolt"] {
+  animation: bo-jolt 340ms var(--ease) both;
+}
+
+.bo-av__fig[data-anim="wobble"] {
+  animation: bo-wobble 620ms ease-in-out both;
+}
+
+.bo-av__fig[data-anim="nod"] {
+  animation: bo-nod 320ms var(--ease) both;
+}
+
+@keyframes bo-breathe {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+
+  50% {
+    transform: scale(1.012, 0.982);
+  }
+}
+
+@keyframes bo-blink {
+  0%,
+  93.5%,
+  100% {
+    transform: scaleY(1);
+  }
+
+  96% {
+    transform: scaleY(0.08);
+  }
+}
+
+@keyframes bo-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.6);
+  }
+
+  60% {
+    opacity: 1;
+    transform: translateY(-3px) scale(1.06);
+  }
+
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes bo-out {
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.8);
+  }
+}
+
+@keyframes bo-hop {
+  0%,
+  100% {
+    transform: none;
+  }
+
+  18% {
+    transform: scale(1.05, 0.93);
+  }
+
+  52% {
+    transform: translateY(-10px) scale(0.97, 1.05);
+  }
+
+  82% {
+    transform: scale(1.03, 0.96);
+  }
+}
+
+@keyframes bo-jolt {
+  0%,
+  100% {
+    transform: none;
+  }
+
+  35% {
+    transform: translateY(-5px) scale(1.09);
+  }
+}
+
+@keyframes bo-wobble {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+
+  22% {
+    transform: rotate(-5deg);
+  }
+
+  50% {
+    transform: rotate(4.5deg);
+  }
+
+  78% {
+    transform: rotate(-2.5deg);
+  }
+}
+
+@keyframes bo-nod {
+  0%,
+  100% {
+    transform: none;
+  }
+
+  45% {
+    transform: translateY(2.5px) scale(1.02, 0.97);
+  }
+}
+
+@keyframes bo-sweat {
+  0% {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+
+  30% {
+    opacity: 0.95;
+  }
+
+  100% {
+    opacity: 0.95;
+    transform: translateY(3px);
+  }
+}
+
+@keyframes bo-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+
+  45% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes bo-zz {
+  0% {
+    opacity: 0;
+    transform: translate(-3px, 5px) scale(0.7);
+  }
+
+  30% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(5px, -9px) scale(1.05);
+  }
+}
+
+@keyframes bo-spark {
+  0% {
+    opacity: 0;
+    transform: scale(0.2) rotate(-30deg);
+  }
+
+  40% {
+    opacity: 1;
+    transform: scale(1.15) rotate(8deg);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+/* fora da tela ou com a aba escondida: tudo o que é contínuo descansa */
+.bo-av.is-away .bo-av__fig,
+.bo-av.is-away .bo-eye--open,
+.bo-av.is-away .bo-extra *,
+.bo-av.is-away .bo-sweat {
+  animation-play-state: paused;
+}
+
+/* ───────── Balão de fala ───────── */
+.bo-bubble,
+.bo-panel {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: var(--bo-room, 280px);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+  color: var(--text);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate3d(var(--bo-from-x, 0), var(--bo-from-y, 6px), 0) scale(0.96);
+  transform-origin: var(--bo-origin, 0% 100%);
+  transition: opacity 140ms ease-in, transform 140ms ease-in, visibility 0s linear 140ms;
+}
+
+.bo-bubble[data-on="true"],
+.bo-panel[data-on="true"] {
+  pointer-events: auto;
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity 180ms var(--ease), transform 220ms var(--ease), visibility 0s;
+}
+
+/* ao lado da mascote (palco largo ou mascote num canto de baixo) */
+.bo[data-layout="side"][data-side="l"] .bo-bubble,
+.bo[data-layout="side"][data-side="l"] .bo-panel {
+  left: calc(100% + var(--bo-gap));
+  --bo-from-x: -6px;
+  --bo-from-y: 0;
+}
+
+.bo[data-layout="side"][data-side="r"] .bo-bubble,
+.bo[data-layout="side"][data-side="r"] .bo-panel {
+  right: calc(100% + var(--bo-gap));
+  --bo-from-x: 6px;
+  --bo-from-y: 0;
+}
+
+.bo[data-layout="side"][data-vert="b"] .bo-bubble,
+.bo[data-layout="side"][data-vert="b"] .bo-panel {
+  bottom: var(--bo-lift, 30%);
+}
+
+.bo[data-layout="side"][data-vert="t"] .bo-bubble,
+.bo[data-layout="side"][data-vert="t"] .bo-panel {
+  top: var(--bo-drop, 12%);
+}
+
+.bo[data-layout="side"][data-side="l"][data-vert="b"] {
+  --bo-origin: 0% 100%;
+}
+
+.bo[data-layout="side"][data-side="r"][data-vert="b"] {
+  --bo-origin: 100% 100%;
+}
+
+.bo[data-layout="side"][data-side="l"][data-vert="t"] {
+  --bo-origin: 0% 0%;
+}
+
+.bo[data-layout="side"][data-side="r"][data-vert="t"] {
+  --bo-origin: 100% 0%;
+}
+
+/* empilhado (palco estreito): acima ou abaixo da mascote */
+.bo[data-layout="stack"] .bo-bubble {
+  left: var(--bo-shift, 0px);
+}
+
+.bo[data-layout="stack"] .bo-panel {
+  left: var(--bo-shift-panel, 0px);
+}
+
+.bo[data-layout="stack"][data-vert="b"] .bo-bubble,
+.bo[data-layout="stack"][data-vert="b"] .bo-panel {
+  bottom: calc(100% + var(--bo-gap));
+}
+
+.bo[data-layout="stack"][data-vert="t"] .bo-bubble,
+.bo[data-layout="stack"][data-vert="t"] .bo-panel {
+  top: calc(100% + var(--bo-gap));
+  --bo-from-y: -6px;
+  --bo-origin: 10% 0%;
+}
+
+/* O JS conferiu onde o balão caiu e ele cobria algo do palco ([data-bo-avoid], botões, etiqueta) ou saía da área
+   útil: vai para a faixa livre (--bo-by, medido a partir da mascote) e, se for preciso, com a altura limitada. */
+.bo[data-layout] .bo-bubble[data-fit="true"],
+.bo[data-layout] .bo-panel[data-fit="true"] {
+  top: var(--bo-by, 0px);
+  bottom: auto;
+}
+
+.bo-bubble {
+  display: flex;
+  flex-direction: column;
+  min-width: 132px;
+  max-height: var(--bo-maxh, none);
+  padding: 10px 12px;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* No celular o palco é pequeno e o bolo é a estrela: o balão é compacto (umas 5 linhas de texto; o que passar
+   disso rola por dentro), mais estreito, e some sozinho — ou ao primeiro toque no palco, se for só texto. */
+.bo[data-size="s"] .bo-bubble {
+  max-width: min(var(--bo-room, 280px), 288px);
+  max-height: min(var(--bo-maxh, 212px), 212px);
+  padding: 8px 11px;
+  line-height: 1.35;
+}
+
+.bo[data-size="s"] .bo-bubble__text {
+  /* r5-qa: 5 linhas inteiras — a folga de cima (5 px, dos ícones) entra na conta; sem ela a 5ª linha saía cortada ao meio */
+  max-height: calc(6.75em + 5px);
+}
+
+/* r5-qa: texto que não coube (rola por dentro): a última linha à vista esmaece, para dar a ver que continua */
+.bo-bubble__text[data-more="true"] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.7em), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.7em), transparent);
+}
+
+.bo-panel[data-fit="true"] {
+  max-height: var(--bo-maxh, none);
+  overflow-y: auto;
+}
+
+.bo[data-size="l"] .bo-bubble {
+  padding: 12px 14px;
+  font-size: var(--fs-sm);
+}
+
+/* a ponta do balão aponta para a cabeça da Bô */
+.bo-bubble::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--surface);
+  transform: rotate(45deg);
+}
+
+.bo[data-layout="side"][data-side="l"] .bo-bubble::after {
+  left: -5px;
+}
+
+.bo[data-layout="side"][data-side="r"] .bo-bubble::after {
+  right: -5px;
+}
+
+.bo[data-layout="side"][data-vert="b"] .bo-bubble::after {
+  bottom: var(--bo-tail, 14px);
+}
+
+.bo[data-layout="side"][data-vert="t"] .bo-bubble::after {
+  top: var(--bo-tail, 14px);
+}
+
+.bo[data-layout="stack"] .bo-bubble::after {
+  left: calc(var(--bo-size) / 2 - 6px - var(--bo-shift, 0px));
+}
+
+.bo[data-layout="stack"][data-vert="b"] .bo-bubble::after {
+  bottom: -5px;
+}
+
+.bo[data-layout="stack"][data-vert="t"] .bo-bubble::after {
+  top: -5px;
+}
+
+/* com o balão reposicionado, a ponta só fica se ainda alcança a cabeça da Bô */
+.bo[data-layout] .bo-bubble[data-fit="true"]::after {
+  top: var(--bo-tail-y, 12px);
+  bottom: auto;
+  opacity: var(--bo-tail-o, 0);
+}
+
+/* o texto é a parte que rola quando o balão tem altura limitada (o X e a ponta ficam para fora da caixa);
+   a folga de cima e da direita é dos ícones de repetir e silenciar, que avançam um pouco além do texto */
+.bo-bubble__text {
+  flex: 0 1 auto;
+  min-height: 0;
+  margin: -5px -6px 0 0;
+  padding: 5px 6px 0 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.bo-stars,
+.bo-acts {
+  flex: none;
+}
+
+/* repetir e silenciar: dois ícones discretos no canto do texto */
+.bo-bubble__tools {
+  float: right;
+  display: inline-flex;
+  gap: 2px;
+  height: 18px; /* só a primeira linha do texto desvia dos ícones */
+  margin: -1px -6px 0 6px;
+}
+
+.bo-bubble__tools .bo-ico {
+  width: 26px;
+  height: 26px;
+  margin-top: -4px;
+}
+
+.bo-ico[hidden] {
+  display: none;
+}
+
+.bo-ico {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+
+/* área de toque maior que o desenho */
+.bo-ico::after {
+  content: "";
+  position: absolute;
+  inset: -8px -3px;
+}
+
+.bo-ico svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bo-ico:focus-visible,
+.bo-chip:focus-visible,
+.bo-btn:focus-visible,
+.bo-seg button:focus-visible {
+  outline: 2.5px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.bo-ico[aria-pressed="true"] {
+  color: var(--action);
+}
+
+@media (hover: hover) {
+  .bo-ico:hover {
+    background: var(--fill);
+    color: var(--text);
+  }
+}
+
+/* fechar: pastilha no canto de fora do balão */
+.bo-x {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-1), var(--shadow-2);
+  color: var(--text-2);
+}
+
+.bo[data-layout="side"][data-side="r"] .bo-x {
+  right: auto;
+  left: -9px;
+}
+
+.bo-x svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.4;
+}
+
+.bo-x::after {
+  inset: -10px;
+}
+
+/* Nota da Bô */
+.bo-stars {
+  display: grid;
+  gap: 3px;
+  margin: 0 0 8px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+
+.bo-stars[hidden] {
+  display: none;
+}
+
+.bo-stars__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--text-2);
+}
+
+.bo-stars__row--total {
+  margin-bottom: 2px;
+  color: var(--text);
+  font-size: var(--fs-meta);
+  font-weight: 800;
+}
+
+.bo-stars__s {
+  display: inline-flex;
+  gap: 1px;
+  color: var(--border-strong);
+}
+
+.bo-stars__s svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+}
+
+.bo-stars__row--total .bo-stars__s svg {
+  width: 16px;
+  height: 16px;
+}
+
+.bo-stars__s .is-on {
+  color: var(--star);
+}
+
+.bo-stars__n {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.bo-stars__n svg {
+  width: 12px;
+  height: 12px;
+  fill: var(--star);
+}
+
+.bo-stars__parts {
+  display: grid;
+  gap: 3px;
+}
+
+/* no celular a nota fica numa linha só: "Sabor 5★ · Visual 3★ · Equilíbrio 5★" */
+.bo[data-size="s"] .bo-stars__parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+}
+
+.bo[data-size="s"] .bo-stars__parts .bo-stars__row {
+  justify-content: flex-start;
+  gap: 5px;
+}
+
+.bo[data-size="s"] .bo-stars__parts .bo-stars__s {
+  display: none;
+}
+
+.bo[data-size="s"] .bo-stars__parts .bo-stars__n {
+  display: inline-flex;
+}
+
+/* ação sugerida ("Trocar para…") */
+.bo-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.bo-acts:empty {
+  display: none;
+}
+
+.bo-btn {
+  position: relative;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--action);
+  color: var(--white);
+  font: inherit;
+  font-size: var(--fs-meta);
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast), transform var(--t-fast);
+}
+
+.bo-btn::after {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
+}
+
+.bo-btn--2 {
+  background: var(--fill);
+  color: var(--text);
+}
+
+.bo-btn:active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) {
+  .bo-btn:hover {
+    background: var(--action-hover);
+  }
+
+  .bo-btn--2:hover {
+    background: var(--border);
+  }
+}
+
+/* ───────── Atalhos "Pergunte à Bô" ───────── */
+.bo-panel {
+  z-index: 2;
+  width: var(--bo-room-panel, 300px);
+  max-width: var(--bo-room-panel, 300px);
+  padding: 12px;
+}
+
+.bo[data-size="l"] .bo-panel {
+  padding: 14px;
+}
+
+.bo-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.bo-panel__title {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.bo-panel__title small {
+  color: var(--text-3);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+}
+
+/* no celular: duas fileiras que deslizam para o lado (o palco é baixo); no computador: lista que quebra */
+.bo-chips {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(2, auto);
+  justify-content: start;
+  gap: 6px;
+  margin: 0 -12px;
+  padding: 2px 12px;
+  overflow-x: auto;
+  contain: inline-size;
+  scrollbar-width: none;
+}
+
+.bo-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.bo[data-size="l"] .bo-chips {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  contain: none;
+}
+
+.bo-chip {
+  position: relative;
+  flex: none;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-meta);
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast), transform var(--t-fast);
+}
+
+.bo-chip::after {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
+}
+
+.bo-chip:active {
+  transform: scale(0.97);
+}
+
+.bo-chip.is-hot {
+  border-color: var(--action);
+  background: var(--action-soft);
+  color: var(--action-hover);
+}
+
+@media (hover: hover) {
+  .bo-chip:hover {
+    border-color: var(--action);
+    background: var(--action-soft);
+    color: var(--action-hover);
+  }
+}
+
+.bo-panel__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.bo-seg {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  background: var(--fill);
+}
+
+.bo-seg button {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+
+.bo-seg button::after {
+  content: "";
+  position: absolute;
+  inset: -7px 0;
+}
+
+.bo-seg button[aria-checked="true"] {
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  color: var(--text);
+}
+
+/* ───────── Só para leitores de tela ───────── */
+.bo-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ───────── Convivência com o palco do personalizador ─────────
+   Enquanto a Bô fala, a dica "Arraste para girar" (que mora no mesmo canto no celular) dá licença. */
+.cz-stage:has(.bo-bubble[data-on="true"]) .cz-hint,
+.cz-stage:has(.bo-panel[data-on="true"]) .cz-hint {
+  opacity: 0;
+}
+
+@media (max-width: 899px) {
+  .cz-stage:has(.bo:not([hidden])) .cz-hint {
+    left: 70px;
+  }
+}
+
+/* Com o teclado aberto no celular, a Bô sai do caminho. */
+.cz.is-typing .bo {
+  display: none;
+}
+
+/* ───────── Reduzir movimento ───────── */
+@media (prefers-reduced-motion: reduce) {
+  .bo-av__fig,
+  .bo-av__fig[data-anim],
+  .bo-eye--open,
+  .bo-av .bo-extra *,
+  .bo-av .bo-sweat {
+    animation: none !important;
+  }
+
+  .bo-anchor,
+  .bo-head,
+  .bo-hat,
+  .bo-arm,
+  .bo-face,
+  .bo-pupils,
+  .bo-brow,
+  .bo-avatar,
+  .bo-av {
+    transition: none !important;
+  }
+
+  .bo-bubble,
+  .bo-panel {
+    transform: none !important;
+    transition: opacity 120ms linear, visibility 0s linear 120ms !important;
+  }
+
+  .bo-bubble[data-on="true"],
+  .bo-panel[data-on="true"] {
+    transition: opacity 120ms linear, visibility 0s !important;
+  }
+}

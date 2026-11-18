@@ -1,6 +1,7 @@
 // BOLAB — pontos de partida do personalizador: inspirações, bolos do cardápio e "Surpreenda-me".
-import { FLAVORS, FILLINGS, getDecor } from '../data/customizer.js';
-import { normalizeConfig } from './pricing.js';
+import { getDecor, getSize, getShape, getFlavor, getFilling, getFillAdd, getSoak, getCovering, getFinish, getTrim, getPiping, getCandleStyle, getTheme, pipingPlaces } from '../data/customizer.js';
+import { normalizeConfig, applyTheme } from './pricing.js';
+import { enforceRules } from './rules.js';
 
 const cfg = (c) => normalizeConfig({ decor: { items: [] }, ...c });
 
@@ -10,7 +11,7 @@ export const PRESETS = [
     id: 'morango',
     occasion: 'aniversario',
     name: 'Morango dos Sonhos',
-    tag: 'Baunilha, morango e ninho',
+    tag: 'Baunilha, morango e leite em pó cremoso',
     config: cfg({
       shape: 'round',
       layers: ['baunilha', 'baunilha', 'baunilha'],
@@ -98,15 +99,18 @@ export const PRESETS = [
   },
 ];
 
-/** Ocasiões das inspirações (filtro da faixa de inspirações). */
+/** Ocasiões das inspirações (filtro da faixa de inspirações), na ordem em que os filtros aparecem.
+ *  "Bebê" junta chá de bebê, chá revelação e batizado; "Datas festivas", Páscoa, festa junina, Halloween e Natal. */
 export const OCCASIONS = [
   { id: 'aniversario', name: 'Aniversário' },
-  { id: 'casamento', name: 'Casamento' },
-  { id: 'quinze', name: '15 anos' },
-  { id: 'bebe', name: 'Chá de bebê' },
   { id: 'infantil', name: 'Infantil' },
+  { id: 'quinze', name: '15 anos' },
+  { id: 'casamento', name: 'Casamento' },
+  { id: 'bebe', name: 'Bebê' },
   { id: 'namorados', name: 'Namorados' },
-  { id: 'natal', name: 'Natal' },
+  { id: 'maes', name: 'Dia das Mães' },
+  { id: 'formatura', name: 'Formatura' },
+  { id: 'festas', name: 'Datas festivas' },
 ];
 
 // Inspirações que usam os recursos novos: andares, estilos de cobertura, bicos, decorações com arranjo, bases.
@@ -232,7 +236,7 @@ PRESETS.push(
   },
   {
     id: 'natal',
-    occasion: 'natal',
+    occasion: 'festas',
     name: 'Natal Nevado',
     tag: 'Espatulado branco, folhas e frutas vermelhas',
     config: cfg({
@@ -278,17 +282,339 @@ PRESETS.push(
   },
 );
 
+/* ───────── Rodada 5: inspirações com o cardápio novo ─────────
+   Formatos (oval, flor, vulcão), tamanhos (bentô, GG), massas e recheios novos, estilos de cobertura (rosetas,
+   babados, cesta, fault line, marmorizado, pinceladas, perolado, estêncil), bicos de lateral, temas prontos e
+   velas novas. Toda inspiração passa em tools/tests/vitrine.test.mjs: nada que as regras de confeiteiro
+   bloqueiem, nada desligado no cardápio, e tudo cabe no bolo.
+
+   sized: true = a inspiração foi pensada para o tamanho dela (bentô, GG) e a tela a aplica NESSE tamanho
+   (r5-qa: `keepSize: !p.sized` em js/views/customizer.js). As demais mantêm o tamanho que a pessoa já escolheu. */
+
+/** Inspiração que parte de um tema pronto (customizer-decor.js → THEMES): o tema põe o bico e as decorações. */
+const themed = (themeId, c, after = null) => {
+  const base = applyTheme(cfg(c), themeId);
+  if (!after) return base;
+  const next = JSON.parse(JSON.stringify(base));
+  after(next);
+  return normalizeConfig(next);
+};
+const x3 = (id) => [id, id, id];
+
+PRESETS.push(
+  {
+    id: 'vulcao',
+    occasion: 'aniversario',
+    name: 'Vulcão de Chocolate',
+    tag: 'Brigadeiro cremoso transbordando do furo',
+    config: cfg({
+      shape: 'vulcao',
+      layers: ['chocolate'],
+      fillings: [],
+      covering: { type: 'chocolate', color: '#6b3f22' },
+      drip: { on: false, amount: 'farta' },
+      piping: { style: 'liso', where: 'top', color: '#ffffff' },
+      decor: { items: ['morangosfrescos', 'granulado'], opts: { morangosfrescos: { arr: 'coroa' } } },
+    }),
+  },
+  {
+    id: 'unicornio',
+    occasion: 'infantil',
+    name: 'Unicórnio Encantado',
+    tag: 'Chifre dourado, crina de rosetas e cílios',
+    config: themed('unicornio', {
+      shape: 'round',
+      layers: ['funfetti', 'funfetti', 'funfetti', 'funfetti'],
+      fillings: ['brigadeirobranco', 'morango', 'brigadeirobranco'],
+      covering: { type: 'chantininho', color: '#ffffff' },
+    }),
+  },
+  {
+    id: 'cesta',
+    occasion: 'aniversario',
+    name: 'Cesta de Morangos',
+    tag: 'Trançado de bico e morangos inteiros',
+    config: cfg({
+      shape: 'round',
+      base: 'madeira',
+      layers: x3('baunilha'),
+      fillings: ['morango', 'cremebelga'],
+      covering: { type: 'buttercream', color: '#f2e4c7', style: 'cesta' },
+      piping: { style: 'corda', where: 'top', color: '#f2e4c7' },
+      decor: { items: ['morangosfrescos'], opts: { morangosfrescos: { arr: 'coroa', qty: 'farto' } } },
+    }),
+  },
+  {
+    id: 'mar',
+    occasion: 'infantil',
+    name: 'Fundo do Mar',
+    tag: 'Cauda de sereia, conchas e escamas de bico',
+    config: themed('mar', {
+      shape: 'round',
+      layers: x3('coco'),
+      fillings: ['abacaxicoco', 'coco'],
+      covering: { type: 'buttercream', color: '#9bd4ff', style: 'ombre', color2: '#ffffff' },
+    }),
+  },
+  {
+    id: 'flor',
+    occasion: 'maes',
+    name: 'Flor para a Mãe',
+    tag: 'Formato de flor, peônias e pistache',
+    config: themed('maes', {
+      shape: 'flor',
+      layers: x3('amendoas'),
+      fillings: ['pistache', 'framboesa'],
+      covering: { type: 'buttercream', color: '#f7d3dc' },
+    }),
+  },
+  {
+    id: 'faultline',
+    occasion: 'aniversario',
+    name: 'Faixa de Confeitos',
+    tag: 'Fault line colorida e casquinha derretendo',
+    config: cfg({
+      shape: 'round',
+      layers: ['chocolate', 'chocolate', 'chocolate', 'chocolate'],
+      fillings: ['cookies', 'nutella', 'cookies'],
+      covering: { type: 'buttercream', color: '#c7a7ff', style: 'faultline', trim: 'confeitos' },
+      piping: { style: 'liso', where: 'top', color: '#ffffff' },
+      decor: { items: ['casquinha', 'confete'], opts: { casquinha: { color: '#f7b7c8' } } },
+    }),
+  },
+  {
+    id: 'oval',
+    occasion: 'aniversario',
+    name: 'Mármore e Figos',
+    tag: 'Oval marmorizado, com figos, amoras e ouro',
+    config: cfg({
+      shape: 'oval',
+      base: 'marmore',
+      layers: x3('nozes'),
+      fillings: ['caramelosalgado', 'nozes'],
+      covering: { type: 'ganachebranca', color: '#f2e4c7', style: 'marmorizado', color2: '#b9772c' },
+      piping: { style: 'liso', where: 'top', color: '#ffffff' },
+      decor: { items: ['figos', 'amoras', 'ouro'], opts: { figos: { arr: 'centro' }, amoras: { arr: 'espalhado', qty: 'pouco' }, ouro: { arr: 'coroa', qty: 'pouco' } } },
+    }),
+  },
+  {
+    id: 'dinos',
+    occasion: 'infantil',
+    name: 'Vale dos Dinossauros',
+    tag: 'Silhuetas, folhas e ovinhos no gramado',
+    config: themed('dinos', {
+      shape: 'round',
+      layers: x3('chocolate'),
+      fillings: ['cookies', 'brigadeiro'],
+      covering: { type: 'chantininho', color: '#f2e4c7' },
+    }),
+  },
+  {
+    id: 'babados',
+    occasion: 'quinze',
+    name: 'Saia de Babados',
+    tag: 'Dois andares de babados e coroa rosé',
+    config: cfg({
+      shape: 'round',
+      tiers: 2,
+      layers: x3('redvelvet'),
+      fillings: ['creamcheese', 'framboesa'],
+      covering: { type: 'buttercream', color: '#ffb3d1', style: 'babados' },
+      piping: { style: 'perolao', where: 'top', color: '#ffffff' },
+      decor: { items: ['coroa', 'perolas'], opts: { coroa: { color: '#e8a5a0' } } },
+    }),
+  },
+  {
+    id: 'bento',
+    occasion: 'namorados',
+    sized: true,
+    name: 'Bentô do Recado',
+    tag: 'Mini bolo na caixinha, com recado no bico',
+    config: cfg({
+      shape: 'round',
+      size: 'bento',
+      base: 'caixa',
+      layers: ['chocolate', 'chocolate'],
+      fillings: ['brigadeiro'],
+      covering: { type: 'chantininho', color: '#ffffff' },
+      piping: { style: 'conchas', where: 'both', color: '#ffb3d1' },
+      decor: { items: [], message: 'Te adoro', messageMode: 'bico', script: 'gordinha', messageColor: '#8b1a1a' },
+    }),
+  },
+  {
+    id: 'futebol',
+    occasion: 'infantil',
+    name: 'Dia de Jogo',
+    tag: 'Gramado de bico e bola no centro',
+    config: themed('futebol', {
+      shape: 'rect',
+      layers: x3('formigueiro'),
+      fillings: ['brigadeiro', 'brigadeirobranco'],
+      covering: { type: 'chantininho', color: '#ffffff' },
+    }),
+  },
+  {
+    id: 'rosetas',
+    occasion: 'maes',
+    name: 'Buquê de Rosetas',
+    tag: 'Coberto de rosetas, com pérolas e borboletas',
+    config: cfg({
+      shape: 'round',
+      layers: x3('baunilha'),
+      fillings: ['frutasvermelhas', 'ganachebranca'],
+      covering: { type: 'buttercream', color: '#f7d3dc', style: 'rosetas' },
+      piping: { style: 'liso', where: 'top', color: '#ffffff' },
+      decor: { items: ['perolas', 'borboletas'], opts: { borboletas: { arr: 'espalhado', qty: 'pouco', color: '#ffffff' } } },
+    }),
+  },
+  {
+    id: 'aliancas',
+    occasion: 'casamento',
+    name: 'Peônias e Alianças',
+    tag: 'Dois andares perolados, com guirlandas de bico',
+    config: themed(
+      'casamento',
+      { shape: 'round', tiers: 2, base: 'dourada', layers: x3('nozes'), fillings: ['ameixa', 'nozes'], covering: { type: 'buttercream', color: '#f2e4c7', style: 'perolado' } },
+      (c) => {
+        // o tema sugere branco; aqui o perolado vai sobre creme (tom de champanhe)
+        c.covering.color = '#f2e4c7';
+      },
+    ),
+  },
+  {
+    id: 'junina',
+    occasion: 'festas',
+    name: 'Arraiá de Paçoca',
+    tag: 'Bandeirinhas, chapéu de palha e paçoca',
+    config: themed(
+      'junina',
+      { shape: 'round', base: 'madeira', layers: x3('pacoca'), fillings: ['docedeleite', 'pacoca'], covering: { type: 'buttercream', color: '#ffd166', style: 'rustico' } },
+      (c) => {
+        // paçocas de um lado e pipoca do outro: o chapéu de palha fica à mostra no centro
+        c.decor.opts.pacoca = { arr: 'meialua', qty: 'pouco' };
+        c.decor.opts.pipoca = { arr: 'coroa', qty: 'pouco' };
+      },
+    ),
+  },
+  {
+    id: 'pascoa',
+    occasion: 'festas',
+    name: 'Coelhinho da Páscoa',
+    tag: 'Cenoura com brigadeiro, orelhas e ovinhos',
+    config: themed(
+      'pascoa',
+      { shape: 'round', layers: x3('cenoura'), fillings: ['brigadeiro', 'brigadeiro'], covering: { type: 'buttercream', color: '#a8f0c6', style: 'poa', color2: '#ffffff' } },
+      (c) => {
+        c.covering.color = '#a8f0c6'; // o tema sugere branco; aqui, menta com poá branco
+        c.decor.opts.ovinhos.qty = 'pouco'; // o ninho de ovinhos divide o centro com as orelhas
+      },
+    ),
+  },
+  {
+    id: 'halloween',
+    occasion: 'festas',
+    name: 'Doces ou Travessuras',
+    tag: 'Fantasminhas, abóboras e calda laranja',
+    config: themed(
+      'halloween',
+      { shape: 'round', layers: x3('chocolate'), fillings: ['docedeleite', 'meioamargo'], covering: { type: 'buttercream', color: '#4a1a6a' }, drip: { on: true, color: '#e07820' } },
+      (c) => {
+        // os morcegos do tema vão colados na lateral, onde a calda desce: aqui ficam de fora
+        c.decor.items = c.decor.items.filter((id) => id !== 'morcegos');
+      },
+    ),
+  },
+  {
+    id: 'formatura',
+    occasion: 'formatura',
+    name: 'Canudo na Mão',
+    tag: 'Capelo, estrelas douradas e pinceladas',
+    config: themed('formatura', {
+      shape: 'round',
+      layers: x3('chocolate'),
+      fillings: ['caramelosalgado', 'meioamargo'],
+      covering: { type: 'buttercream', color: '#ffffff', style: 'pinceladas', color2: '#1d1a1c' },
+    }),
+  },
+  {
+    id: 'batizado',
+    occasion: 'bebe',
+    name: 'Batizado de Renda',
+    tag: 'Arabescos dourados, cruz e mosquitinho',
+    config: themed(
+      'batizado',
+      {
+        shape: 'round',
+        layers: x3('baunilha'),
+        fillings: ['pessego', 'quatroleites'],
+        covering: { type: 'buttercream', color: '#ffffff', style: 'arabesco', color2: '#dcae52' },
+      },
+      (c) => {
+        // a renda de estêncil é a lateral: a fita do tema ficaria por cima dela
+        c.decor.items = c.decor.items.filter((id) => id !== 'fita');
+      },
+    ),
+  },
+  {
+    id: 'revelacao',
+    occasion: 'bebe',
+    name: 'Chá Revelação',
+    tag: 'Escolha a cor em segredo: só aparece no corte',
+    // Neutra por fora e com recheios claros (os que pegam a cor). O chá revelação NÃO vem ligado: a tela trata
+    // um bolo que chega com ele ligado como "cor já escolhida", e o pedido sairia com uma cor que ninguém escolheu.
+    // r5-qa: askReveal = ao aplicar, a tela abre o seletor secreto da cor (sem escolha, o chá fica desligado).
+    askReveal: true,
+    config: cfg({
+      shape: 'round',
+      layers: x3('baunilha'),
+      fillings: ['ninho', 'brigadeirobranco'],
+      covering: { type: 'chantininho', color: '#ffffff' },
+      piping: { style: 'poa', where: 'top', color: '#ffd166' },
+      decor: { items: ['nuvens', 'micangas'], opts: { nuvens: { arr: 'coroa', qty: 'pouco' }, micangas: { color: '#fff2a8' } }, message: 'Menino ou menina?' },
+    }),
+  },
+  {
+    id: 'festao',
+    occasion: 'aniversario',
+    sized: true,
+    name: 'Festa Grande',
+    tag: 'GG de dois andares, confeitos e velas de letras',
+    config: cfg({
+      shape: 'round',
+      size: 'gg',
+      tiers: 2,
+      layers: x3('mesclada'),
+      fillings: ['brigadeiro', 'ninho'],
+      covering: { type: 'chantininho', color: '#ffffff', style: 'chuva', trim: 'confeitos' },
+      piping: { style: 'pitangas', where: 'top', color: '#ffffff' },
+      // r5-qa: a tela aplica esta inspiração no GG dela (sized): as velas de letras voltam, que no GG cabem
+      decor: { items: ['velas', 'baloes', 'topo'], candleStyle: 'letras', opts: { baloes: { color: '#ffd166' } } },
+    }),
+  },
+);
+
+/* Ordem da fileira "Todas": as mais vistosas primeiro, misturando ocasiões, formatos e cores (quem filtra por
+   ocasião vê a mesma ordem). Inspiração nova que não estiver na lista entra no fim. */
+const ORDER = [
+  'morango', 'vulcao', 'unicornio', 'cesta', 'belga', 'mar', 'flor', 'faultline', 'bento', 'limao', 'futebol', 'babados',
+  'oval', 'dinos', 'rosetas', 'amor', 'festa', 'lambeth', 'aliancas', 'naked', 'junina', 'revelacao', 'formatura', 'pascoa',
+  'doces', 'tres', 'batizado', 'halloween', 'campo', 'lilas', 'nuvem', 'cerca', 'coracao', 'festao', 'natal', 'dourado', 'jardim',
+];
+const rank = (id) => (ORDER.includes(id) ? ORDER.indexOf(id) : ORDER.length);
+PRESETS.sort((a, b) => rank(a.id) - rank(b.id));
+
 export function getPreset(id) {
   return PRESETS.find((p) => p.id === id) || null;
 }
 
-/** Bolos do cardápio traduzidos para o personalizador (entrada por ?base=p1…p10). */
+/** Bolos do cardápio traduzidos para o personalizador (entrada por ?base=p1…p10), com o que a descrição de
+ *  cada um promete: ganache no Chocolate Belga, cream cheese no Red Velvet, lemon curd e merengue no Limão… */
 const BY_PRODUCT = {
-  p1: () => getPreset('belga').config,
+  p1: () => ({ ...getPreset('belga').config, fillings: ['ganache', 'ganache'], decor: { ...getPreset('belga').config.decor, items: ['raspas'] } }),
   p2: () =>
     cfg({
       layers: ['redvelvet', 'redvelvet', 'redvelvet'],
-      fillings: ['ninho', 'ninho'],
+      fillings: ['creamcheese', 'creamcheese'],
       covering: { type: 'chantilly', color: '#ffffff' },
       piping: { style: 'conchas', where: 'both', color: '#ffffff' },
       decor: { items: ['frutas'] },
@@ -301,15 +627,8 @@ const BY_PRODUCT = {
       piping: { style: 'liso', where: 'top', color: '#ffffff' },
       decor: { items: ['frutas'] },
     }),
-  p4: () =>
-    cfg({
-      layers: ['cenoura', 'cenoura'],
-      fillings: ['brigadeiro'],
-      covering: { type: 'chocolate', color: '#6b3f22' },
-      drip: { on: true, color: '#3a1a08' },
-      piping: { style: 'liso', where: 'top', color: '#6b3f22' },
-      decor: { items: ['granulado'] },
-    }),
+  // "massa úmida de cenoura com brigadeiro cremoso por cima": é o vulcão, uma massa só com a cobertura transbordando
+  p4: () => ({ ...getPreset('vulcao').config, layers: ['cenoura'], decor: { ...getPreset('vulcao').config.decor, items: ['granulado'] } }),
   p5: () =>
     cfg({
       layers: ['baunilha', 'baunilha'],
@@ -318,30 +637,22 @@ const BY_PRODUCT = {
       piping: { style: 'bolinhas', where: 'top', color: '#ffffff' },
       decor: { items: ['frutas'] },
     }),
-  p6: () =>
-    cfg({
-      layers: ['baunilha', 'morango', 'baunilha'],
-      fillings: ['ninho', 'morango'],
-      covering: { type: 'buttercream', color: '#ffffff' },
-      drip: { on: true, color: '#ffb3d1' },
-      piping: { style: 'rosetas', where: 'top', color: '#c7a7ff' },
-      decor: { items: ['confete', 'topo', 'perolas'] },
-    }),
+  p6: () => getPreset('unicornio').config,
   p7: () =>
     cfg({
       layers: ['limao', 'limao', 'limao'],
-      fillings: ['limao', 'limao'],
-      covering: { type: 'chantilly', color: '#ffffff' },
-      piping: { style: 'estrelas', where: 'top', color: '#ffd166' },
-      decor: { items: [] },
+      fillings: ['limaosiciliano', 'limaosiciliano'],
+      covering: { type: 'merengue', color: '#ffffff' },
+      piping: { style: 'liso', where: 'top', color: '#ffffff' },
+      decor: { items: ['limao'], opts: { limao: { arr: 'coroa', qty: 'pouco' } } },
     }),
   p8: () =>
     cfg({
       layers: ['chocolate', 'chocolate', 'chocolate'],
-      fillings: ['coco', 'coco'],
+      fillings: ['prestigio', 'prestigio'],
       covering: { type: 'chocolate', color: '#3a1a08' },
       piping: { style: 'conchas', where: 'top', color: '#ffffff' },
-      decor: { items: ['raspas'] },
+      decor: { items: ['coco', 'raspas'] },
     }),
   p9: () =>
     cfg({
@@ -354,10 +665,10 @@ const BY_PRODUCT = {
   p10: () =>
     cfg({
       layers: ['chocolate', 'chocolate', 'chocolate'],
-      fillings: ['framboesa', 'ninho'],
+      fillings: ['cereja', 'cereja'],
       covering: { type: 'chantilly', color: '#ffffff' },
       piping: { style: 'rosetas', where: 'top', color: '#ffffff' },
-      decor: { items: ['raspas', 'frutas'] },
+      decor: { items: ['raspas', 'cerejas'], opts: { cerejas: { arr: 'centro', qty: 'pouco' } } },
     }),
 };
 
@@ -416,90 +727,214 @@ export function applyPalette(config, palette) {
 }
 
 /* ───────── Surpreenda-me ─────────
-   Sorteio com bom gosto: parte de "receitas" que confeiteiras usam de verdade (estilo de cobertura + bico +
-   decorações que conversam) e de uma paleta pronta; massas e recheios que combinam. Nunca é só aleatório. */
-const PAIRINGS = {
-  baunilha: ['morango', 'ninho', 'docedeleite', 'maracuja', 'framboesa', 'brigadeiro'],
-  chocolate: ['brigadeiro', 'nutella', 'ninho', 'framboesa', 'coco', 'maracuja'],
-  redvelvet: ['ninho', 'framboesa', 'morango', 'coco'],
-  cenoura: ['brigadeiro', 'docedeleite', 'nutella'],
-  limao: ['limao', 'coco', 'framboesa', 'ninho'],
-  morango: ['ninho', 'morango', 'brigadeiro', 'coco'],
-};
+   Sorteio com bom gosto: parte de "receitas" que confeiteiras usam de verdade (cobertura + estilo + bico +
+   decorações que conversam) e de uma paleta pronta; massas e recheios que combinam. Nunca é só aleatório, e o
+   bolo sorteado sempre passa pelas regras de confeiteiro (enforceRules) antes de chegar à tela. */
 
+/** Recheios que combinam com cada massa (todas as 19 massas do cardápio). */
+const PAIRINGS = {
+  baunilha: ['morango', 'ninho', 'docedeleite', 'frutasvermelhas', 'cremebelga', 'pessego', 'brigadeiro', 'quatroleites', 'maracuja', 'abacaxicoco'],
+  chocolate: ['brigadeiro', 'meioamargo', 'nutella', 'ninho', 'prestigio', 'cereja', 'moussechocolate', 'caramelosalgado', 'cookies', 'framboesa', 'coco', 'cafe'],
+  cenoura: ['brigadeiro', 'meioamargo', 'docedeleite', 'nutella'],
+  redvelvet: ['creamcheese', 'ninho', 'frutasvermelhas', 'framboesa', 'ganachebranca'],
+  mesclada: ['brigadeiro', 'ninho', 'brigadeirobranco', 'docedeleite'],
+  formigueiro: ['brigadeiro', 'brigadeirobranco', 'ninho', 'docedeleite'],
+  funfetti: ['ninho', 'brigadeirobranco', 'moussemorango', 'morango'],
+  limao: ['limao', 'limaosiciliano', 'coco', 'framboesa', 'ganachebranca', 'frutasvermelhas'],
+  morango: ['ninho', 'morango', 'brigadeirobranco', 'moussemorango', 'cremebelga'],
+  laranja: ['brigadeiro', 'ganache', 'cremebelga', 'docedeleite'],
+  maracuja: ['maracuja', 'ganachebranca', 'coco', 'brigadeirobranco', 'ninho'],
+  banana: ['docedeleite', 'caramelosalgado', 'docedeleitenozes', 'brigadeiro'],
+  coco: ['coco', 'abacaxicoco', 'cocada', 'prestigio', 'docedeleite', 'maracuja'],
+  nozes: ['docedeleitenozes', 'nozes', 'ameixa', 'caramelosalgado', 'cafe', 'docedeleite'],
+  amendoas: ['frutasvermelhas', 'framboesa', 'pistache', 'ganachebranca', 'pessego', 'cremebelga'],
+  pacoca: ['pacoca', 'docedeleite', 'brigadeiro', 'caramelosalgado'],
+  churros: ['docedeleite', 'caramelosalgado', 'docedeleitenozes', 'cremebelga'],
+  cafe: ['cafe', 'ganache', 'meioamargo', 'caramelosalgado', 'docedeleite', 'moussechocolate'],
+  chocolatebranco: ['frutasvermelhas', 'framboesa', 'maracuja', 'limaosiciliano', 'pistache', 'ganachebranca'],
+};
+/** Massas que se alternam bem no mesmo bolo (a segunda entra nas camadas pares). */
+const DUOS = { baunilha: ['chocolate', 'morango'], chocolate: ['baunilha', 'coco'], morango: ['baunilha'], coco: ['chocolate'], laranja: ['chocolate'], cafe: ['chocolate'], limao: ['coco'] };
+/** Adicional de recheio (pedaços no corte) que cai bem em cada creme. */
+const ADDS = {
+  ninho: ['morango', 'crocante', 'gotas'],
+  brigadeirobranco: ['morango', 'gotas'],
+  quatroleites: ['morango', 'crocante'],
+  cremebelga: ['morango', 'gotas'],
+  brigadeiro: ['morango', 'crocante', 'nozes'],
+  meioamargo: ['crocante', 'nozes'],
+  docedeleite: ['nozes', 'crocante'],
+  caramelosalgado: ['nozes', 'crocante'],
+  cafe: ['crocante', 'gotas'],
+  coco: ['gotas'],
+};
+/** Massas para os bolos de chocolate por fora (as que pedem cobertura escura). */
+const DARK_FLAVORS = ['chocolate', 'chocolate', 'chocolate', 'cenoura', 'mesclada', 'redvelvet', 'cafe', 'nozes', 'laranja', 'banana', 'coco', 'baunilha'];
+
+/** Massas para as receitas de festa de criança (listras com pirulitos, confeitos subindo com velas e balões). */
+const KID_FLAVORS = ['baunilha', 'chocolate', 'mesclada', 'formigueiro', 'funfetti', 'morango', 'cenoura'];
+
+/* Receitas. finish, types, piping e trim aceitam lista (sorteia um). decor = conjuntos de peças; 'id:arranjo' fixa o
+   arranjo. where = lugar do bico quando a receita obriga (estilos que ocupam o pé do bolo, coberturas despejadas).
+   dark = cobertura de chocolate · light = só paletas claras · color = cor fixa da cobertura · two = usa a segunda cor · flavors = massas da receita ·
+   minLayers / maxTiers = só entra em bolos com essa estrutura · w = peso no sorteio (padrão 1). */
 const RECIPES = [
-  { types: ['buttercream', 'chantilly'], finish: 'liso', piping: ['rosetas', 'conchas', 'bolinhas', 'perolao'], decor: [['frutas'], ['flores', 'perolas'], ['macarons', 'flores'], ['frutas', 'flores']], drip: 0.55 },
-  { types: ['buttercream'], finish: 'ombre', piping: ['bolinhas', 'perolao', 'liso'], decor: [['borboletas'], ['flores'], ['macarons', 'perolas']], drip: 0 },
-  { types: ['buttercream', 'chantilly'], finish: 'aquarela', piping: ['babado', 'bolinhas', 'liso'], decor: [['suspiros'], ['margaridas'], ['flores', 'ouro']], drip: 0 },
-  { types: ['buttercream'], finish: 'liso', piping: ['vintage'], decor: [['cerejas'], ['lacos', 'perolas'], []], drip: 0 },
-  { types: ['buttercream', 'chantilly'], finish: 'rustico', piping: ['liso', 'folhas'], decor: [['frutas', 'flores'], ['peonias'], ['ouro', 'flores']], drip: 0 },
-  { types: ['buttercream'], finish: 'seminaked', piping: ['liso'], decor: [['frutas', 'flores'], ['frutas'], ['peonias']], drip: 0.3, light: true },
-  { types: ['buttercream'], finish: 'listras', piping: ['bolinhas', 'estrelas'], decor: [['pirulitos', 'marshmallows'], ['confete', 'baloes'], ['suspiros']], drip: 0 },
-  { types: ['buttercream', 'mousse'], finish: 'respingo', piping: ['corda', 'perolao', 'liso'], decor: [['macarons', 'ouro'], ['flores', 'ouro'], ['bombons']], drip: 0 },
-  { types: ['buttercream'], finish: 'pente', piping: ['ziguezague', 'conchas', 'liso'], decor: [['frutas'], ['margaridas'], ['macarons']], drip: 0 },
-  { types: ['ganache', 'chocolate'], finish: 'liso', piping: ['conchas', 'rosetas', 'corda', 'liso'], decor: [['morangos'], ['bombons', 'raspas'], ['brigadeiros'], ['wafer', 'frutas']], drip: 0.6, dark: true },
+  { w: 2, types: ['buttercream', 'chantininho', 'chantilly'], finish: 'liso', piping: ['rosetas', 'conchas', 'bolinhas', 'perolao', 'estrelas', 'pitangas', 'florzinhas', 'tranca'], decor: [['frutas'], ['flores', 'perolas'], ['macarons', 'flores'], ['frutas', 'flores'], ['morangosfrescos'], ['framboesas', 'mirtilos'], ['cerejas'], ['suspiros', 'micangas']], drip: 0.5 },
+  { types: ['buttercream', 'chantininho'], finish: 'ombre', two: true, piping: ['bolinhas', 'perolao', 'liso', 'florzinhas'], decor: [['borboletas'], ['flores'], ['macarons', 'perolas'], ['peonias'], ['coracoes']], drip: 0 },
+  { types: ['buttercream', 'chantininho', 'chantilly'], finish: 'aquarela', two: true, piping: ['babado', 'bolinhas', 'liso'], decor: [['suspiros'], ['margaridas'], ['flores', 'ouro'], ['nuvens'], ['prensadas']], drip: 0 },
+  { types: ['buttercream'], finish: 'liso', piping: ['vintage'], decor: [['cerejas'], ['lacos', 'perolas'], ['coracoes'], []], drip: 0 },
+  { types: ['buttercream', 'chantininho', 'creamcheese'], finish: 'rustico', piping: ['liso', 'folhas'], decor: [['frutas', 'flores'], ['peonias'], ['ouro', 'flores'], ['figos', 'amoras'], ['laranja', 'eucalipto'], ['girassois'], ['lavanda', 'mirtilos']], drip: 0 },
+  { types: ['buttercream'], finish: 'seminaked', piping: ['liso'], decor: [['frutas', 'flores'], ['frutas'], ['peonias'], ['morangosfrescos', 'gipsofila'], ['figos', 'eucalipto']], drip: 0.3, light: true },
+  { types: ['naked'], finish: 'liso', piping: ['liso'], decor: [['frutas', 'flores'], ['morangosfrescos'], ['figos'], ['frutas', 'gipsofila']], drip: 0.35, light: true, soak: 'baunilha', maxTiers: 2 },
+  { types: ['buttercream', 'chantininho'], finish: 'listras', two: true, piping: ['bolinhas', 'estrelas', 'pingos'], decor: [['pirulitos', 'marshmallows'], ['confete', 'baloes'], ['suspiros'], ['donuts'], ['jujubas', 'cakepops']], drip: 0, flavors: KID_FLAVORS },
+  { types: ['buttercream', 'chantininho'], finish: 'respingo', piping: ['corda', 'perolao', 'liso'], decor: [['macarons', 'ouro'], ['flores', 'ouro'], ['bombons'], ['espelhadas'], ['esferas']], drip: 0 },
+  { types: ['buttercream', 'chantininho'], finish: ['pente', 'ondas', 'vertical'], piping: ['ziguezague', 'conchas', 'corda', 'liso'], decor: [['frutas'], ['margaridas'], ['macarons'], ['physalis'], ['morangosfrescos']], drip: 0 },
+  { w: 2, types: ['ganache', 'chocolate'], finish: 'liso', piping: ['conchas', 'rosetas', 'corda', 'tranca', 'liso'], decor: [['morangos'], ['bombons', 'raspas'], ['brigadeiros'], ['wafer', 'frutas'], ['placas', 'esferas'], ['barras', 'crocantes'], ['cerejas', 'raspas']], drip: 0.6, dark: true },
+  { types: ['brigadeiro'], finish: 'liso', piping: ['liso', 'conchas', 'pitangas'], where: 'top', decor: [['brigadeiros'], ['morangos'], ['morangosfrescos'], ['cerejas']], drip: 0, dark: true },
+  // ── estilos de bico e de confeitos (rodada 5) ──
+  { types: ['buttercream', 'chantininho'], finish: 'rosetas', piping: ['liso'], decor: [['perolas'], ['borboletas:espalhado'], ['micangas'], ['flores:centro']], drip: 0 },
+  { types: ['buttercream', 'chantininho'], finish: 'babados', piping: ['perolao', 'bolinhas', 'liso'], where: 'top', decor: [['flores:centro'], ['perolas'], ['lacos:centro'], ['peonias:centro']], drip: 0 },
+  { types: ['buttercream'], finish: 'cesta', piping: ['corda', 'tranca', 'liso'], where: 'top', decor: [['morangosfrescos'], ['frutas'], ['girassois'], ['margaridas:coroa']], drip: 0, light: true },
+  { types: ['buttercream', 'ganachebranca'], finish: 'marmorizado', two: true, piping: ['liso', 'perolao'], where: 'top', decor: [['ouro'], ['figos'], ['flores', 'ouro'], ['esferas'], ['macarons']], drip: 0 },
+  { types: ['buttercream', 'chantininho'], finish: 'pinceladas', two: true, piping: ['liso', 'corda'], decor: [['placas'], ['esferas', 'ouro'], ['flores'], ['macarons', 'ouro']], drip: 0 },
+  { types: ['buttercream'], finish: 'perolado', piping: ['guirlanda', 'arabescos', 'perolao'], decor: [['flores', 'perolas'], ['peonias'], ['gipsofila'], ['lacos']], drip: 0, light: true },
+  { types: ['buttercream'], finish: ['poa', 'coracoes', 'arabesco'], two: true, piping: ['bolinhas', 'perolao', 'liso'], decor: [['lacos'], ['flores'], ['suspiros'], ['coracoes'], ['borboletas:espalhado']], drip: 0 },
+  { types: ['buttercream', 'chantininho', 'chantilly'], finish: 'barrado', trim: ['castanha', 'coco', 'granulado', 'raspas'], piping: ['conchas', 'rosetas', 'estrelas'], where: 'top', decor: [['cerejas'], ['frutas'], ['morangosfrescos']], drip: 0 },
+  { types: ['buttercream', 'chantininho'], finish: 'chuva', trim: ['confeitos', 'granulado'], piping: ['pitangas', 'estrelas', 'pingos'], where: 'top', decor: [['velas', 'topo'], ['baloes'], ['confete', 'velas'], ['donuts']], drip: 0, flavors: KID_FLAVORS },
+  { types: ['buttercream'], finish: 'faultline', trim: ['confeitos', 'granulado', 'castanha'], piping: ['liso'], decor: [['macarons'], ['casquinha'], ['flores'], ['frutas']], drip: 0, minLayers: 3 },
+  { types: ['buttercream'], finish: 'liso', piping: ['escamas', 'poa', 'guirlanda', 'arabescos'], decor: [['perolas'], ['flores'], ['conchaschoc'], ['lacos']], drip: 0 },
+  { types: ['glace'], finish: 'liso', piping: ['liso', 'bolinhas'], where: 'top', decor: [['ouro'], ['perolas'], ['framboesas'], ['mirtilos']], drip: 0, maxTiers: 1 },
+  { types: ['merengue'], finish: 'liso', piping: ['liso'], decor: [['limao'], ['frutas'], ['maracuja'], ['physalis']], drip: 0, color: '#ffffff', maxTiers: 1, flavors: ['limao', 'maracuja', 'coco', 'laranja', 'baunilha'] },
+  { types: ['coco'], finish: 'liso', piping: ['liso', 'bolinhas'], decor: [['coco'], ['frutas'], ['cerejas'], ['flores']], drip: 0, color: '#ffffff', flavors: ['coco', 'baunilha', 'chocolate', 'limao', 'maracuja', 'laranja'] },
 ];
 
-const rnd = (list) => list[Math.floor(Math.random() * list.length)];
+/** O vulcão (fôrma de furo): uma massa só, sem recheio, com o creme transbordando. Só em bolo de 1 andar, do P ao G. */
+const VOLCANO_RECIPES = [
+  { flavor: ['chocolate', 'cenoura', 'mesclada', 'formigueiro'], type: 'chocolate', color: '#6b3f22', decor: [['granulado'], ['morangosfrescos:coroa'], ['brigadeiros'], ['raspas']] },
+  { flavor: ['cenoura', 'chocolate', 'banana'], type: 'brigadeiro', color: '#6b3f22', decor: [['brigadeiros'], ['morangosfrescos:coroa'], []] },
+  { flavor: ['chocolate', 'laranja', 'cafe'], type: 'ganache', color: '#3a1a08', decor: [['raspas'], ['morangos'], ['cerejas']] },
+  { flavor: ['baunilha', 'morango', 'coco', 'funfetti'], type: 'chantininho', color: '#ffffff', decor: [['morangosfrescos:coroa'], ['coco'], ['confete'], ['frutas']] },
+  { flavor: ['limao', 'maracuja', 'chocolatebranco'], type: 'ganachebranca', color: '#f2e4c7', decor: [['framboesas'], ['raspas'], ['physalis']] },
+];
+/** Temas prontos que servem em qualquer época (os de data e de cerimônia ficam para quem os procura). */
+const SURPRISE_THEMES = ['unicornio', 'mar', 'safari', 'espaco', 'jardim', 'futebol', 'dinos', 'ursinho', 'nuvens', 'princesa', 'principe'];
+const SURPRISE_CANDLES = ['classica', 'classica', 'longa', 'espiral', 'estrela', 'faisca'];
 
-function weighted(pairs) {
-  const total = pairs.reduce((sum, [, w]) => sum + w, 0);
-  let r = Math.random() * total;
-  for (const [value, w] of pairs) {
-    r -= w;
-    if (r <= 0) return value;
-  }
-  return pairs[0][0];
-}
+const isLive = (x) => Boolean(x) && x.active !== false;
+const asList = (v) => (Array.isArray(v) ? v : [v]);
 
 /**
  * Um bolo-surpresa. Mantém a estrutura que a pessoa já escolheu (tamanho, andares, altura, base e fundo) e
- * evita repetir a cobertura do bolo anterior.
+ * evita repetir a cobertura do bolo anterior. rng = gerador de números (0 a 1); os testes passam um com semente.
  */
-export function randomConfig(current) {
-  let recipe = rnd(RECIPES);
-  let palette = null;
-  for (let i = 0; i < 8; i++) {
-    recipe = rnd(RECIPES);
-    palette = rnd(COLOR_PALETTES.filter((p) => Boolean(p.dark) === Boolean(recipe.dark) && !(recipe.light && p.id !== 'neutro' && p.id !== 'pastel')));
-    if (!current || palette.cover !== current.covering?.color || recipe.finish !== current.covering?.style) break;
-  }
+export function randomConfig(current, rng = Math.random) {
+  const rnd = (list) => list[Math.floor(rng() * list.length)];
+  const weighted = (pairs) => {
+    const total = pairs.reduce((sum, [, w]) => sum + w, 0);
+    let r = rng() * total;
+    for (const [value, w] of pairs) {
+      r -= w;
+      if (r <= 0) return value;
+    }
+    return pairs[0][0];
+  };
+  const live = (getter, ids) => ids.filter((id) => isLive(getter(id)));
+  const size = isLive(getSize(current?.size)) ? current.size : 'p';
+  const tiers = size === 'bento' ? 1 : current?.tiers || 1;
   // a surpresa mantém a altura que a pessoa escolheu (= o número de camadas de massa)
   const count = current?.layers?.length >= 2 ? current.layers.length : 3;
-  const main = recipe.dark ? rnd(['chocolate', 'chocolate', 'baunilha', 'redvelvet']) : rnd(FLAVORS).id;
-  const second = Math.random() < 0.3 ? rnd(FLAVORS).id : main;
+  const keep = { size, tiers, v: 4, base: current?.base || 'boleira', backdrop: current?.backdrop, name: '' };
+  const done = (config) => enforceRules(config).config;
+
+  // de vez em quando, um vulcão (só onde ele existe: 1 andar, do P ao G)
+  if (tiers === 1 && (size === 'p' || size === 'm' || size === 'g') && current?.shape !== 'vulcao' && isLive(getShape('vulcao')) && rng() < 0.07) {
+    const v = rnd(VOLCANO_RECIPES.filter((r) => isLive(getCovering(r.type))));
+    const [items, opts] = decorSet(rnd(v.decor));
+    return done({ ...keep, shape: 'vulcao', layers: [rnd(live(getFlavor, v.flavor)) || 'chocolate'], fillings: [], covering: { type: v.type, color: v.color }, drip: { on: false, amount: weighted([['media', 3], ['farta', 2]]) }, piping: { style: 'liso' }, decor: { items, opts, message: '' } });
+  }
+
+  const fits = (r) => (!r.minLayers || count >= r.minLayers) && (!r.maxTiers || tiers <= r.maxTiers);
+  const pool = RECIPES.filter(fits).map((r) => [r, r.w || 1]);
+  let recipe = pool[0][0];
+  let palette = COLOR_PALETTES[0];
+  let finish = 'liso';
+  for (let i = 0; i < 8; i++) {
+    recipe = weighted(pool);
+    finish = rnd(live(getFinish, asList(recipe.finish))) || 'liso';
+    palette = rnd(COLOR_PALETTES.filter((p) => Boolean(p.dark) === Boolean(recipe.dark) && !(recipe.light && p.id !== 'neutro' && p.id !== 'pastel')));
+    if (!current || palette.cover !== current.covering?.color || finish !== current.covering?.style) break;
+  }
+  // em bolo de andares, cobertura e recheio têm de aguentar peso: nada de creme mole
+  const types = live(getCovering, recipe.types).filter((id) => tiers === 1 || !getCovering(id).soft);
+  const type = rnd(types.length ? types : ['buttercream']);
+
+  const popular = (id) => (getFlavor(id).popular ? 2 : 1);
+  const flavors = live(getFlavor, recipe.flavors || (recipe.dark ? DARK_FLAVORS : Object.keys(PAIRINGS)));
+  const main = recipe.flavors || recipe.dark ? rnd(flavors) : weighted(flavors.map((id) => [id, popular(id)]));
+  const partners = live(getFlavor, DUOS[main] || []);
+  const second = partners.length && rng() < 0.25 ? rnd(partners) : main;
   const layers = Array.from({ length: count }, (_, i) => (i % 2 ? second : main));
-  const fillPool = PAIRINGS[main] || FILLINGS.map((f) => f.id);
+  const firmOnly = tiers > 1 || count >= 4;
+  const okFill = (id) => isLive(getFilling(id)) && !(firmOnly && getFilling(id).soft);
+  let fillPool = (PAIRINGS[main] || []).filter(okFill);
+  if (second !== main) {
+    const both = fillPool.filter((id) => (PAIRINGS[second] || []).includes(id));
+    if (both.length) fillPool = both;
+  }
+  if (!fillPool.length) fillPool = ['brigadeiro', 'ninho'].filter(okFill);
   const fillA = rnd(fillPool);
-  const fillB = Math.random() < 0.5 ? rnd(fillPool) : fillA;
+  const fillB = rng() < 0.5 ? rnd(fillPool) : fillA;
   const fillings = Array.from({ length: count - 1 }, (_, i) => (i % 2 ? fillB : fillA));
-  const type = rnd(recipe.types);
-  const style = rnd(recipe.piping);
-  const items = [...rnd(recipe.decor)];
-  const two = recipe.finish === 'ombre' || recipe.finish === 'aquarela' || recipe.finish === 'listras';
+  const fillAdds = fillings.map(() => '');
+  if (rng() < 0.2) {
+    const at = fillings.findIndex((id) => ADDS[id]);
+    const add = at >= 0 ? rnd(live(getFillAdd, ADDS[fillings[at]])) : '';
+    if (add) fillings.forEach((id, i) => id === fillings[at] && (fillAdds[i] = add));
+  }
+
+  const style = rnd(live(getPiping, recipe.piping)) || 'liso';
+  const places = pipingPlaces(style);
+  const where = recipe.where && places.includes(recipe.where) ? recipe.where : places.length ? weighted([['top', 5], ['base', 2], ['both', 3]].filter(([p]) => places.includes(p))) : 'top';
+  const [items, opts] = decorSet(rnd(recipe.decor));
+  const dripOn = rng() < recipe.drip;
   const base = normalizeConfig({
-    shape: weighted([
-      ['round', 6],
-      ['square', 1.2],
-      ['heart', 1.2],
-      ['hex', 1.2],
-      ['rect', 0.8],
-    ]),
-    size: current?.size || 'p',
-    tiers: current?.tiers || 1,
-    v: 3,
-    base: current?.base || 'boleira',
-    backdrop: current?.backdrop,
+    ...keep,
+    shape: weighted([['round', 6], ['square', 1], ['heart', 1], ['hex', 1], ['rect', 0.8], ['oval', 1], ['flor', 1]].filter(([id]) => isLive(getShape(id)))),
     layers,
     fillings,
-    covering: { type, color: recipe.dark ? (type === 'ganache' ? '#3a1a08' : '#6b3f22') : palette.cover, style: recipe.finish, color2: two && palette.cover2 === palette.cover ? '#ffffff' : palette.cover2 },
-    drip: { on: Math.random() < recipe.drip, color: palette.drip },
-    piping: { style, where: weighted([['top', 5], ['base', 2], ['both', 3]]), color: palette.piping },
-    decor: { items, candles: 3 + Math.floor(Math.random() * 5), message: '' },
-    name: '',
+    fillAdds,
+    soak: recipe.soak && isLive(getSoak(recipe.soak)) ? recipe.soak : '',
+    covering: {
+      type,
+      color: recipe.color || (recipe.dark ? (type === 'ganache' ? '#3a1a08' : '#6b3f22') : palette.cover),
+      style: finish,
+      color2: recipe.two && palette.cover2 === palette.cover ? '#ffffff' : palette.cover2,
+      trim: recipe.trim ? rnd(live(getTrim, asList(recipe.trim))) || 'castanha' : 'castanha',
+    },
+    drip: { on: dripOn, color: palette.drip, amount: weighted([['media', 5], ['pouca', 2], ['farta', 2]]), length: weighted([['media', 4], ['curta', 1]]) },
+    piping: { style, where, color: palette.piping },
+    decor: { items, opts, candles: 3 + Math.floor(rng() * 5), candleStyle: rnd(live(getCandleStyle, SURPRISE_CANDLES)) || 'classica', candlePalette: rnd(['colorida', 'pastel', 'dourada', 'branca']), message: '' },
   });
   // as cores das decorações vêm da mesma paleta
   const tinted = applyPalette(base, recipe.dark ? { ...palette, cover: base.covering.color, cover2: base.covering.color2 } : palette);
   tinted.covering = base.covering;
-  return normalizeConfig(tinted);
+  // de vez em quando, um tema pronto por cima de um bolo liso (o tema traz o bico e as peças dele)
+  const themes = live(getTheme, SURPRISE_THEMES);
+  if (!recipe.dark && finish === 'liso' && getCovering(type).kind === 'firm' && themes.length && rng() < 0.35) {
+    return done(applyTheme({ ...tinted, drip: { ...tinted.drip, on: false } }, rnd(themes)));
+  }
+  return done(tinted);
+}
+
+/** ['flores:centro', 'ouro'] → [['flores', 'ouro'], { flores: { arr: 'centro' } }], só com o que está à venda. */
+function decorSet(set) {
+  const items = [];
+  const opts = {};
+  set.forEach((entry) => {
+    const [id, arr] = entry.split(':');
+    if (!isLive(getDecor(id))) return;
+    items.push(id);
+    if (arr) opts[id] = { arr };
+  });
+  return [items, opts];
 }

@@ -7,16 +7,31 @@ export const SITE = {
   tagline: 'Onde seu bolo ganha forma',
   demo: true, // loja em modo demonstração: pagamentos e login são simulados
 
+  // Endereço oficial da loja na internet, com a barra no fim. Ao mudar de endereço (domínio
+  // próprio), rode  node tools/trocar_endereco.mjs https://novo-endereco/  — ele troca aqui,
+  // no index.html, no robots.txt e no sitemap.xml de uma vez.
+  url: 'https://brunomoraes2919.github.io/bolab-site/',
+  // Aparecer no Google e afins. Enquanto a loja for demonstração (os pedidos não chegam a
+  // ninguém), vale considerar  indexable: false  para ninguém chegar pela busca e achar que comprou.
+  indexable: true,
+  // Dias sem abrir a loja até ela pedir a senha de novo (o aparelho pode ter mudado de mãos).
+  sessionIdleDays: 30,
+
   city: 'Cuiabá', // PLACEHOLDER — confirmar cidade de atuação
   region: 'Cuiabá e Várzea Grande', // PLACEHOLDER — texto exibido ao cliente
   deliveryCities: ['Cuiabá', 'Várzea Grande'], // PLACEHOLDER — cidades onde a entrega é aceita
   uf: 'MT', // PLACEHOLDER
 
-  whatsapp: '5565999990000', // PLACEHOLDER — número com DDI+DDD, só dígitos
-  whatsappLabel: '(65) 99999-0000', // PLACEHOLDER
+  // WhatsApp da loja. É PARA ESTE NÚMERO que os pedidos são enviados (botão "Enviar pedido pelo
+  // WhatsApp" na tela do pedido) — este é o único lugar para trocar. Enquanto for o número de
+  // exemplo abaixo, a tela do pedido avisa que é demonstração; trocou, o aviso some sozinho.
+  whatsapp: '5565999990000', // PLACEHOLDER — número com DDI+DDD, só dígitos (55 + 65 + número)
+  whatsappLabel: '(65) 99999-0000', // PLACEHOLDER — o mesmo número, do jeito que aparece para o cliente
   instagram: 'bolab.confeitaria', // PLACEHOLDER — usuário sem @
   email: 'contato@bolab.com.br', // PLACEHOLDER
   hours: 'Segunda a sábado, das 9h às 19h', // PLACEHOLDER
+  // O mesmo horário em números, para o Google mostrar "aberto agora". dias: 0 = domingo … 6 = sábado.
+  openingHours: [{ days: [1, 2, 3, 4, 5, 6], opens: '09:00', closes: '19:00' }], // PLACEHOLDER — manter igual a "hours"
 
   pickup: {
     name: 'Ateliê BOLAB',

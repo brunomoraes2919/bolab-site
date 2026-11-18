@@ -2,7 +2,7 @@
 // Cada construtor recebe (ctx, part), como em decor.js. Nada de arquivos de fonte: o texto é desenhado num
 // <canvas> com as fontes do aparelho e vira textura (escrita) ou contorno recortado de verdade (topo e velas).
 import * as THREE from 'three';
-import { Batch, groundBlob, plaqueLiftOf, addVol, plannedHeights } from './decor.js';
+import { Batch, groundBlob, plaqueLiftOf, addVol, plannedHeights, buildCandles } from './decor.js';
 import { rng, hashString, makeCanvas } from './textures.js';
 import { topperLines, topperSize, VOL } from './occupancy.js';
 import { getSize, tierRadii } from '../data/customizer.js';
@@ -14,7 +14,11 @@ const CURSIVA = '"Dancing Script", "Segoe Script", "Brush Script MT", "Snell Rou
 // Bastão: a letra de fôrma é desenhada fina (peso 300) e engordada com um traço redondo de espessura constante —
 // é isso que um bico perlê faz. (Uma fonte já gorda, como a Arial Rounded, sairia com traços de larguras diferentes.)
 const BASTAO = 'Nunito, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
-const faceOf = (bastao) => `${bastao ? 300 : 400} {px}px ${bastao ? BASTAO : CURSIVA}`;
+// letra da escrita com bico: cursiva · bastão (de fôrma, fina) · gordinha (de fôrma, cheia) · clássica (serifada, inclinada)
+let scriptKind = 'cursiva';
+const CLASSICA = 'Georgia, "Noto Serif", "Times New Roman", serif';
+const faceOf = (bastao) =>
+  scriptKind === 'gordinha' ? `700 {px}px ${BASTAO}` : scriptKind === 'classica' ? `italic 400 {px}px ${CLASSICA}` : `${bastao ? 300 : 400} {px}px ${bastao ? BASTAO : CURSIVA}`;
 const DIGITOS = '"Arial Rounded MT Bold", Nunito, "Varela Round", system-ui, sans-serif';
 const HEX = /^#[0-9a-f]{6}$/i;
 
@@ -541,12 +545,13 @@ function buildScript(ctx, part) {
     .trim()
     .slice(0, 24);
   if (!text) return;
-  const bastao = d.script === 'bastao';
+  scriptKind = d.script || 'cursiva';
+  const bastao = d.script === 'bastao' || d.script === 'gordinha';
   const mobile = lib.detail < 1;
   part.volumes = [];
   const plan = layout.party?.text; // o lugar que o distribuidor reservou para a escrita (nada mais fica ali)
   if (!plan) return;
-  const seed = hashString(`escrita${text}${bastao}`);
+  const seed = hashString(`escrita${text}${d.script}`);
   const fit = fitScript(scratch(8, 8), text, bastao, plan);
   const ink = drawScript(fit, bastao, mobile ? 380 : 480, mobile ? 512 : 768, mobile ? 256 : 384, seed);
   const maps = pipedMaps(ink.g, ink.W, ink.H, ink.k, ink.fs, seed);
@@ -1210,7 +1215,14 @@ function buildTopper(ctx, part) {
       (stakeX > 0.02 ? [-stakeX, stakeX] : [0]).forEach((x0) => pushBox(pos, nor, idx, x0 - 0.013, x0 + 0.013, -0.09, lift, -depth * 0.4, depth * 0.4));
     },
   });
-  const mat = acrylic(lib, d.topper?.color);
+  // material: acrílico espelhado (padrão), papel com glitter ou madeira (MDF) cortada a laser
+  const finish = d.topper?.finish || 'acrilico';
+  const mat =
+    finish === 'madeira'
+      ? new THREE.MeshStandardMaterial({ color: 0xc9a06c, roughness: 0.78 })
+      : finish === 'glitter'
+        ? new THREE.MeshStandardMaterial({ color: new THREE.Color(HEX.test(d.topper?.color) ? d.topper.color : '#dcae52'), metalness: 0.78, roughness: 0.4, normalMap: lib.tex.glitterNormal(), normalScale: new THREE.Vector2(0.9, 0.9) })
+        : acrylic(lib, d.topper?.color);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
@@ -1279,7 +1291,8 @@ function digitGeometry(ch, D) {
   const geo = loops.some((lp) => lp.area > 0)
     ? extrudeLoops(loops, { sc, ox: W / 2, oy: bottom, depth: 0.15, round: 0.045, steps: D < 1 ? 2 : 3, uv: 5 })
     : new THREE.BoxGeometry(0.4, 1, 0.15).translate(0, 0.5, 0);
-  geo.userData = { w: (W - 2 * mg + lw) * sc, wick: [cnt ? (sum / cnt - W / 2) * sc : 0, (bottom - top) * sc - 0.012] };
+  // tall = altura da peça em relação à de um algarismo (uma letra acentuada é mais alta)
+  geo.userData = { w: (W - 2 * mg + lw) * sc, wick: [cnt ? (sum / cnt - W / 2) * sc : 0, (bottom - top) * sc - 0.012], tall: Math.max(1, (bottom - top) * sc) };
   return geo;
 }
 
@@ -1332,7 +1345,7 @@ function buildNumberCandles(ctx, part) {
     wick.add(px + _v.x, y0 + _v.y, z + _v.z, _q, 1, null, rad);
     addFlame(ctx, part, px + _v.x, y0 + _v.y + 0.004, z + _v.z, r() * TAU, rad); // chama e pavio somem junto com a vela
     // volumes: o algarismo (uma placa gordinha) e a chama
-    addVol(part, VOL.board(px, z, layout.topY, y0 + s, w, Math.min(0.1 * s, w / 2), 0, y0, 'solid'));
+    addVol(part, VOL.board(px, z, layout.topY, y0 + s * (geo.userData.tall || 1), w, Math.min(Math.max(0.03, 0.1 * s), w / 2), 0, y0, 'solid'));
     addVol(part, [[px + _v.x, y0 + _v.y + 0.07, z + _v.z, 0.04, 'fx']]);
   });
   byDigit.forEach((b) => part.add(b, m));
@@ -1518,8 +1531,10 @@ function buildSparkler(ctx, part) {
 
 function buildSpecialCandles(ctx, part) {
   part.volumes = [];
-  if (ctx.config.decor.candleStyle === 'faisca') buildSparkler(ctx, part);
-  else buildNumberCandles(ctx, part);
+  const style = ctx.config.decor.candleStyle;
+  if (style === 'faisca') buildSparkler(ctx, part);
+  else if (style === 'numero' || style === 'letras') buildNumberCandles(ctx, part);
+  else buildCandles(ctx, part); // longas, de espiral e de estrela: contadas, como as clássicas
 }
 
 /** id → construtor(ctx, part). 'velasEspeciais' atende as velas de número e a vela faísca. */

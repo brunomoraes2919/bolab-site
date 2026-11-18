@@ -15,17 +15,67 @@
 // quadros atrasarem e volta ao máximo quando o bolo para. Peças novas são construídas uma por quadro.
 //
 // createCakeScene lança erro se o aparelho não tiver WebGL: a tela trata e segue sem o 3D.
+//
+// ───────── Para a rodada de imersão (animações de preparo): as partes do bolo têm nome ─────────
+// Nada aqui anima a montagem; o que existe é o endereço de cada parte e um ponto único de aviso.
+//
+//   cake.parts()          → [{ name, kind, tier, index, objects: [Object3D…] }] do bolo que está na tela
+//        name                         o que é
+//        'base'                       boleira, prato, tábua, caixinha…            (kind 'base')
+//        'massa:<andar>:<camada>'     disco de massa — só existe como peça no naked e no vulcão ('massa')
+//        'recheio:<andar>:<vão>'      faixa de recheio (naked); o fio de geleia vai junto     ('recheio')
+//        'cobertura:<andar>'          a casca de cobertura: material[0] = lateral, material[1] = topo;
+//                                     no naked é o creme do topo; no vulcão, o creme que transborda ('cobertura')
+//        'cobertura:<andar>:rosetas'  as rosetas do bolo de rosetas (um lote de instâncias)   ('cobertura')
+//        'cobertura:<andar>:veu'      o véu de creme raspado do naked e do semi-naked         ('cobertura')
+//        'calda:<andar>'              a calda escorrendo                                      ('calda')
+//        'corte:<andar>'              as faces do "ver por dentro"                            ('corte')
+//        'bico'                       o acabamento de bico (part.group)                       ('bico')
+//        'decor:<id>'                 cada decoração (part.group)                             ('decor')
+//      Cada Object3D leva o mesmo dado em object.userData.part = { name, kind, tier, index }.
+//
+//   cake.onBuild(fn)      → fn({ name, kind, tier, index, objects }) toda vez que uma parte é (re)construída —
+//      é o "passo de construção". Devolve a função que cancela. É aqui que a próxima rodada pendura a animação
+//      de cada parte quando ela nasce (escala, posição, opacidade), sem tocar em quem constrói.
+//
+//   cake.assembly()       → a receita de montagem, na ordem do confeiteiro, para QUALQUER bolo (coberto ou não):
+//      [{ id, kind, tier, index, label, make() }]. make() devolve uma peça avulsa (THREE.Mesh, já na altura
+//      certa) de um disco de massa ou de um recheio — num bolo coberto essas peças não existem na cena, porque
+//      a casca as esconde. Quem anima acrescenta as peças, mostra uma a uma e as remove ao terminar
+//      (peca.geometry.dispose()); os materiais são do motor e não devem ser liberados.
+//
+// Como revelar cada parte, sem mexer no motor:
+//   · peça inteira: object.visible, object.scale e object.position (cada parte é um objeto próprio);
+//   · cobertura e calda "sendo espalhadas": as malhas são varridas em volta do bolo, coluna por coluna —
+//     geometry.setDrawRange(0, n) mostra os n primeiros índices, isto é, um trecho da volta
+//     (geometry.userData.layout = { cols, rows } diz quantas colunas existem; o grupo 0 é a lateral, o 1, o topo);
+//   · cor: os materiais de cada andar ficam em cake.debug.mats; uma transição de cor pode ser feita neles;
+//   · corte: cake.setCutaway(true) abre a fatia (os planos de corte valem para tudo o que é do bolo);
+//   · depois de mexer, chame cake.debug.invalidate() para o laço desenhar (ele dorme quando nada muda).
+//
+// ───────── r5-cena: o ateliê (cozinha em volta do bolo + animações de preparo) ─────────
+//   cake.atelier          → o objeto do contrato (js/atelier/README.md §2): setEnabled, setScene, on('cue'|'busy'),
+//      play, skip, replay, pick, ghost, candles, spread, reveal, capture — mais ready (promessa), busy, scene,
+//      dripAt(hit) e names. A implementação mora em js/atelier/stage/** e só é baixada quando alguém liga o
+//      ateliê ou pede uma animação, e nunca antes do primeiro quadro do bolo: com ele desligado ("modo rápido")
+//      nada aqui muda de comportamento nem de custo.
+//   cake.setConfig(config, { animate: false, by })   by = quem mudou ('user' anima; 'undo' | 'preset' |
+//      'surprise' | 'auto'… usam a transição curta). Tudo o que este arquivo ganhou para isso está marcado "r5-cena".
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { createTextureKit, paintFinish } from './textures.js';
-import { cakeMetrics, buildFrosting, buildSponge, buildFillingBand, buildJamThread, buildTopCream, buildScrapeCoat, buildDrip, buildCutFaces, buildStand } from './geometry.js';
-import { createDecorLibrary, decorLayout, buildPiping, buildDecor, decorHeight, inWedge, newPart } from './decor.js';
+import { createTextureKit, paintFinish, makeCanvas, texture, heightToNormal, normalFromHeight, paintHeight } from './textures.js';
+import { strandCanvases, meringueHeight, meringueToastCanvas, COVER_TILE, STYLE_HEIGHT, paintTileStyle, paintWrapStyle, paintMarbleTop } from './looks.js';
+import { cakeMetrics, buildFrosting, buildSponge, buildFillingBand, buildJamThread, buildTopCream, buildScrapeCoat, buildDrip, buildCutFaces, buildStand, faultMid, rosetteCoatGeometry, rosetteSpots, buildBundt, buildVolcanoCream, buildVolcanoCut } from './geometry.js';
+import { createDecorLibrary, decorLayout, buildPiping, buildDecor, decorHeight, inWedge, newPart, Batch } from './decor.js';
 import { EXTRA_DECOR, extraDecorHeight } from './decor2.js';
 import { PARTY_DECOR, partyHeight } from './party.js';
-import { getFlavor, getFilling, PIPINGS, DECORS } from '../data/customizer.js';
+import { getFlavor, getFilling, getRevealColor, getTrim, TRIMS, PIPINGS, DECORS } from '../data/customizer.js';
 import { detectTier, createResolutionGovernor } from './quality.js';
 import { getBackdrop, resolveBackdrop, paintBackdrop } from './backdrop.js';
+// r5-decor: chave do bico, aviso de módulo de peças carregado e ids das peças colocadas à mão
+import { pipingKey, onDecorReady } from './decor.js';
+import { decorIdsOf } from './kit.js';
 
 const TAU = Math.PI * 2;
 const DEG = Math.PI / 180;
@@ -92,6 +142,14 @@ const COVERING_LOOK = {
   chocolate: { roughness: 0.4, clearcoat: 0.28, clearcoatRoughness: 0.32, sheen: 0, normal: 'streak', normalScale: 0.5, topNormal: 'swirl', topScale: 0.5, env: 1 },
   mousse: { roughness: 0.76, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.5, normal: 'pore', normalScale: 0.45, topNormal: 'pore', topScale: 0.45, env: 0.95 },
   naked: { roughness: 0.78, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.6, normal: 'soft', normalScale: 0.7, topNormal: 'rustic', topScale: 1.7, env: 0.9 },
+  // tint = tom próprio do tipo, que multiplica a cor escolhida · map / tile = textura própria (ver looks.js)
+  chantininho: { roughness: 0.78, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.7, normal: 'soft', normalScale: 0.3, topNormal: 'soft', topScale: 0.3, env: 0.95, tint: '#fff6e4' },
+  creamcheese: { roughness: 0.64, clearcoat: 0.03, clearcoatRoughness: 0.5, sheen: 0.4, normal: 'streak', normalScale: 0.36, topNormal: 'swirl', topScale: 0.36, env: 0.95, tint: '#fff3dc' },
+  pasta: { roughness: 0.58, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.3, normal: 'soft', normalScale: 0.03, topNormal: 'soft', topScale: 0.03, env: 0.85 },
+  ganachebranca: { roughness: 0.24, clearcoat: 0.6, clearcoatRoughness: 0.16, sheen: 0, normal: 'soft', normalScale: 0.07, topNormal: 'soft', topScale: 0.07, env: 1.1 },
+  merengue: { roughness: 0.4, clearcoat: 0.22, clearcoatRoughness: 0.3, sheen: 0.2, normal: 'merengue', normalScale: 1, topNormal: 'merengue', topScale: 1, env: 1.05, map: 'merengue', tile: true, tint: '#fffaf0' },
+  brigadeiro: { roughness: 0.5, clearcoat: 0.14, clearcoatRoughness: 0.4, sheen: 0, normal: 'granulado', normalScale: 1.3, topNormal: 'granulado', topScale: 1.3, env: 0.9, map: 'granulado', tile: true },
+  coco: { roughness: 0.95, clearcoat: 0, clearcoatRoughness: 0.6, sheen: 0.5, normal: 'coco', normalScale: 1.1, topNormal: 'coco', topScale: 1.1, env: 0.85, map: 'coco', tile: true },
 };
 
 export function createCakeScene(canvas, { onContextLost, onContextRestored, onInteract, onFrame, insets, tier: forcedTier } = {}) {
@@ -217,6 +275,10 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   const cutFrost = frostOf(0).cut;
   const dripMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: tier.physical ? 0.2 : 0.13, clearcoat: coat(0.85), clearcoatRoughness: 0.12, ...clipped });
   const cutDrip = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35 });
+  // (na calda metálica o material "acende" um pouco na própria cor, como o dourado da boleira)
+  dripMat.emissive = dripMat.color;
+  cutDrip.emissive = cutDrip.color;
+  dripMat.emissiveIntensity = cutDrip.emissiveIntensity = 0;
   /** Véu de creme raspado do andar i (naked: ralo; semi-naked: bem mais cheio). */
   const scrapeOf = (i) => {
     const f = frostOf(i);
@@ -245,7 +307,15 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
             ? new THREE.MeshPhysicalMaterial({ map: tex.marble(), roughness: tier.physical ? 0.2 : 0.14, clearcoat: coat(0.55), clearcoatRoughness: 0.15 })
             : name === 'silver'
               ? new THREE.MeshStandardMaterial({ color: 0xf2f4f8, metalness: 0.72, roughness: 0.24, emissive: 0x565b63, emissiveIntensity: 0.42 })
-              : new THREE.MeshStandardMaterial({ color: 0xf0c66a, metalness: 0.72, roughness: 0.27, emissive: 0x7a5412, emissiveIntensity: 0.5 });
+              : name === 'blackboard'
+                ? new THREE.MeshStandardMaterial({ color: 0x1f1c1e, roughness: 0.62, envMapIntensity: 0.8 })
+                : name === 'glass'
+                    ? new THREE.MeshStandardMaterial({ color: 0xe6f3f5, roughness: 0.04, metalness: 0.1, transparent: true, opacity: 0.36, envMapIntensity: 1.9 })
+                    : name === 'kraft'
+                      ? new THREE.MeshStandardMaterial({ color: 0xc8a676, roughness: 0.92, envMapIntensity: 0.5, side: THREE.DoubleSide })
+                      : name === 'paper'
+                        ? new THREE.MeshStandardMaterial({ color: 0xfbf8f1, roughness: 0.9, envMapIntensity: 0.6 })
+                        : new THREE.MeshStandardMaterial({ color: 0xf0c66a, metalness: 0.72, roughness: 0.27, emissive: 0x7a5412, emissiveIntensity: 0.5 });
     }
     return standMats[name];
   };
@@ -269,17 +339,36 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     layerMat(crumbMats, i, () => {
       const mat = new THREE.MeshStandardMaterial({ map: tex.crumb(), emissiveMap: tex.crumb(), bumpMap: tex.crumbBump(), bumpScale: 2.2, roughness: 0.92, vertexColors: true, emissiveIntensity: 0.26 });
       mat.emissive = mat.color; // o miolo "acende" um pouco na própria cor, como massa de verdade atravessada pela luz
-      mat.color.set(flavorOf(i).crumb);
+      crumbLook(mat, flavorOf(i));
       return mat;
     });
+  /**
+   * O miolo da massa no corte. As massas lisas usam uma textura só (os furinhos), tingida pela cor do sabor;
+   * as que têm desenho (mesclada, formigueiro, confete…) usam a textura delas, já colorida, e o material fica branco.
+   * Devolve a cor que o material deve ter.
+   */
+  function crumbLook(mat, flavor) {
+    const map = flavor.look ? tex.crumbLook(flavor) : tex.crumb();
+    if (mat.map !== map) {
+      mat.map = map;
+      mat.emissiveMap = map;
+    }
+    const color = flavor.look ? '#ffffff' : flavor.crumb;
+    mat.color.set(color);
+    return color;
+  }
   const bandMat = (i) => layerMat(bandMats, i, () => new THREE.MeshPhysicalMaterial({ roughness: 0.8, envMapIntensity: 0.7, ...clipped }));
+  // a massa do bolo vulcão por fora: dourada da fôrma, lisa, com os furinhos finos do miolo
+  let bundtMat = null;
+  const bundt = () => (bundtMat ||= new THREE.MeshStandardMaterial({ map: tex.crumb(), bumpMap: tex.crumbBump(), bumpScale: 1.3, roughness: 0.9, envMapIntensity: 0.28, ...clipped }));
+  const bundtColor = (flavor, target) => target.set(flavor.crust).multiplyScalar(0.92);
   // geleia dos recheios de fruta: o fio escuro e brilhante junto ao creme (por fora, no naked, e no corte)
   const jamMats = [];
   const cutJamMats = [];
   const jamMat = (i) => layerMat(jamMats, i, () => new THREE.MeshPhysicalMaterial({ roughness: tier.physical ? 0.22 : 0.14, clearcoat: coat(0.7), clearcoatRoughness: 0.15, ...clipped }));
   const cutJamMat = (i) => layerMat(cutJamMats, i, () => new THREE.MeshStandardMaterial({ roughness: 0.3, vertexColors: true }));
   let fruitMat = null;
-  const fruitPieces = () => (fruitMat ||= new THREE.MeshStandardMaterial({ map: tex.fruit(), alphaTest: 0.5, roughness: 0.5, side: THREE.DoubleSide }));
+  const fruitPieces = () => (fruitMat ||= new THREE.MeshStandardMaterial({ map: tex.pieces(), alphaTest: 0.5, roughness: 0.5, side: THREE.DoubleSide }));
   const fillingOf = (i) => getFilling(config.fillings[Math.min(i, config.fillings.length - 1)]);
   const cutFillMat = (i) =>
     layerMat(cutFillMats, i, () => {
@@ -356,6 +445,16 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   let napped = false;
   const stats = { renders: 0, skipped: 0 };
   const shadowCenter = new THREE.Vector3();
+  // r5-cena: ateliê. stage = a cena carregada (null até alguém pedir) · ground = quanto o "chão" fica abaixo do pé
+  // da base (a bailarina entra no meio) e o raio da sombra de contato · spinAngle = giro do prato (bolo + base)
+  let stage = null;
+  let stageLoad = null;
+  let stageWanted = false;
+  let atelierOn = false;
+  let atelierScene = 'bancada';
+  const atelierSubs = new Map();
+  const ground = { drop: 0, contact: 0, radius: 0 };
+  let spinAngle = 0;
 
   function invalidate() {
     dirty = true;
@@ -396,6 +495,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
 
   function settle() {
     while (jobs.length) jobs.shift()();
+    stage?.skip(); // r5-cena: a animação de preparo em curso também termina aqui
     [...tweens.values()].forEach((tw) => {
       tw.update(1);
       tw.done?.();
@@ -412,9 +512,15 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   }
 
   function tweenColor(keyName, mats, hex, dur = 0.32) {
-    const to = displayColor(hex);
+    const to = hex?.isColor ? hex : displayColor(hex);
     const from = mats[0].color.clone();
-    if (from.equals(to)) return;
+    if (from.equals(to)) {
+      // já está na cor pedida: cancela uma transição que ainda estivesse a caminho de OUTRA cor (duas mudanças
+      // no mesmo quadro, a segunda desfazendo a primeira) e deixa todos os materiais do grupo iguais
+      tweens.delete(keyName);
+      mats.forEach((mt) => mt.color.copy(to));
+      return;
+    }
     tween(keyName, dur, (k) => mats.forEach((mt) => mt.color.copy(from).lerp(to, k)));
   }
 
@@ -433,15 +539,47 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     return ms;
   }
 
+  /* ───────── As partes do bolo, por nome (ver o cabeçalho) ───────── */
+  const named = new Map(); // nome → { name, kind, tier, index, objects }
+  const buildHooks = new Set();
+  /** Registra uma parte construída (ou reconstruída) e avisa quem pediu para saber. */
+  function built(name, objects, { kind = name.split(':')[0], tier: tierIndex = null, index = null } = {}) {
+    const list = (Array.isArray(objects) ? objects : [objects]).filter(Boolean);
+    const entry = { name, kind, tier: tierIndex, index, objects: list };
+    list.forEach((o) => {
+      o.name ||= name;
+      o.userData.part = { name, kind, tier: tierIndex, index };
+    });
+    named.set(name, entry);
+    buildHooks.forEach((fn) => {
+      try {
+        fn(entry);
+      } catch (err) {
+        console.error(`[bolo 3D] passo de construção "${name}"`, err);
+      }
+    });
+    return list[0];
+  }
+  /** Esquece as partes de um tipo (antes de refazê-las). */
+  const forget = (kind) => [...named.keys()].forEach((k) => named.get(k).kind === kind && named.delete(k));
+
   function rebuildStand() {
     disposeGroup(standGroup);
     stand = buildStand(m.base, config.base);
     stand.parts.forEach((part) => standGroup.add(mesh(part.geo, standMat(part.mat), { cast: part.cast !== false })));
+    forget('base');
+    built('base', [...standGroup.children]);
     floor.visible = true;
-    plateShade.position.set(0, config.base === 'boleira' || config.base === 'prato' ? -0.0128 : -0.0008, 0);
+    plateShade.position.set(0, config.base === 'boleira' || config.base === 'prato' || config.base === 'vidro' ? -0.0128 : -0.0008, 0);
     plateShade.scale.set(2 * stand.shade.x, 2 * stand.shade.z, 1);
-    contact.position.y = stand.floorY + 0.002;
-    const footR = stand.plateRadius * 0.5;
+    placeGround();
+  }
+
+  /** r5-cena: a sombra de contato fica no chão de verdade (com a bailarina, mais baixo que o pé da base). */
+  function placeGround() {
+    if (!stand) return;
+    contact.position.y = stand.floorY - ground.drop + 0.002;
+    const footR = ground.contact || stand.plateRadius * 0.5;
     contact.scale.set(footR * 3.6, footR * 3.6, 1);
   }
 
@@ -465,13 +603,13 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   function placeFloorShadow(lightAz) {
     if (!stand || !m) return;
     const k = 0.78; // 1 / tan(52°), a altura da luz principal
-    const hPlate = -stand.floorY;
+    const hPlate = -stand.floorY + ground.drop; // r5-cena: com a bailarina, o chão fica mais baixo
     const near = -stand.plateRadius + hPlate * k;
     const far = Math.max(stand.plateRadius + hPlate * k, m.base.bounds.maxR + (hPlate + m.Htot) * k);
     const mid = (near + far) / 2;
     const dx = -Math.sin(lightAz);
     const dz = -Math.cos(lightAz);
-    floor.position.set(dx * mid, stand.floorY + 0.001, dz * mid);
+    floor.position.set(dx * mid, stand.floorY - ground.drop + 0.001, dz * mid);
     floor.scale.set((far - near) * 1.34, stand.plateRadius * 2.6, 1);
     floor.rotation.z = Math.atan2(-dz, dx);
   }
@@ -498,41 +636,135 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const from = { shadow: floor.material.color.clone(), shadowA: floor.material.opacity, contact: contact.material.color.clone(), contactA: contact.material.opacity, ground: hemi.groundColor.clone() };
     backdrop = b;
     tween('backdrop', instant ? 0 : 0.55, (k) => applyBackdropLook(b, k, from));
+    stage?.setBackdrop(b, { instant }); // r5-cena: a cozinha acompanha o tom do fundo
     invalidate();
   }
 
-  const NORMALS = { streak: () => tex.streakNormal(), swirl: () => tex.swirlNormal(), soft: () => tex.softNormal(), pore: () => tex.poreNormal(), comb: () => tex.combNormal(), rustic: () => tex.rusticNormal() };
+  /* Texturas das coberturas de textura própria (granulado, coco ralado, merengue) e dos estilos de pente e de
+     cesta: desenhadas na primeira vez que a opção é escolhida (looks.js) e guardadas como as outras. */
+  const S = tex.size;
+  const strands = (kind) =>
+    tex.drawn(`strand:${kind}`, () =>
+      kind === 'coco'
+        ? strandCanvases(S, { seed: 67, count: Math.round(2500 * (S / 512) ** 0.5), len: [5, 10], thick: 0.95, base: 0.74, tones: [0.9, 1], curl: 0.5, gloss: 0.06 })
+        : strandCanvases(S, { seed: 41, count: Math.round(2100 * (S / 512) ** 0.5), len: [3.4, 4.8], thick: 1.2, base: 0.34, tones: [0.62, 0.96], gloss: 0.34 }),
+    );
+  const fromHeight = (key, fn, strength) => () => tex.lazy(`n:${key}`, () => texture(tex.drawn(`n:${key}`, () => normalFromHeight(S, fn, strength)), { aniso: tex.aniso }));
+  const COVER_MAPS = {
+    granulado: () => tex.lazy('c:granulado', () => texture(strands('granulado').shade, { srgb: true, aniso: tex.aniso })),
+    coco: () => tex.lazy('c:coco', () => texture(strands('coco').shade, { srgb: true, aniso: tex.aniso })),
+    merengue: () => tex.lazy('c:merengue', () => texture(tex.drawn('c:merengue', () => meringueToastCanvas(S)), { srgb: true, aniso: tex.aniso })),
+  };
+  const NORMALS = {
+    streak: () => tex.streakNormal(),
+    swirl: () => tex.swirlNormal(),
+    soft: () => tex.softNormal(),
+    pore: () => tex.poreNormal(),
+    comb: () => tex.combNormal(),
+    rustic: () => tex.rusticNormal(),
+    granulado: () => tex.lazy('n:granulado', () => texture(tex.drawn('n:granulado', () => heightToNormal(strands('granulado').height, 2.4)), { aniso: tex.aniso })),
+    coco: () => tex.lazy('n:coco', () => texture(tex.drawn('n:coco', () => heightToNormal(strands('coco').height, 1.8)), { aniso: tex.aniso })),
+    merengue: fromHeight('merengue', meringueHeight(), 1.5),
+    ondas: fromHeight('ondas', STYLE_HEIGHT.ondas, 2.6),
+    vertical: fromHeight('vertical', STYLE_HEIGHT.vertical, 2.6),
+    cesta: fromHeight('cesta', STYLE_HEIGHT.cesta, 2.4),
+  };
+  /** Sombra do trançado da cesta: o fundo entre as tiras escurece (multiplica a cor da cobertura). */
+  const basketShade = () =>
+    tex.lazy('c:cesta', () =>
+      texture(
+        tex.drawn('c:cesta', () => paintHeight(S, (u, v) => 0.5 + 0.5 * Math.min(1, STYLE_HEIGHT.cesta(u, v) / 0.55))),
+        { srgb: true, aniso: tex.aniso },
+      ),
+    );
+  /** Estilos pintados numa volta inteira do bolo (segundo conjunto de coordenadas) e num azulejo que se repete. */
+  const WRAP_STYLES = new Set(['ombre', 'aquarela', 'listras', 'marmorizado', 'pinceladas']);
+  const TILE_STYLES = new Set(['poa', 'coracoes', 'arabesco', 'barrado', 'chuva', 'faultline']);
   const shown = (hex) => `#${displayColor(hex, _bd).getHexString()}`;
+  const _tint = new THREE.Color();
+  /** A cor da cobertura como ela aparece: a escolhida, puxada para o tom próprio do tipo (chantininho é marfim, não branco puro). */
+  const coverTone = (hex, look, target = new THREE.Color()) => {
+    displayColor(hex, target);
+    return look.tint ? target.multiply(_tint.set(look.tint)) : target;
+  };
+  const shownTone = (hex, look) => `#${coverTone(hex, look, _bd).getHexString()}`;
+  /** Cópia de uma textura para o topo do andar (lá a escala das coordenadas é outra), com a repetição certa. */
+  function topCopy(f, key, source, repeat) {
+    f.topTex ||= {};
+    let copy = f.topTex[key];
+    if (!copy || copy.source !== source.source) {
+      copy?.dispose();
+      copy = f.topTex[key] = source.clone();
+    }
+    copy.repeat.setScalar(repeat);
+    return copy;
+  }
+  /** Textura que mostra um desenho feito na hora (cor ou relevo de um estilo): troca só a imagem quando o estilo muda. */
+  function canvasTexture(f, slot, canvas, { srgb = true, channel = 0 } = {}) {
+    let t = f[slot];
+    if (!t) {
+      t = f[slot] = new THREE.CanvasTexture(canvas);
+      t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.channel = channel;
+      t.anisotropy = tier.physical ? 4 : 2;
+    }
+    t.image = canvas;
+    t.needsUpdate = true;
+    return t;
+  }
 
-  /** Textura de cor da lateral do andar i nos estilos de duas cores (degradê, aquarela, listras). */
-  function finishMap(i, t) {
+  /** Textura de cor da lateral do andar i nos estilos pintados numa volta inteira (degradê, aquarela, listras, marmorizado, pinceladas). */
+  function finishMap(i, t, look) {
     const f = frostOf(i);
-    const c1 = shown(t.cover.color);
-    const c2 = shown(t.cover.color2);
+    const c1 = shownTone(t.cover.color, look);
+    const c2 = shownTone(t.cover.color2, look);
     const stripes = Math.max(5, Math.round(t.frost.length / 0.52));
     // degradê em bolo de andares com a mesma cobertura: um só degradê do pé ao topo, cada andar com o seu trecho
     const whole = t.style === 'ombre' && !config.tierCover && t.stack.length > 1;
     const from = whole ? t.y0 / t.Htot : 0;
     const to = whole ? (t.y0 + t.Ht) / t.Htot : 1;
-    const key = `${t.style}|${c1}|${c2}|${stripes}|${from.toFixed(3)}|${to.toFixed(3)}`;
+    const key = `${t.style}|${c1}|${c2}|${stripes}|${from.toFixed(3)}|${to.toFixed(3)}|${t.frost.length.toFixed(2)}|${t.Ht.toFixed(2)}`;
     if (f.mapKey === key && f.map) return f.map;
-    if (!f.canvas) {
-      f.canvas = document.createElement('canvas');
-      f.canvas.width = 512;
-      f.canvas.height = tier.physical ? 256 : 128;
-    }
-    paintFinish(f.canvas, t.style, c1, c2, { stripes, seed: 7 + i * 13, from, to });
+    if (!f.canvas) f.canvas = makeCanvas(tier.physical ? 1024 : 512, tier.physical ? 256 : 128);
+    if (t.style === 'marmorizado' || t.style === 'pinceladas') paintWrapStyle(f.canvas, t.style, c1, c2, { seed: 7 + i * 13, L: t.frost.length * 10, H: t.Ht * 10 });
+    else paintFinish(f.canvas, t.style, c1, c2, { stripes, seed: 7 + i * 13, from, to });
     f.topColor = whole ? `#${_bd.set(t.cover.color).lerp(new THREE.Color(t.cover.color2), to).getHexString()}` : t.cover.color2;
-    if (!f.map) {
-      f.map = new THREE.CanvasTexture(f.canvas);
-      f.map.colorSpace = THREE.SRGBColorSpace;
-      f.map.wrapS = THREE.RepeatWrapping;
-      f.map.channel = 1; // usa o segundo conjunto de coordenadas: uma volta inteira × do pé ao topo
-      f.map.anisotropy = tier.physical ? 4 : 2;
-    }
-    f.map.needsUpdate = true;
+    canvasTexture(f, 'map', f.canvas, { channel: 1 }); // segundo conjunto de coordenadas: uma volta inteira × do pé ao topo
     f.mapKey = key;
     return f.map;
+  }
+
+  /** Cor e relevo da lateral do andar i nos estilos de azulejo (estêncil, barrado, confeitos subindo, fault line). */
+  function tileStyle(i, t, look) {
+    const f = frostOf(i);
+    const c1 = shownTone(t.cover.color, look);
+    const c2 = shownTone(t.cover.color2, look);
+    const trim = getTrim(t.cover.trim) || TRIMS[0];
+    const key = `${t.style}|${c1}|${c2}|${trim.id}|${t.Ht.toFixed(3)}`;
+    if (f.tileKey !== key) {
+      const out = paintTileStyle(S, t.style, { c1, c2, trim, mid: faultMid(t) * 10, top: (t.Ht - t.rf) * 10, seed: 3 + i });
+      canvasTexture(f, 'tmap', out.color);
+      f.tnormalOn = Boolean(out.height);
+      if (out.height) canvasTexture(f, 'tnormal', heightToNormal(out.height, 2), { srgb: false });
+      f.tileKey = key;
+    }
+    return { map: f.tmap, normal: f.tnormalOn ? f.tnormal : null };
+  }
+
+  /** O topo do marmorizado: os veios continuam por cima do bolo. */
+  function marbleTop(i, t, look) {
+    const f = frostOf(i);
+    const c1 = shownTone(t.cover.color, look);
+    const c2 = shownTone(t.cover.color2, look);
+    const key = `${c1}|${c2}`;
+    if (f.marbleKey !== key) {
+      if (!f.marbleCanvas) f.marbleCanvas = makeCanvas(tier.physical ? 512 : 256);
+      paintMarbleTop(f.marbleCanvas, c1, c2, 7 + i * 13);
+      canvasTexture(f, 'marble', f.marbleCanvas);
+      f.marbleKey = key;
+    }
+    return f.marble;
   }
 
   /** Aparência (brilho, relevo da espátula) e cores do andar i. quiet = sem transição de cor. */
@@ -542,6 +774,13 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const f = frostOf(i);
     const look = COVERING_LOOK[cov.type] || COVERING_LOOK.buttercream;
     const round = m.shape === 'round';
+    const tile = Boolean(look.tile);
+    const sideRepeat = 1.6 / COVER_TILE;
+    const topRepeat = (2.9 * t.R) / COVER_TILE;
+    const wrap = !t.naked && WRAP_STYLES.has(t.style);
+    const tiled = !t.naked && TILE_STYLES.has(t.style) ? tileStyle(i, t, look) : null;
+    const mapped = wrap || Boolean(tiled);
+    const pearl = !t.naked && t.style === 'perolado';
     let sideMap = look.normal;
     let sideScale = look.normalScale;
     let topMap = look.topNormal === 'swirl' && !round ? look.normal : look.topNormal; // (o naked usa as marcas de espátula)
@@ -550,13 +789,31 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       sideMap = topMap = 'rustic';
       sideScale = 1.15;
       topScale = 0.95;
-    } else if (t.style === 'pente') {
-      sideMap = 'comb';
+    } else if (t.style === 'pente' || t.style === 'ondas') {
+      sideMap = t.style === 'pente' ? 'comb' : 'ondas';
       sideScale = 1.05;
       if (round) {
         topMap = 'swirl';
         topScale = 0.95;
       }
+    } else if (t.style === 'vertical') {
+      sideMap = 'vertical';
+      sideScale = 1.05;
+    } else if (t.style === 'cesta') {
+      sideMap = 'cesta';
+      sideScale = 2;
+    } else if (t.style === 'pinceladas') {
+      // os toques de espátula deixam o creme irregular por baixo da cor
+      sideMap = 'rustic';
+      sideScale = 0.6;
+    } else if (pearl || t.style === 'babados' || t.style === 'rosetas') {
+      sideMap = 'soft';
+      sideScale = 0.12;
+    }
+    // vulcão: creme que escorreu, não creme espatulado — sem marcas de espátula, só um ondulado macio
+    if (t.volcano && !tile) {
+      sideMap = 'soft';
+      sideScale = 0.16;
     }
     [
       [f.side, sideMap, sideScale],
@@ -569,8 +826,26 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       mat.clearcoatRoughness = look.clearcoatRoughness;
       mat.sheen = tier.physical ? Math.max(0.002, look.sheen) : 0;
       mat.envMapIntensity = look.env;
+      // perolado: o pó de pérola faz a cobertura refletir como metal fosco, sem perder a cor
+      mat.metalness = pearl ? 0.55 : 0;
+      if (pearl) {
+        mat.roughness = 0.3;
+        mat.envMapIntensity = 1.7;
+        if (tier.physical) mat.clearcoat = 0.4;
+      }
       let map = NORMALS[mapName] ? NORMALS[mapName]() : null;
-      if (map && isTop && mapName === 'rustic') {
+      let fixed = false; // textura com repetição própria (não entra no ajuste de escala do topo)
+      if (!isTop && tiled?.normal) {
+        // estilos com confeito: o relevo das peças vem junto com a cor delas
+        map = tiled.normal;
+        scale = 1.25;
+        fixed = true;
+      } else if (map && tile) {
+        // textura própria da cobertura: azulejo de 8 cm — na lateral, duas repetições por azulejo-padrão; no topo, uma cópia
+        if (isTop) map = topCopy(f, `n:${mapName}`, map, topRepeat);
+        else map.repeat.setScalar(sideRepeat);
+        fixed = true;
+      } else if (map && isTop && mapName === 'rustic') {
         // espatulado no topo: a mesma textura da lateral, mas com cópia própria — os golpes ficam do mesmo
         // tamanho dos da lateral (o topo usa outra escala de UV) e atravessados, como quem alisa de lado a lado
         if (!f.topRustic || f.topRustic.source !== map.source) {
@@ -581,6 +856,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
         }
         f.topRustic.repeat.setScalar((2.9 * t.R) / 1.6);
         map = f.topRustic;
+        fixed = true;
       }
       if (mat.normalMap !== map) {
         mat.normalMap = map;
@@ -588,63 +864,153 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       }
       mat.normalScale.setScalar(scale);
       // no topo, texturas que se repetem usam uma escala própria (a espiral cobre o topo inteiro)
-      if (map && isTop && mapName !== 'swirl' && mapName !== 'rustic') map.repeat.set(1, 1);
+      if (map && isTop && !fixed && mapName !== 'swirl') map.repeat.set(1, 1);
     });
     f.cut.roughness = Math.max(0.45, look.roughness);
+    if (f.coat) {
+      f.coat.roughness = Math.min(0.9, look.roughness + 0.08);
+      f.coat.envMapIntensity = look.env * 0.9;
+    }
 
-    // cor: nos estilos de duas cores quem pinta a lateral é a textura (o material fica branco)
-    const mapped = !t.naked && (t.style === 'ombre' || t.style === 'aquarela' || t.style === 'listras');
-    const map = mapped ? finishMap(i, t) : null;
+    // cor: nos estilos pintados quem dá a cor da lateral é a textura (o material fica branco); nas coberturas de
+    // textura própria, a textura (granulado, coco, tostado do merengue) multiplica a cor escolhida
+    const cover = !mapped && look.map ? COVER_MAPS[look.map]() : null;
+    if (cover) cover.repeat.setScalar(sideRepeat);
+    const map = wrap ? finishMap(i, t, look) : tiled ? tiled.map : !t.naked && t.style === 'cesta' ? basketShade() : cover;
     if (f.side.map !== map) {
       f.side.map = map;
       f.side.needsUpdate = true;
     }
-    const topColor = mapped && t.style === 'ombre' ? f.topColor || cov.color2 : cov.color;
-    if (quiet || mapped || f.mapped !== mapped) {
+    const marble = wrap && t.style === 'marmorizado';
+    const capMap = marble ? marbleTop(i, t, look) : cover ? topCopy(f, `c:${look.map}`, cover, topRepeat) : null;
+    if (f.top.map !== capMap) {
+      f.top.map = capMap;
+      f.top.needsUpdate = true;
+    }
+    const topColor = wrap && t.style === 'ombre' ? f.topColor || cov.color2 : cov.color;
+    const state = `${mapped ? 1 : 0}${marble ? 1 : 0}`;
+    if (quiet || mapped || f.mapped !== state) {
       [`frostS${i}`, `frostT${i}`, `frostC${i}`].forEach((k) => tweens.delete(k));
       if (mapped) f.side.color.set(0xffffff);
-      else displayColor(cov.color, f.side.color);
-      displayColor(topColor, f.top.color);
-      displayColor(cov.color, f.cut.color);
+      else coverTone(cov.color, look, f.side.color);
+      if (marble) f.top.color.set(0xffffff);
+      else coverTone(topColor, look, f.top.color);
+      coverTone(cov.color, look, f.cut.color);
+      if (f.coat) coverTone(cov.color, look, f.coat.color);
     } else {
-      tweenColor(`frostS${i}`, [f.side], cov.color);
-      tweenColor(`frostT${i}`, [f.top], topColor);
-      tweenColor(`frostC${i}`, [f.cut], cov.color);
+      tweenColor(`frostS${i}`, [f.side, ...(f.coat ? [f.coat] : [])], coverTone(cov.color, look));
+      tweenColor(`frostT${i}`, [f.top], coverTone(topColor, look));
+      tweenColor(`frostC${i}`, [f.cut], coverTone(cov.color, look));
     }
-    f.mapped = mapped;
+    f.mapped = state;
     if (f.scrape) displayColor(cov.color, f.scrape.color);
   }
 
+  /** O bolo de rosetas: uma roseta de bico em cada pedaço da cobertura do andar ti (um lote só, uma chamada de desenho). */
+  const coatBatches = [];
+  const rosetteGeos = {};
+  function rosetteCoat(t, ti) {
+    const f = frostOf(ti);
+    f.coat ||= new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.66, ...clipped });
+    // bolo de andares ou grande: centenas de rosetas, cada uma pequena na tela → a malha leve
+    const far = m.stack.length > 1 || m.base.R > 1.3;
+    const rosetteGeo = (rosetteGeos[far ? 'far' : 'near'] ||= rosetteCoatGeometry(tier.detail, far));
+    const batch = new Batch(rosetteGeo, f.coat, { cast: tier.smallCastShadow, receive: true });
+    const q = new THREE.Quaternion();
+    const spin = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    const dir = new THREE.Vector3();
+    rosetteSpots(t).forEach((s) => {
+      dir.set(s.nx, s.ny, s.nz).normalize();
+      q.setFromUnitVectors(up, dir).multiply(spin.setFromAxisAngle(up, s.spin));
+      batch.add(s.x, t.y0 + s.y, s.z, q, s.scale, null, s.rad);
+    });
+    const built = batch.build(m.base.center);
+    if (built) {
+      built.userData.part = { kind: 'cobertura', tier: ti, piece: 'rosetas' };
+      coatBatches.push(batch);
+    }
+    return built;
+  }
+
   function rebuildBody() {
+    coatBatches.forEach((b) => b.mesh?.dispose());
+    coatBatches.length = 0;
     disposeGroup(bodyGroup);
+    ['massa', 'recheio', 'cobertura'].forEach(forget);
     m.stack.forEach((t, ti) => {
       const f = frostOf(ti);
       const g = new THREE.Group();
       g.position.y = t.y0;
       bodyGroup.add(g);
+      const at = { tier: ti };
+      if (t.volcano) {
+        // bolo vulcão: a massa de fôrma de furo e, por cima, o creme que enche o furo e transborda
+        bundtColor(flavorOf(0), bundt().color);
+        g.add(built(`massa:${ti}:0`, mesh(buildBundt(t), bundt()), { ...at, index: 0 }));
+        const seed = (Math.round(t.R * 100) * 13 + 7) | 0;
+        g.add(built(`cobertura:${ti}`, mesh(buildVolcanoCream(t, seed), [f.side, f.top]), at));
+        return;
+      }
       if (!t.naked) {
-        g.add(mesh(buildFrosting(t), [f.side, f.top]));
+        g.add(built(`cobertura:${ti}`, mesh(buildFrosting(t), [f.side, f.top]), at));
+        if (t.style === 'rosetas') {
+          const coat = rosetteCoat(t, ti);
+          if (coat) bodyGroup.add(built(`cobertura:${ti}:rosetas`, coat, { ...at, kind: 'cobertura' }));
+        }
         return;
       }
       t.layerY.forEach((_, i) => {
         const mat = crustMat(i);
-        g.add(mesh(buildSponge(t, i), [mat, mat]));
+        g.add(built(`massa:${ti}:${i}`, mesh(buildSponge(t, i), [mat, mat]), { ...at, index: i }));
       });
       // semi-naked: entre as camadas aparece o próprio creme da cobertura, não o recheio
       t.fillY.forEach((_, i) => {
-        g.add(mesh(buildFillingBand(t, i), t.semi ? f.side : bandMat(i)));
+        const band = mesh(buildFillingBand(t, i), t.semi ? f.side : bandMat(i));
+        g.add(band);
+        let jam = null;
         // recheio de fruta no naked: o fio de geleia aparece junto ao creme
         if (!t.semi && fillingOf(i)?.cream) {
           jamMat(i).color.set(fillingOf(i).color);
-          g.add(mesh(buildJamThread(t, i), jamMat(i), { cast: false }));
+          jam = mesh(buildJamThread(t, i), jamMat(i), { cast: false });
+          g.add(jam);
         }
+        built(`recheio:${ti}:${i}`, [band, jam], { ...at, index: i });
       });
-      g.add(mesh(buildTopCream(t), [f.side, f.top]));
+      g.add(built(`cobertura:${ti}`, mesh(buildTopCream(t), [f.side, f.top]), at));
       // a raspada de creme: um véu só sobre a lateral inteira do andar
       const veil = mesh(buildScrapeCoat(t), scrapeOf(ti), { cast: false });
       veil.renderOrder = 2;
-      g.add(veil);
+      g.add(built(`cobertura:${ti}:veu`, veil, { ...at, kind: 'cobertura' }));
     });
+  }
+
+  /**
+   * A receita de montagem do bolo atual, na ordem do confeiteiro (ver o cabeçalho). Só dados e fábricas de
+   * peças avulsas: nada é acrescentado à cena aqui.
+   */
+  function assembly() {
+    if (!m) return [];
+    const steps = [{ id: 'base', kind: 'base', tier: null, index: null, label: 'base', make: null }];
+    const piece = (geo, material, y0) => {
+      const ms = mesh(geo, material);
+      ms.position.y = y0;
+      return ms;
+    };
+    m.stack.forEach((t, ti) => {
+      if (t.volcano) steps.push({ id: `massa:${ti}:0`, kind: 'massa', tier: ti, index: 0, label: flavorOf(0).name, make: () => piece(buildBundt(t), bundt(), t.y0) });
+      else {
+        t.layerY.forEach((_, i) => {
+          steps.push({ id: `massa:${ti}:${i}`, kind: 'massa', tier: ti, index: i, label: flavorOf(i).name, make: () => piece(buildSponge(t, i), [crustMat(i), crustMat(i)], t.y0) });
+          if (i < t.fillY.length) steps.push({ id: `recheio:${ti}:${i}`, kind: 'recheio', tier: ti, index: i, label: fillingOf(i).name, make: () => piece(buildFillingBand(Object.assign(Object.create(t), { semi: false }), i), bandMat(i), t.y0) });
+        });
+      }
+      steps.push({ id: `cobertura:${ti}`, kind: 'cobertura', tier: ti, index: null, label: t.cover.type, make: null });
+      if (config.drip.on) steps.push({ id: `calda:${ti}`, kind: 'calda', tier: ti, index: null, label: 'calda', make: null });
+    });
+    if (pipingPart?.group.children.length) steps.push({ id: 'bico', kind: 'bico', tier: null, index: null, label: config.piping.style, make: null });
+    decorParts.forEach((_, id) => steps.push({ id: `decor:${id}`, kind: 'decor', tier: null, index: null, label: id, make: null }));
+    return steps;
   }
 
   function applyLayerColors(instant) {
@@ -653,14 +1019,21 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       // só os que já existem: massa e miolo nascem (já na cor certa) quando o bolo é naked ou é aberto
       const crust = crustMats[i];
       const crumb = crumbMats[i];
-      if (instant) {
-        crust?.color.set(f.crust);
-        crumb?.color.set(f.crumb);
-      } else {
-        if (crust) tweenColor(`crust${i}`, [crust], f.crust);
-        if (crumb) tweenColor(`crumb${i}`, [crumb], f.crumb);
+      if (i === 0 && bundtMat) bundtColor(f, bundtMat.color);
+      if (crust) {
+        if (instant) crust.color.set(f.crust);
+        else tweenColor(`crust${i}`, [crust], f.crust);
+      }
+      if (crumb) {
+        // massa com desenho: a textura troca na hora (a cor do material é branca; não há o que animar)
+        const had = crumb.map !== tex.crumb();
+        tweens.delete(`crumb${i}`);
+        if (instant || f.look || had) crumbLook(crumb, f);
+        else tweenColor(`crumb${i}`, [crumb], f.crumb);
       }
     });
+    // chá revelação: o recheio inteiro é tingido de rosa ou azul (a tela só manda a cor depois de "revelar")
+    const secret = config.reveal?.on ? getRevealColor(config.reveal.color)?.hex : null;
     config.fillings.forEach((id, i) => {
       const f = getFilling(id);
       // recheio é creme: fosco, com um brilho discreto só nos mais lisos (brigadeiro, doce de leite)
@@ -669,8 +1042,16 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
         mat.clearcoat = tier.physical ? Math.max(0.002, f.gloss * 0.12) : 0;
         mat.clearcoatRoughness = 0.5;
       });
+      // mousse: aerada, cheia de bolhinhas (o mesmo relevo de poros da cobertura de mousse)
+      const pores = f.aerated ? tex.poreNormal() : null;
+      const cutMat = cutFillMat(i);
+      if (cutMat.normalMap !== pores) {
+        cutMat.normalMap = pores;
+        cutMat.normalScale.setScalar(0.55);
+        cutMat.needsUpdate = true;
+      }
       // recheio de fruta: o que se vê é o creme; a geleia (a cor da fruta) é um fio junto dele
-      const body = f.cream || f.color;
+      const body = secret || f.cream || f.color;
       if (f.cream) [jamMats[i], cutJamMats[i]].forEach((mat) => mat?.color.set(f.color));
       if (instant) {
         bandMat(i).color.set(body);
@@ -681,32 +1062,41 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
 
   function rebuildDrip() {
     disposeGroup(dripGroup);
+    forget('calda');
     if (!config.drip.on) return;
     m.stack.forEach((t, ti) => {
       const seed = (t.shape.length * 31 + Math.round(t.R * 100) + t.n * 7 + ti * 101) | 0;
       const drip = mesh(buildDrip(t, seed), dripMat, { cast: tier.smallCastShadow });
       drip.position.y = t.y0;
-      dripGroup.add(drip);
+      dripGroup.add(built(`calda:${ti}`, drip, { tier: ti }));
     });
   }
 
   function rebuildCut() {
     disposeGroup(cutGroup);
+    forget('corte');
     if (wedge.span <= 0.002) return;
     const opts = { cast: false, receive: true };
     // o corte passa pelo mesmo eixo em todos os andares (o do andar de baixo)
     m.stack.forEach((t, ti) => {
       const local = Object.assign(Object.create(t), { center: m.base.center });
-      const faces = buildCutFaces(local, { thetaA: wedge.a, thetaB: wedge.a + wedge.span, drip: config.drip.on, seed: t.n + ti * 5 });
+      const cut = { thetaA: wedge.a, thetaB: wedge.a + wedge.span, drip: config.drip.on, seed: t.n + ti * 5 };
+      const faces = t.volcano ? buildVolcanoCut(local, cut) : buildCutFaces(local, cut);
       const g = new THREE.Group();
       g.position.y = t.y0;
       cutGroup.add(g);
-      faces.sponge.forEach((geo, i) => geo && g.add(mesh(geo, crumbMat(i), opts)));
-      faces.filling.forEach((geo, i) => geo && g.add(mesh(geo, cutFillMat(i), opts)));
+      named.set(`corte:${ti}`, { name: `corte:${ti}`, kind: 'corte', tier: ti, index: null, objects: [g] });
+      // r5-cena: cada face leva de quem é (userData.cut), para a animação de uma camada mover a face dela junto
+      const tag = (ms, of, index) => {
+        ms.userData.cut = { of, index, tier: ti };
+        return ms;
+      };
+      faces.sponge.forEach((geo, i) => geo && g.add(tag(mesh(geo, crumbMat(i), opts), 'massa', i)));
+      faces.filling.forEach((geo, i) => geo && g.add(tag(mesh(geo, cutFillMat(i), opts), 'recheio', i)));
       faces.jam.forEach((geo, i) => {
         if (!geo) return;
         cutJamMat(i).color.set(fillingOf(i).color);
-        g.add(mesh(geo, cutJamMat(i), opts));
+        g.add(tag(mesh(geo, cutJamMat(i), opts), 'recheio', i));
       });
       if (faces.pieces) g.add(mesh(faces.pieces, fruitPieces(), opts));
       if (faces.frost) g.add(mesh(faces.frost, frostOf(ti).cut, opts));
@@ -775,7 +1165,8 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   /** Lista das peças de decoração de uma configuração: id → chave (muda a chave, reconstrói). */
   function decorPlan(cfg, sig) {
     const plan = new Map();
-    cfg.decor.items.forEach((id) => {
+    // r5-decor: decorIdsOf = itens escolhidos + decorações das peças colocadas à mão (decor.placed)
+    decorIdsOf(cfg).forEach((id) => {
       if (id === 'topo') return;
       // as velas mudam de lugar quando entra ou sai o topo personalizado
       plan.set(id, `${sig}|${id}${id === 'velas' ? `${cfg.decor.candles}|${cfg.decor.number}|${Boolean(cfg.decor.topper?.text)}` : ''}`);
@@ -833,7 +1224,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     };
     ring(stand.plateRadius, -0.02);
     ring(stand.plateRadius * 0.5, stand.floorY);
+    if (ground.drop) ring(ground.radius || stand.plateRadius * 0.5, stand.floorY - ground.drop); // r5-cena: a bailarina cabe no quadro
     if (m.base !== m) ring(m.base.bounds.maxR, m.base.Ht);
+    (stand.points || []).forEach((p) => pts.push(p[0], p[1], p[2])); // a tampa aberta da caixinha do bentô
     ring(m.bounds.maxR, m.Htot + (layout.pipeTop ? 0.1 : 0.01));
     ring(Math.min(0.6, m.rMin * 0.7), m.Htot + decorTop(config), m.center.z, 8);
     return pts;
@@ -993,7 +1386,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
    * instant: sem animação e tudo pronto na volta (miniaturas, fotos).
    * staged: primeira aparição — o corpo do bolo já, bicos e decorações chegando um a um nos quadros seguintes.
    */
-  function setConfig(next, { instant = false, staged = false } = {}) {
+  function setConfig(next, { instant = false, staged = false, animate = true, by = 'user' } = {}) {
     if (disposed || !next) return;
     jobs.length = 0;
     lastInput = clock();
@@ -1001,6 +1394,10 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const prev = config;
     const prevM = m;
     const first = !prev;
+    // r5-cena: com o ateliê ligado, a cena dirige a mudança (antes de refazer: guarda a cobertura antiga, encerra
+    // a animação em curso). directed = ela vai tocar a animação de preparo no lugar do "assentar" de sempre.
+    const told = Boolean(stage && atelierOn && !first && !instant && !staged);
+    const directed = told && animate !== false && stage.before(prev, next, { by }) === true;
     config = JSON.parse(JSON.stringify(next));
     m = cakeMetrics(config, tier.detail);
     layout = decorLayout(config, m);
@@ -1010,10 +1407,12 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const styles = m.stack.map((t) => `${t.type}:${t.style}`).join();
     const kStand = `${config.shape}|${config.size}|${config.tiers}|${config.base}`;
     // (recheios de fruta ganham um fio de geleia por fora, no naked: trocar o recheio pode mudar a geometria)
-    const kBody = `${kStand}|${m.n}|${styles}|${m.naked || m.stack.some((t) => t.naked) ? config.fillings.map((id) => (getFilling(id)?.cream ? 1 : 0)).join('') : ''}`;
-    const kDrip = `${kBody}|${config.drip.on}`;
-    const kPipe = `${kDrip}|${config.piping.style}|${config.piping.where}|${config.decor.items.includes('wafer')}`;
-    const kLayers = `${config.layers.join()}|${config.fillings.join()}`;
+    // (no vulcão, a quantidade e o comprimento da cobertura mudam a malha do creme)
+    const kBody = `${kStand}|${m.n}|${styles}|${m.naked || m.stack.some((t) => t.naked) ? config.fillings.map((id) => (getFilling(id)?.cream ? 1 : 0)).join('') : ''}|${m.volcano ? `${config.drip.amount}${config.drip.length}` : ''}`;
+    const kDrip = `${kBody}|${config.drip.on}|${config.drip.amount}|${config.drip.length}|${config.drip.half}`;
+    // r5-decor: a chave do bico vem de decor.js (cerca em volta, cintura e topo coberto mudam o que ele desenha)
+    const kPipe = `${kDrip}|${pipingKey(config, layout)}`;
+    const kLayers = `${config.layers.join()}|${config.fillings.join()}|${(config.fillAdds || []).join()}`;
     const sig = `${kPipe}|${[...config.decor.items].sort().join()}|${config.decor.message ? config.decor.messageMode : 0}|${JSON.stringify(config.decor.opts)}|${config.decor.candleStyle}|${layout.key || ''}`;
 
     const standChanged = kStand !== keys.stand;
@@ -1023,7 +1422,20 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
 
     // cores
     m.stack.forEach((_, i) => applyTierLook(i, first || quiet || bodyChanged));
-    if (first || quiet) {
+    // calda dourada ou metálica: pó comestível pincelado — reflete como metal, com um fundo quente da própria cor
+    const metal = Boolean(config.drip.metal);
+    if (metal !== dripMat.userData.metal) {
+      dripMat.userData.metal = metal;
+      [dripMat, cutDrip].forEach((mt) => {
+        mt.metalness = metal ? 0.82 : 0;
+        mt.emissiveIntensity = metal ? 0.3 : 0;
+      });
+      dripMat.roughness = metal ? 0.3 : tier.physical ? 0.2 : 0.13;
+      dripMat.clearcoat = metal ? 0 : coat(0.85);
+      cutDrip.roughness = metal ? 0.34 : 0.35;
+    }
+    // (r5-cena: calda que acabou de ser ligada já nasce na cor dela — não atravessa a cor da calda anterior)
+    if (first || quiet || (directed && !prev.drip.on)) {
       [dripMat, cutDrip].forEach((mt) => displayColor(config.drip.color, mt.color));
       displayColor(config.piping.color, lib.mat.piping().color);
       tweens.delete('drip');
@@ -1049,17 +1461,22 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
         part.key = kPipe;
         part.style = pipeStyle;
         part.born = !pop || (!staged && old && old.batches.length > 0 && old.style === pipeStyle) ? -100 : now;
+        part.fresh = part.born === now; // r5-cena: peça nova de verdade (a cena anima a chegada dela)
         disposePart(old);
         pipingPart = part;
         cakeGroup.add(part.group);
+        built('bico', part.group);
         refreshParts(true);
       });
     }
     const plan = decorPlan(config, sig);
     [...decorParts.keys()].forEach((id) => {
       if (!plan.has(id)) {
-        disposePart(decorParts.get(id));
+        // r5-cena: a cena pode ficar com a peça retirada (ela some com animação e é liberada depois)
+        const gone = decorParts.get(id);
+        if (!(directed && stage.adopt(id, gone))) disposePart(gone);
         decorParts.delete(id);
+        named.delete(`decor:${id}`);
       }
     });
     plan.forEach((k, id) => {
@@ -1072,9 +1489,11 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
         part.key = k;
         part.own = own;
         part.born = !pop || (!staged && prev && prev.own === own) ? -100 : now;
+        part.fresh = part.born === now; // r5-cena
         disposePart(prev);
         decorParts.set(id, part);
         cakeGroup.add(part.group);
+        built(`decor:${id}`, part.group, { kind: 'decor' });
         if (id === 'velas' && part.lightAt) candleLight.position.copy(part.lightAt);
         refreshParts(true);
       });
@@ -1095,7 +1514,11 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     }
 
     // movimento: o bolo "assenta" quando ganha camada, muda de formato ou de tamanho
-    if (!quiet) {
+    // (r5-cena: com a cena dirigindo, quem mexe o bolo é a animação de preparo)
+    if (directed) {
+      tweens.delete('settle');
+      cakeGroup.scale.setScalar(1);
+    } else if (!quiet) {
       if (first) {
         cakeGroup.scale.setScalar(0.82);
         tween('settle', 0.75, (k) => cakeGroup.scale.setScalar(0.82 + 0.18 * k), { ease: bounce });
@@ -1124,6 +1547,8 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       if (m.shape === 'heart') holdRotation(3200);
     } else if (standChanged || topChanged) frame({ animate: !quiet });
 
+    // r5-cena: a cena escolhe e toca a animação pelo que mudou (ou só avisa o som, na transição curta)
+    if (stage) stage.after(prev, config, { told, by, animate, directed, standChanged, bodyChanged, dripChanged: kDrip !== keys.drip, prevM });
     keys = { stand: kStand, body: kBody, drip: kDrip, pipe: kPipe, layers: kLayers };
     fitShadow();
     if (instant) while (jobs.length) jobs.shift()();
@@ -1139,6 +1564,11 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   /** Entrada em cena: o bolo assenta na boleira e as decorações aparecem uma a uma. */
   function playIntro() {
     if (!m || reduceMotion) return;
+    // r5-cena: no ateliê, a entrada é a animação de preparo (a base chega e o bolo assenta nela)
+    if (stage && atelierOn) {
+      stage.play('intro');
+      return;
+    }
     cakeGroup.scale.setScalar(0.82);
     tween('settle', 0.8, (k) => cakeGroup.scale.setScalar(0.82 + 0.18 * k), { ease: bounce });
     if (pipingPart) pipingPart.born = now + 0.12;
@@ -1380,6 +1810,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       });
     }
 
+    // r5-cena: animações de preparo, cenário e gestos (devolve true enquanto houver o que desenhar)
+    if (stage && stage.tick(dt, now)) active = true;
+
     const calm = t < quietUntil;
     const asleep = resting(t);
     let turning = false;
@@ -1443,10 +1876,12 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
           const f = flames[i];
           const flick = reduceMotion ? 1 : 1 + Math.sin(now * 13 + f.phase) * 0.06 + Math.sin(now * 23.7 + f.phase * 2.1) * 0.05;
           const sway = reduceMotion ? 1 : 1 + Math.sin(now * 7.3 + f.phase) * 0.05;
-          f.flame.scale.set(f.sx * sway, f.sy * flick, 1);
+          // r5-cena: lv = quanto a chama está acesa (1 = como sempre; a cena acende e apaga as velas por aqui)
+          const lv = Math.max(f.lv ?? 1, 1e-4);
+          f.flame.scale.set(f.sx * sway * lv, f.sy * flick * lv, 1);
           f.glow.material.opacity = 0.5;
-          f.glow.scale.setScalar(0.34 * (0.94 + (flick - 1) * 1.5));
-          sum += flick;
+          f.glow.scale.setScalar(0.34 * (0.94 + (flick - 1) * 1.5) * lv);
+          sum += flick * lv;
         }
         candleLight.intensity = (candleLight.userData.base || 0) * (sum / flames.length);
       } else candleLight.intensity = candleLight.userData.base || 0;
@@ -1457,6 +1892,8 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       const cpuMs = draw(true);
       lastRender = t;
       onFrame?.();
+      stage?.afterDraw(); // r5-cena: gravação do vídeo (copia o quadro recém-desenhado)
+      if (stageWanted && !stageLoad && m) loadStage(); // r5-cena: só depois do primeiro quadro do bolo
       // resolução dinâmica: conta o CUSTO de desenhar este quadro (CPU e, se houver, placa de vídeo) contra o
       // orçamento do modo atual — nunca o intervalo entre quadros, que atrasa por outros motivos
       if (clock() >= skipUntil) {
@@ -1469,6 +1906,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       sharp = true;
       draw();
       onFrame?.();
+      stage?.afterDraw(); // r5-cena
     } else if (!active && !ambient) stats.skipped++;
 
     // dorme quando não há mais nada para animar; qualquer mudança chama invalidate() e acorda o laço
@@ -1555,7 +1993,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
 
   /* ───────── Foto do bolo ───────── */
   /** Desenha o bolo num <canvas> 2D (vista de catálogo, bolo fechado, sem interferir no que está na tela). */
-  function snapshotCanvas({ size: px = 360, width = px, height = px, background = true, scale = 2, fill = 0.7 } = {}) {
+  function snapshotCanvas({ size: px = 360, width = px, height = px, background = true, scale = 2, fill = 0.7, scene: withScene = false } = {}) {
     if (disposed || lost || !m) return null;
     settle();
     const keepCam = getSpherical();
@@ -1563,6 +2001,8 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const keepSize = { ...size };
     // a foto usa o fundo que dá contraste a ESTE bolo (o escolhido à mão ou o automático), e as sombras desse fundo
     const shot = background ? resolveBackdrop(config, null) : getBackdrop('rosa');
+    // r5-cena: a foto de catálogo sai como sempre (sem a cozinha); snapshot({ scene: true }) fotografa com ela
+    const hidStage = !withScene && stage ? stage.shot(true) : false;
     try {
       if (keepWedge > 0.002) {
         wedge.span = 0;
@@ -1588,6 +2028,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       ctx.drawImage(renderer.domElement, 0, 0, width, height);
       return out;
     } finally {
+      if (hidStage) stage.shot(false);
       applyBackdropLook(backdrop);
       renderer.setPixelRatio(curRatio);
       renderer.setSize(keepSize.w, keepSize.h, false);
@@ -1656,6 +2097,32 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     invalidate();
   }
 
+  /**
+   * Compila os materiais de um grupo sem travar a tela e chama done() quando ficam prontos. Faz o que
+   * renderer.compileAsync faz, mas sem estourar ("reading 'isReady'") quando um material é liberado antes de o
+   * programa ficar pronto — o que acontece se o bolo muda no meio do aquecimento (e deixava done() sem rodar).
+   */
+  function compileQuietly(group, done) {
+    let pending;
+    try {
+      pending = renderer.compile(group, camera, scene);
+    } catch {
+      done();
+      return;
+    }
+    const poll = () => {
+      if (!disposed) {
+        pending.forEach((mt) => {
+          const program = renderer.properties.get(mt).currentProgram;
+          if (!program || program.isReady()) pending.delete(mt);
+        });
+      }
+      if (pending.size && !disposed) setTimeout(poll, 10);
+      else done();
+    };
+    setTimeout(poll, 10);
+  }
+
   function warmUp() {
     if (warmQueue.length || !m || disposed) return;
     warmGap = 60;
@@ -1666,7 +2133,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       const geo = new THREE.PlaneGeometry(0.01, 0.01);
       [crumbMat(0), cutFillMat(0), cutFrost, cutDrip].forEach((mt) => group.add(new THREE.Mesh(geo, mt)));
       const done = () => geo.dispose();
-      renderer.compileAsync(group, camera, scene).then(done, done);
+      compileQuietly(group, done);
     });
     tex.warmups().forEach((fn) => warmQueue.push(fn));
     const base = JSON.parse(JSON.stringify(config));
@@ -1675,7 +2142,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       const part = build({ config: cfg, m: m2, lib, layout: decorLayout(cfg, m2), tier });
       const done = () => part.dispose();
       if (!part.group.children.length) done();
-      else renderer.compileAsync(part.group, camera, scene).then(done, done);
+      else compileQuietly(part.group, done);
     };
     const pipe = (style) => {
       if (style !== 'liso' && style !== config.piping.style) warmQueue.push(tryPart({ ...base, piping: { ...base.piping, style } }, buildPiping));
@@ -1716,7 +2183,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       const geo = new THREE.PlaneGeometry(0.01, 0.01);
       ['wood', 'plank', 'marble', 'silver', 'goldfoil'].forEach((name) => group.add(new THREE.Mesh(geo, standMat(name))));
       const done = () => geo.dispose();
-      renderer.compileAsync(group, camera, scene).then(done, done);
+      compileQuietly(group, done);
     });
     DECORS.forEach((x) => !classicDecor.includes(x.id) && decor(x.id));
     // escrita com bico e topo personalizado
@@ -1780,6 +2247,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   const onLost = (ev) => {
     ev.preventDefault();
     lost = true;
+    stage?.skip(); // r5-cena: nenhuma animação fica pela metade
     stop();
     // Solta agora tudo o que estava na placa de vídeo (com o contexto perdido isso não gera avisos);
     // na volta, o Three.js envia de novo geometrias, materiais e texturas.
@@ -1832,15 +2300,279 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   resize();
   start();
 
+  // r5-decor: módulos de peças carregados sob demanda — quando um chega, as peças que esperavam por ele são
+  // refeitas (a chave do plano muda; devolver false encerra a escuta depois que o bolo é descartado)
+  // r5-tela: a inscrição é cancelada no dispose() — sem isso, cada motor encerrado ficava preso ao registro do
+  // kit de peças (e, com ele, a tela inteira): 13 ouvintes e centenas de nós a mais a cada visita
+  const offDecorReady = onDecorReady(() => {
+    if (disposed) return false;
+    if (config) setConfig(config);
+    return true;
+  });
+
+  /* ───────── r5-cena: ateliê ─────────
+     O que a cena (js/atelier/stage/index.js) recebe do motor, e a fachada `cake.atelier` do contrato. A cena é
+     baixada sob demanda; até lá a fachada responde com valores neutros e guarda o que foi pedido.
+     Tudo isto é montado só na primeira vez que alguém pede `cake.atelier`: sem o ateliê, o motor não gasta
+     nem o tempo de preparar este trecho. */
+  let loadStage = null;
+  let atelierApi = null;
+  function buildAtelier() {
+    const emitAtelier = (type, detail) => {
+      atelierSubs.get(type)?.forEach((fn) => {
+        try {
+          fn(detail);
+        } catch (err) {
+          console.error(`[ateliê] ouvinte de "${type}"`, err);
+        }
+      });
+    };
+    /** Gira o prato: o bolo, a base e a sombra do bolo no prato giram juntos em torno do eixo. */
+    function setSpin(angle) {
+      spinAngle = angle;
+      cakeGroup.rotation.y = angle;
+      standGroup.rotation.y = angle;
+      plateShade.rotation.z = angle;
+      dirty = true;
+    }
+    const stageCtx = {
+      tier,
+      reduceMotion,
+      canvas,
+      renderer,
+      scene,
+      camera,
+      controls,
+      lib,
+      groups: { standGroup, cakeGroup, bodyGroup, cutGroup, dripGroup },
+      lights: { hemi, key, fill, rim, candleLight },
+      shadows: { floor, contact, plateShade },
+      clipPlanes,
+      mats: { frostOf, dripMat, cutDrip, crustMat, bandMat, crumbMat, cutFillMat, cutJamMat, fruitPieces, fillingOf },
+      get config() {
+        return config;
+      },
+      get m() {
+        return m;
+      },
+      get layout() {
+        return layout;
+      },
+      get stand() {
+        return stand;
+      },
+      get wedge() {
+        return wedge;
+      },
+      get now() {
+        return now;
+      },
+      get cutaway() {
+        return cutaway;
+      },
+      get backdrop() {
+        return backdrop;
+      },
+      get size() {
+        return size;
+      },
+      get viewName() {
+        return cutaway ? 'inside' : viewName;
+      },
+      get pipingPart() {
+        return pipingPart;
+      },
+      get spin() {
+        return spinAngle;
+      },
+      get pending() {
+        return jobs.length;
+      },
+      decorParts,
+      coatBatches,
+      named,
+      assembly,
+      onBuild(fn) {
+        buildHooks.add(fn);
+        return () => buildHooks.delete(fn);
+      },
+      emit: emitAtelier,
+      invalidate,
+      setSpin,
+      /** drop = quanto o chão fica abaixo do pé da base · contact = raio da sombra de contato (0 = o de sempre). */
+      setGround({ drop = 0, contact: contactR = 0, radius = 0, reframe = true } = {}) {
+        const moved = Math.abs(ground.drop - drop) > 1e-4 || Math.abs(ground.radius - radius) > 1e-3;
+        ground.drop = drop;
+        ground.contact = contactR;
+        ground.radius = radius;
+        placeGround();
+        if (moved && reframe && m && !focus) frame({ animate: !reduceMotion });
+        dirty = true;
+      },
+      floorShadow(on) {
+        floor.visible = on;
+      },
+      getSpherical,
+      applySpherical(s) {
+        applySpherical(s);
+        selfMove = true;
+        controls.update();
+        selfMove = false;
+      },
+      computeFit: (angles, extra) => computeFit(size.w / size.h, angles, { ...insetsNow(), ...extra }),
+      anglesOf,
+      flyTo,
+      spinCamera: spin,
+      holdRotation,
+      setCutaway,
+      openWedge(span) {
+        // abre (ou fecha) a fatia sem animação e sem mexer na câmera: quem anima é a cena
+        tweens.delete('wedge');
+        wedge.span = span;
+        cutaway = span > 0.002;
+        applyWedge();
+      },
+      WEDGE: { a: WEDGE_A, span: WEDGE_SPAN },
+      /** Leva a câmera para a vista do corte (o que setCutaway(true) faz depois de abrir a fatia). */
+      viewInside() {
+        if (focus) return;
+        const v = anglesOf('inside');
+        const fit = computeFit(size.w / size.h, v, insetsNow());
+        swayBase = v.az;
+        swayT = 0;
+        flyTo({ az: v.az, polar: v.polar, dist: fit.dist * 0.96, ty: fit.ty, tz: fit.tz }, 0.8);
+      },
+      refreshParts,
+      disposePart,
+      compileQuietly,
+      displayColor,
+      /** A pessoa (ou o giro automático) está mexendo na câmera agora? */
+      get userActive() {
+        return userActive;
+      },
+    };
+
+    loadStage = function () {
+      if (stageLoad) return stageLoad;
+      stageLoad = import('../atelier/stage/index.js')
+        .then((mod) => {
+          if (disposed) return null;
+          stage = mod.createStage(stageCtx);
+          stage.setScene(atelierScene);
+          stage.setBackdrop(backdrop, { instant: true });
+          stage.setEnabled(atelierOn);
+          invalidate();
+          return stage;
+        })
+        .catch((err) => {
+          console.warn('[ateliê] cena indisponível:', err?.message || err);
+          return null;
+        });
+      return stageLoad;
+    };
+    /** A cena, quando chegar. Pedir aqui já a encomenda (o download espera o primeiro quadro do bolo). */
+    function stageReady() {
+      if (stage) return Promise.resolve(stage);
+      if (stageLoad) return stageLoad;
+      stageWanted = true;
+      invalidate();
+      return new Promise((resolve) => {
+        const wait = () => {
+          if (disposed) resolve(null);
+          else if (stageLoad) stageLoad.then(resolve);
+          else setTimeout(wait, 30);
+        };
+        wait();
+      });
+    }
+    const viaStage = (fn, fallback = null) => stageReady().then((s) => (s ? fn(s) : fallback));
+
+    const atelier = {
+      get enabled() {
+        return atelierOn;
+      },
+      /** Liga ou desliga a cozinha e as animações de preparo (false = "modo rápido": tudo como sempre foi). */
+      setEnabled(on) {
+        atelierOn = Boolean(on);
+        if (stage) stage.setEnabled(atelierOn);
+        else if (atelierOn) stageReady();
+        invalidate();
+      },
+      /** 'bancada' (padrão) | 'vitrine' | 'festa'. */
+      setScene(id) {
+        atelierScene = id === 'vitrine' || id === 'festa' ? id : 'bancada';
+        stage?.setScene(atelierScene);
+        invalidate();
+      },
+      get scene() {
+        return atelierScene;
+      },
+      /** 'cue' (marcas de som) · 'busy' (true/false: animação em curso). Devolve a função que cancela. */
+      on(type, fn) {
+        if (!atelierSubs.has(type)) atelierSubs.set(type, new Set());
+        atelierSubs.get(type).add(fn);
+        return () => atelierSubs.get(type)?.delete(fn);
+      },
+      /** Promessa que resolve quando a cena estiver carregada (true) ou não puder ser (false). */
+      get ready() {
+        return stageReady().then(Boolean);
+      },
+      get busy() {
+        return Boolean(stage?.busy);
+      },
+      play: (name, opts) => viaStage((s) => s.play(name, opts), false),
+      skip() {
+        stage?.skip();
+      },
+      replay: (opts) => viaStage((s) => s.replay(opts), false),
+      pick: (x, y) => (stage ? stage.pick(x, y) : (stageReady(), null)),
+      ghost: (piece, hit) => (stage ? stage.ghost(piece, hit) : { ok: false, why: 'carregando' }),
+      /** Toque na borda do bolo: a gota de calda mais próxima escorre de novo (só com calda). */
+      dripAt: (hit) => (stage ? stage.dripAt(hit) : false),
+      candles: {
+        get lit() {
+          return stage ? stage.candles.lit : true;
+        },
+        get count() {
+          return decorParts.get('velas')?.flames.length || 0;
+        },
+        light: () => viaStage((s) => s.candles.light(), false),
+        blow: (strength = 1) => viaStage((s) => s.candles.blow(strength), false),
+      },
+      spread: {
+        begin: (part) => (stage ? stage.spread.begin(part) : { progress: 1, done: Promise.resolve(false) }),
+        feed(deltaAngle) {
+          stage?.spread.feed(deltaAngle);
+        },
+        cancel() {
+          stage?.spread.cancel();
+        },
+      },
+      reveal: (opts) => viaStage((s) => s.reveal(opts), false),
+      capture: {
+        get supported() {
+          return typeof MediaRecorder !== 'undefined' && typeof HTMLCanvasElement !== 'undefined' && typeof HTMLCanvasElement.prototype.captureStream === 'function';
+        },
+        video: (opts) => viaStage((s) => s.capture.video(opts), null).catch(() => null),
+      },
+    };
+    return atelier;
+  }
+
   function dispose() {
     if (disposed) return;
     disposed = true;
+    if (typeof offDecorReady === 'function') offDecorReady(); // r5-tela
     stop();
     clearTimeout(resumeTimer);
     clearTimeout(warmTimer);
     warmQueue.length = 0;
     jobs.length = 0;
     tweens.clear();
+    // r5-cena: a cena solta o que é dela (cenário, ferramentas, partículas, gravação)
+    stage?.dispose();
+    stage = null;
+    atelierSubs.clear();
     ro?.disconnect();
     io?.disconnect();
     window.removeEventListener('resize', resize);
@@ -1853,12 +2585,15 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     disposePart(pipingPart);
     decorParts.forEach(disposePart);
     decorParts.clear();
+    coatBatches.forEach((b) => b.mesh?.dispose());
+    Object.values(rosetteGeos).forEach((g) => g.dispose());
     [standGroup, bodyGroup, cutGroup, dripGroup].forEach(disposeGroup);
     shadowPlane.dispose();
     plateShade.material.dispose();
     floor.material.dispose();
     contact.material.dispose();
-    [porcelain, gold, dripMat, cutDrip, ...Object.values(standMats), ...frostTiers.flatMap((f) => (f ? [f.side, f.top, f.cut, f.scrape, f.map, f.topRustic] : [])), ...crustMats, ...crumbMats, ...bandMats, ...cutFillMats, ...jamMats, ...cutJamMats, fruitMat].forEach((mt) => mt?.dispose());
+    buildHooks.clear();
+    [porcelain, gold, dripMat, cutDrip, bundtMat, ...Object.values(standMats), ...frostTiers.flatMap((f) => (f ? [f.side, f.top, f.cut, f.scrape, f.map, f.tmap, f.tnormal, f.marble, f.coat, f.topRustic, ...Object.values(f.topTex || {})] : [])), ...crustMats, ...crumbMats, ...bandMats, ...cutFillMats, ...jamMats, ...cutJamMats, fruitMat].forEach((mt) => mt?.dispose());
     lib.dispose();
     tex.dispose();
     envTarget?.dispose();
@@ -1870,6 +2605,14 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
 
   return {
     setConfig,
+    /** As partes do bolo que está na tela, por nome (ver o cabeçalho deste arquivo). */
+    parts: () => [...named.values()].map((p) => ({ ...p, objects: p.objects.slice() })),
+    /** Avisa a cada parte (re)construída: fn({ name, kind, tier, index, objects }). Devolve a função que cancela. */
+    onBuild(fn) {
+      buildHooks.add(fn);
+      return () => buildHooks.delete(fn);
+    },
+    assembly,
     setCutaway,
     setAutoRotate,
     setView,
@@ -1891,6 +2634,10 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     resize,
     dispose,
     settle,
+    /** r5-cena: a cozinha e as animações de preparo (contrato em js/atelier/README.md, §2). */
+    get atelier() {
+      return (atelierApi ||= buildAtelier());
+    },
     get cutaway() {
       return cutaway;
     },
@@ -1917,6 +2664,10 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       },
       get pending() {
         return jobs.length;
+      },
+      /** r5-cena: a cena do ateliê, depois de carregada (bancada de testes e medições). */
+      get stage() {
+        return stage;
       },
       /** A configuração que está desenhada agora (para conferir que a tela mostra o bolo que é cobrado). */
       get config() {

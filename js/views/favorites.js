@@ -1,10 +1,11 @@
 // BOLAB — favoritos: itens salvos com o coração e bolos montados no personalizador 3D.
 // Celular: linhas de lista, como no cardápio. Computador: grade de cartões.
-import { html, icon, money, plural, dateShort, on, toast, confirmDialog } from '../ui.js';
+import { html, icon, plural, dateShort, on, toast, confirmDialog } from '../ui.js';
 import { productCard, productRow, favButton, pageHead, mediaFallback, sectionHead, promoBanner, priceButton } from '../components.js';
 import { store, favs, savedCakes, cart } from '../store.js';
 import { searchProducts, isCake } from '../data/products.js';
-import { normalizeConfig, servesOf, prepHoursOf, minPrice } from '../customizer/pricing.js';
+import { normalizeConfig, servesOf, prepHoursOf } from '../customizer/pricing.js';
+import { MONTAR, montarFrom } from '../data/montar.js';
 
 const SUMMARY_MAX = 3;
 /** Com menos favoritos do que isto, a tela ainda sugere os mais pedidos. */
@@ -25,11 +26,11 @@ function cakeExtras(config) {
 function promo3d() {
   return promoBanner({
     tone: 'stage',
-    tag: 'Só na BOLAB',
-    title: 'Monte o seu bolo em 3D',
-    text: `Salve para pedir quando quiser. A partir de ${money(minPrice()).replace(',00', '')}.`,
-    cta: 'Montar meu bolo',
-    href: '#/monte-seu-bolo',
+    tag: MONTAR.tag,
+    title: MONTAR.title,
+    text: `${MONTAR.favoritesLine} ${montarFrom()}`,
+    cta: MONTAR.cta,
+    href: MONTAR.href,
     img: 'assets/img/cz-morango.webp',
     cutout: true,
   });
@@ -124,7 +125,7 @@ const view = {
           : ''}
 
         <section class="favs-section" aria-labelledby="favs-cakes-t">
-          ${sectionHead('Bolos que você montou', cakes.length ? { href: '#/monte-seu-bolo', label: 'Montar outro', id: 'favs-cakes-t' } : { id: 'favs-cakes-t' })}
+          ${sectionHead('Bolos que você montou', cakes.length ? { href: MONTAR.href, label: 'Montar outro', id: 'favs-cakes-t' } : { id: 'favs-cakes-t' })}
           ${cakes.length ? html`<div class="favs-cakes">${cakes.map(cakeCard)}</div>` : promo3d()}
         </section>
 
