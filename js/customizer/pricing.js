@@ -121,6 +121,24 @@ export function defaultConfig() {
   };
 }
 
+/**
+ * r7-criar — O bolo EM BRANCO, de onde toda criação nova começa na tela: boleira, três camadas de baunilha, recheio
+ * de Ninho, buttercream branco e liso, sem bico, sem calda e sem decoração. A pessoa vê o bolo nascer conforme escolhe.
+ *
+ * Por que não é o próprio defaultConfig(): o padrão acima é a REFERÊNCIA do formato — o link de um bolo
+ * (js/customizer/share.js) guarda só o que difere dele, e normalizeConfig() completa com ele o que faltar numa
+ * inspiração ou num bolo antigo. Trocar aquele padrão mudaria, sem aviso, todo link já compartilhado e todo bolo
+ * guardado pela metade. Por isso ele fica como está, e a tela parte deste aqui.
+ */
+export function blankConfig() {
+  const c = defaultConfig();
+  c.fillings = ['ninho', 'ninho'];
+  c.covering = { ...c.covering, color: '#ffffff' };
+  c.piping = { style: 'liso', where: 'top', color: '#ffffff' };
+  c.decor.items = [];
+  return c;
+}
+
 /** Limpa uma mensagem para caber na plaquinha. */
 export function cleanMessage(text, max = MESSAGE_MAX) {
   return String(text || '')

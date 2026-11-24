@@ -835,11 +835,6 @@
   font-weight: 600;
 }
 
-.cz-opt--hand .cz-opt__price small {
-  color: var(--text-2);
-  font-weight: 600;
-}
-
 .cz-quiet__btn[hidden] {
   display: none;
 }
@@ -981,5 +976,189 @@
   .cz-bg,
   .at-reveal__shade {
     transition-duration: 150ms;
+  }
+}
+
+/* ───────── r7-criar: "Mostrar para um adulto" (js/atelier/ui/card.js → openShow) ─────────
+   O cartão do bolo (foto, nome, preço), o QR para quem está perto, a mensagem com o link para quem está longe. */
+.at-show {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr); /* o endereço comprido não alarga a folha */
+  gap: 16px;
+}
+
+.at-show__card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.at-show__pic {
+  flex: none;
+  width: 96px;
+  height: 96px;
+  border-radius: var(--r-lg);
+  background: var(--fill);
+  box-shadow: var(--shadow-1);
+  object-fit: cover;
+}
+
+.at-show__info {
+  display: grid;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+}
+
+.at-show__info label {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+
+.at-show__info .input {
+  font-size: 1rem; /* 16 px: o iPhone não aproxima a tela ao focar */
+  font-weight: 700;
+}
+
+.at-show__price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin: 0;
+}
+
+.at-show__price strong {
+  color: var(--price);
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.at-show__price span {
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+
+.at-show__near {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 14px 12px;
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-1);
+  text-align: center;
+}
+
+.at-show__near[hidden] {
+  display: none;
+}
+
+.at-show__near p,
+.at-show__lead {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.at-show__near strong,
+.at-show__lead strong {
+  display: block;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.at-show__lead strong {
+  display: inline;
+}
+
+/* o código é sempre preto no branco (é o que os leitores esperam), seja qual for o tema da loja */
+.at-show__qr {
+  display: grid;
+  max-width: 100%;
+  padding: 4px;
+  border-radius: var(--r-md);
+  background: #fff;
+}
+
+.at-show__qrpic {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.at-show__far {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.at-show__msg {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--fill);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.at-show__link {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.at-show__ways {
+  display: flex;
+  gap: 8px;
+}
+
+.at-show__ways .btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+.at-show__ways svg,
+.at-show__order svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.at-show__keep {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+}
+
+.at-show__keep svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--positive);
+}
+
+@media (max-width: 345px) {
+  .at-show__pic {
+    width: 76px;
+    height: 76px;
+  }
+
+  .at-show__ways {
+    flex-wrap: wrap;
   }
 }

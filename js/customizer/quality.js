@@ -10,6 +10,28 @@
 // O motor ajusta sozinho: primeiro baixa a resolução (createResolutionGovernor); se, já no piso, desenhar
 // continuar caro, rebaixa o nível uma vez (mobile → lite) e nunca sobe de volta no meio do uso.
 // Para testar um nível à força: ?cztier=mobile | lite | desktop no endereço (antes do #).
+//
+// r7-motor — pós-processamento por nível (js/customizer/fx/post.js; só com WebGL2):
+//   desktop  antisserrilhado no alvo (MSAA 4×) + oclusão de ambiente em duas escalas (12 amostras de contato +
+//            8 de penumbra larga), meia resolução, ampliada respeitando as bordas + brilho das altas luzes em 5 níveis.
+//   mobile   MSAA 4× + oclusão de contato de 8 amostras (meia resolução) + brilho em 4 níveis.
+//   foto     (snapshot, miniaturas) 20 + 12 amostras, 5 níveis de brilho — não tem pressa.
+//   lite     sem pós: o bolo vai direto para a tela, como sempre (é também o caminho do WebGL1).
+// Quando desenhar fica caro, a ordem é: 1) a resolução desce até o piso; 2) o pós encolhe ("eco": sai a oclusão,
+// fica o brilho); 3) o nível cai para o leve (aí o pós vira só o antisserrilhado).
+// Para testar: ?czpost=0 (sem pós) | eco | mobile | desktop | copia (só o antisserrilhado) · ?czgl=1 força WebGL1.
+
+/** r7-motor: receitas de pós-processamento (as chaves e os números estão explicados em fx/post.js). */
+export const POST = {
+  desktop: { msaa: 4, ao: { taps: 12, turns: 5, blur: 4, wide: { taps: 8, turns: 3 } }, bloom: { levels: 5 }, dither: 1 },
+  mobile: { msaa: 4, ao: { taps: 8, turns: 3, blur: 4 }, bloom: { levels: 4 }, dither: 1 },
+  // o pós encolhido: sai o que mais custa por ponto (a oclusão); o brilho, de um quarto da resolução, fica
+  eco: { msaa: 4, ao: null, bloom: { levels: 3 }, dither: 1 },
+  // só o antisserrilhado do alvo (o aparelho rebaixado em uso não pode trocar o antisserrilhado da tela)
+  copia: { msaa: 4, ao: null, bloom: null, dither: 0 },
+  // foto de catálogo e miniaturas: sem pressa, o melhor de tudo
+  foto: { msaa: 4, ao: { taps: 20, turns: 7, blur: 4, wide: { taps: 12, turns: 5 } }, bloom: { levels: 5 }, dither: 1 },
+};
 
 export const TIERS = {
   desktop: {
@@ -36,6 +58,10 @@ export const TIERS = {
     activeFps: 0, // arrastando ou animando: 0 = o ritmo da tela
     wedgeEvery: 1, // "ver por dentro": refaz as faces do corte a cada N quadros da abertura
     idleSleep: 0, // segundos sem toque até o giro automático descansar (0 = nunca)
+    post: 'desktop', // r7-motor: receita de pós-processamento (POST) · postFallback: para onde encolhe
+    postFallback: 'eco',
+    envSize: 512, // r7-motor: lado do cubo do estúdio refletido (fx/studio.js)
+    transmission: true, // r7-motor: materiais com transmissão de verdade (gelatina, vidro): só aqui (fx/materials.js)
     fallback: null,
   },
   // Orçamento do celular: até 2 pixels por ponto (descendo a 1,25 se os quadros atrasarem), mapa de sombras de
@@ -65,6 +91,10 @@ export const TIERS = {
     activeFps: 60,
     wedgeEvery: 2,
     idleSleep: 25,
+    post: 'mobile',
+    postFallback: 'eco',
+    envSize: 256,
+    transmission: false,
     fallback: 'lite',
   },
   // Nível leve: um passe só (sem mapa de sombras), sem verniz, e no máximo ~110 mil triângulos.
@@ -92,9 +122,34 @@ export const TIERS = {
     activeFps: 60,
     wedgeEvery: 2,
     idleSleep: 25,
+    post: null, // sem pós: direto na tela
+    postFallback: null,
+    envSize: 256,
+    transmission: false,
     fallback: null,
   },
 };
+
+/** r7-motor: o que o endereço pede para o pós (testes): undefined = o do nível · null = sem pós · nome de receita. */
+export function forcedPost() {
+  try {
+    const v = new URLSearchParams(window.location.search).get('czpost');
+    if (v == null) return undefined;
+    if (v === '0' || v === 'off' || v === 'nao') return null;
+    return POST[v] ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** r7-motor: ?czgl=1 força o WebGL1 (confere o caminho sem pós em aparelho novo). */
+export function forcedWebGL1() {
+  try {
+    return new URLSearchParams(window.location.search).get('czgl') === '1';
+  } catch {
+    return false;
+  }
+}
 
 /* O aparelho que precisou do nível leve começa nele nas próximas visitas (por 14 dias): não passa de novo
    pelos segundos de engasgo até o motor decidir. Guardado só no próprio aparelho. */
@@ -165,6 +220,8 @@ export function createResolutionGovernor({ max, dpr = 1, step = 0.25 }) {
   let lastResort = false;
   let starved = 0; // janelas seguidas estouradas sem ter mais para onde descer
   let exhausted = false;
+  let strained = false; // r7-motor: prestes a usar o último recurso (ver get strained)
+  let relieved = false;
   let upNeed = 30;
   let sinceUp = 1e9; // quadros desde a última subida
   let cpu = 0;
@@ -178,6 +235,20 @@ export function createResolutionGovernor({ max, dpr = 1, step = 0.25 }) {
     /** Desenhar continua caro mesmo na menor resolução: é hora de rebaixar o nível. */
     get exhausted() {
       return exhausted;
+    },
+    /**
+     * r7-motor: a resolução chegou ao piso e desenhar continua caro — o próximo passo seria o último recurso
+     * (1 ponto por ponto). Antes dele o motor tem uma chance de aliviar o quadro de outro jeito (encolher o
+     * pós-processamento) e responde com relief(); só depois, se continuar caro, a resolução desce ao 1,0.
+     */
+    get strained() {
+      return strained;
+    },
+    relief() {
+      strained = false;
+      relieved = true;
+      stuck = 0;
+      over = 0;
     },
     /**
      * costMs = custo de desenhar o quadro (o maior entre CPU e placa de vídeo) · budgetMs = orçamento do modo
@@ -208,6 +279,11 @@ export function createResolutionGovernor({ max, dpr = 1, step = 0.25 }) {
           return true;
         }
         if (!lastResort && ratio > 1 + 1e-3 && ++stuck >= 3) {
+          if (!relieved) {
+            strained = true; // (o motor responde com relief(); a conta recomeça)
+            stuck = 0;
+            return false;
+          }
           lastResort = true;
           stuck = 0;
           ratio = Math.max(1, ratio - step);
@@ -241,12 +317,13 @@ export function createResolutionGovernor({ max, dpr = 1, step = 0.25 }) {
       over = under = stuck = starved = 0;
       lastResort = false;
       exhausted = false;
+      strained = false;
       upNeed = 30;
       sinceUp = 1e9;
     },
     /** Retrato do regulador, só para conferência (gancho ?czdebug). */
     state() {
-      return { ratio, max: top, floor, lastResort, exhausted, overFrames: over, calmFrames: under, upAfter: upNeed, cpuMs: +cpu.toFixed(2), gpuMs: gpu == null ? null : +gpu.toFixed(2), budgetMs: +budget.toFixed(1), steps: { ...steps } };
+      return { ratio, max: top, floor, lastResort, exhausted, strained, relieved, overFrames: over, calmFrames: under, upAfter: upNeed, cpuMs: +cpu.toFixed(2), gpuMs: gpu == null ? null : +gpu.toFixed(2), budgetMs: +budget.toFixed(1), steps: { ...steps } };
     },
   };
 }

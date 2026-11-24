@@ -67,7 +67,9 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   --pn-gutter: 16px;
   /* --cz-stage-to é o destino; --cz-stage vai até ele com transição. A tela 3D usa o destino direto:
      assim ela muda de tamanho uma vez só, e não a cada quadro da transição. */
-  --cz-stage-to: clamp(264px, 48vh, 500px);
+  /* r7-criar: nas perguntas o palco fica com 43% da altura (eram 48%): cabem duas fileiras de cartões grandes na
+     primeira tela de 390 × 844, e o bolo continua inteiro à vista. No resumo ele volta a crescer. */
+  --cz-stage-to: clamp(248px, 43vh, 460px);
   --cz-stage: var(--cz-stage-to);
   position: relative;
   display: grid;
@@ -96,7 +98,7 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 @supports (height: 100dvh) {
   .cz {
-    --cz-stage-to: clamp(264px, 48dvh, 500px);
+    --cz-stage-to: clamp(248px, 43dvh, 460px);
     height: 100dvh;
   }
 
@@ -1067,163 +1069,17 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   }
 }
 
-/* Título da etapa: só no computador — no celular, o chip escuro já diz onde a pessoa está */
-.cz-head {
+/* Título da etapa: só no computador — no celular {
   display: none;
   flex-direction: column;
   gap: 2px;
 }
 
-.cz-head h2 {
-  font-size: var(--fs-2xl);
-  font-weight: 800;
-}
-
-.cz-head p {
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-}
-
-/* Âncora de preço (etapa 1) */
-.cz-anchor {
-  margin: 0 0 6px;
-  color: var(--text-2);
-  font-size: var(--fs-meta);
-  line-height: 1.35;
-}
-
-.cz-anchor strong {
-  color: var(--text);
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-/* Dica da chef: no celular, uma linha que abre ao toque; no computador, sempre aberta */
-.cz-tip {
+/* Dica da chef: no celular,
+uma linha que abre ao toque; no computador {
   margin-top: 0;
   border-radius: var(--r-md);
   background: var(--fill);
-}
-
-.cz-sec + .cz-tip {
-  margin-top: 16px;
-}
-
-.cz-tip__btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 44px;
-  padding: 6px 10px 6px 8px;
-  border-radius: inherit;
-  color: var(--text);
-  font-size: var(--fs-meta);
-  line-height: 1.4;
-  text-align: left;
-}
-
-.cz-tip__icon {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: var(--surface);
-  color: var(--action);
-}
-
-.cz-tip__icon svg {
-  width: 17px;
-  height: 17px;
-}
-
-.cz-tip__body {
-  display: flex;
-  flex: 1;
-  align-items: baseline;
-  gap: 7px;
-  min-width: 0;
-}
-
-.cz-tip__body strong {
-  flex: none;
-  color: var(--text);
-  font-size: var(--fs-meta);
-  font-weight: 800;
-}
-
-.cz-tip__text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cz-tip__chev {
-  flex: none;
-  color: var(--text-2);
-}
-
-.cz-tip__chev svg {
-  width: 16px;
-  height: 16px;
-  transition: transform var(--t-med) var(--ease);
-}
-
-.cz-tip.is-open .cz-tip__btn {
-  align-items: flex-start;
-  padding-block: 9px;
-}
-
-.cz-tip.is-open .cz-tip__body {
-  display: block;
-}
-
-.cz-tip.is-open .cz-tip__body strong {
-  display: block;
-}
-
-.cz-tip.is-open .cz-tip__text {
-  display: block;
-  white-space: normal;
-}
-
-.cz-tip.is-open .cz-tip__chev svg {
-  transform: rotate(180deg);
-}
-
-/* Seções */
-.cz-sec {
-  margin-top: 16px;
-}
-
-.cz-sec__head {
-  display: flex;
-  align-items: baseline; /* nota comprida quebra em duas linhas: a primeira fica na linha do título */
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 28px;
-  margin-bottom: 8px;
-}
-
-.cz-sec__head h3 {
-  flex: none;
-  font-family: var(--font-body);
-  font-size: var(--fs-md);
-  font-weight: 800;
-  letter-spacing: 0;
-}
-
-.cz-sec__note {
-  min-width: 0;
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  font-weight: 700;
-  line-height: 1.3;
-  text-align: right;
-  text-wrap: balance;
 }
 
 /* "(opcional)": sempre em peso normal, logo depois do rótulo */
@@ -1253,6 +1109,19 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   }
 }
 
+/* alvo de toque de 44 px: a caixa visível tem 36 ou 40; o que falta é área invisível acima e abaixo */
+.cz-linkbtn,
+.cz-ideas button {
+  position: relative;
+}
+
+.cz-linkbtn::after,
+.cz-ideas button::after {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
+}
+
 .cz-linkbtn svg {
   width: 16px;
   height: 16px;
@@ -1271,58 +1140,6 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 .cz-linkbtn--inset {
   margin: 4px 0 -6px -12px;
-}
-
-/* Grades de opções */
-.cz-grid {
-  display: grid;
-  gap: 8px;
-}
-
-.cz-grid--2 {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.cz-grid--3 {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.cz-grid--4 {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-/* Cartão de opção */
-.cz-opt {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  min-height: 64px;
-  padding: 10px 12px;
-  border-radius: var(--r-md);
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--border);
-  text-align: left;
-  transition: box-shadow var(--t-fast), background var(--t-fast), transform var(--t-fast);
-}
-
-@media (hover: hover) {
-  .cz-opt:hover {
-    box-shadow: inset 0 0 0 1px var(--border-strong);
-  }
-}
-
-.cz-opt:active {
-  transform: scale(0.98);
-}
-
-.cz-opt.is-on {
-  background: var(--action-soft);
-  box-shadow: inset 0 0 0 1.5px var(--action);
-}
-
-.cz-opt.is-off {
-  opacity: 0.5;
 }
 
 .cz-opt__body {
@@ -1369,57 +1186,19 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   white-space: nowrap;
 }
 
-/* r5-qa: peça colocada com o dedo — "cada · topo ou lateral" não cabe em uma linha no cartão do celular: quebra */
-.cz-opt--hand .cz-opt__price small {
-  white-space: normal;
-}
-
 .cz-opt__price.is-free {
   color: var(--positive);
   font-weight: 800;
 }
 
-.cz-opt__check {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--action);
-  box-shadow: 0 0 0 2.5px var(--surface);
-  color: var(--white);
-  opacity: 0;
-  transform: scale(0.4);
-  transition: opacity var(--t-fast), transform var(--t-med) var(--ease);
-}
-
-.cz-opt__check svg {
-  width: 12px;
-  height: 12px;
-  stroke-width: 3.2;
-}
-
-.cz-opt.is-on .cz-opt__check {
-  opacity: 1;
-  transform: none;
-}
-
-/* Variante em coluna (formato, tamanho, acabamento) */
-.cz-opt--tile {
+/* Variante em coluna (formato,
+tamanho {
   flex-direction: column;
   justify-content: center;
   gap: 2px;
   min-height: 84px;
   padding: 8px 4px;
   text-align: center;
-}
-
-.cz-opt--tile .cz-opt__body {
-  flex: none;
-  align-items: center;
 }
 
 .cz-opt__art {
@@ -1434,21 +1213,6 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 .cz-opt__art svg {
   width: 100%;
   height: 100%;
-}
-
-.cz-opt.is-on .cz-opt__art {
-  color: var(--action);
-}
-
-.cz-opt__big {
-  font-size: 1.5rem;
-  font-weight: 800;
-  line-height: 1;
-  color: var(--text);
-}
-
-.cz-opt.is-on .cz-opt__big {
-  color: var(--action);
 }
 
 /* Amostras de material */
@@ -1544,13 +1308,6 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 
 .cz-color.is-on svg {
   opacity: 1;
-}
-
-.cz-colorname {
-  margin-top: 6px;
-  color: var(--text-2);
-  font-size: var(--fs-xs);
-  font-weight: 700;
 }
 
 /* Segmentos (modo, onde aplicar) */
@@ -1757,105 +1514,8 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   font-weight: 800;
 }
 
-/* Inspirações — no celular, uma fileira de miniaturas (a primeira é o "Surpreenda-me") */
-.cz-sec--presets {
+/* Inspirações — no celular {
   margin-top: 0;
-}
-
-.cz-sec--presets .cz-sec__head {
-  display: none;
-}
-
-.cz-presets {
-  display: flex;
-  gap: 8px;
-  margin-inline: -16px;
-  padding: 2px 16px 4px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  scroll-snap-type: x proximity;
-  scroll-padding-inline: var(--pn-gutter); /* a primeira miniatura para na margem, não colada na borda da tela */
-}
-
-.cz-presets::-webkit-scrollbar {
-  display: none;
-}
-
-.cz-preset {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  gap: 4px;
-  width: 78px;
-  scroll-snap-align: start;
-  text-align: center;
-}
-
-.cz-preset__img {
-  display: grid;
-  place-items: center;
-  width: 78px;
-  height: 78px;
-  border-radius: var(--r-lg);
-  background: var(--fill);
-  box-shadow: inset 0 0 0 1px var(--border);
-  color: var(--brand);
-  overflow: hidden;
-  transition: box-shadow var(--t-fast), transform var(--t-med) var(--ease);
-}
-
-@media (hover: hover) {
-  .cz-preset:hover .cz-preset__img {
-    box-shadow: inset 0 0 0 1px var(--border-strong);
-    transform: translateY(-2px);
-  }
-}
-
-.cz-preset__img img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transform: scale(1.14);
-}
-
-.cz-preset__img svg {
-  width: 30px;
-  height: 30px;
-}
-
-.cz-preset--surprise .cz-preset__img {
-  background: var(--brand-soft);
-  box-shadow: none;
-  border: 1.5px dashed var(--border-strong);
-  color: var(--action-hover);
-}
-
-.cz-preset--surprise .cz-preset__text strong {
-  display: block;
-  color: var(--action-hover);
-  font-size: 0.65625rem;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-}
-
-.cz-preset__text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.2;
-}
-
-.cz-preset__text strong {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  color: var(--text-2);
-  font-size: var(--fs-2xs);
-  font-weight: 800;
-}
-
-.cz-preset__text span {
-  display: none;
 }
 
 /* Campo de texto com contador */
@@ -2018,6 +1678,16 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
   }
 }
 
+.cz-rename {
+  position: relative;
+}
+
+.cz-rename::after {
+  content: "";
+  position: absolute;
+  inset: -6px 0;
+}
+
 .cz-rename svg {
   width: 14px;
   height: 14px;
@@ -2077,13 +1747,6 @@ body[data-layout="immersive"]:has(.overlay) .toast-host {
 .cz-offer__ship strong {
   color: var(--text);
   font-weight: 800;
-}
-
-.cz-offer__sub {
-  margin-top: 8px;
-  color: var(--text-3);
-  font-size: var(--fs-xs);
-  font-weight: 600;
 }
 
 .cz-sum {
@@ -2755,20 +2418,6 @@ button.st-row:active .st-row__icon {
   display: none;
 }
 
-.cz-kicker {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-2);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-}
-
-.cz-kicker svg {
-  width: 14px;
-  height: 14px;
-}
-
 /* Diálogos próprios */
 .dialog__foot .cz-fit {
   flex: 1 1 auto;
@@ -2813,21 +2462,6 @@ button.st-row:active .st-row__icon {
 
 .cz-added .price {
   margin-top: 6px;
-}
-
-.cz-share {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.cz-share img {
-  width: 100%;
-  max-height: 52vh;
-  max-height: 52dvh;
-  border-radius: var(--r-lg);
-  object-fit: contain;
-  background: var(--action-soft);
 }
 
 /* ───────── Tablet em pé (640 a 899 px de largura): a Bô usa a caixa maior (72 px) e fica a 20 px das bordas;
@@ -3291,12 +2925,6 @@ button.st-row:active .st-row__icon {
   }
 }
 
-@media (max-width: 360px) {
-  .cz-anchor {
-    font-size: var(--fs-xs);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .cz {
     transition: none;
@@ -3386,33 +3014,7 @@ button.st-row:active .st-row__icon {
   height: 16px;
 }
 
-/* Ocasiões das inspirações */
-.cz-occ {
-  margin-bottom: 8px;
-}
-
-.cz-occ .cz-chip {
-  min-height: 36px;
-  padding: 0 12px;
-  font-size: var(--fs-meta);
-}
-
-/* Cinco formatos numa fileira */
-.cz-grid--5 {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.cz-grid--5 .cz-opt__name {
-  font-size: var(--fs-2xs);
-}
-
-.cz-grid--5 .cz-opt__price {
-  font-size: var(--fs-2xs);
-}
-
-/* "Andares, altura e base": fechado para quem quer um bolo simples */
-.cz-more {
+/* "Andares {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3427,46 +3029,6 @@ button.st-row:active .st-row__icon {
   transition: box-shadow var(--t-fast);
 }
 
-@media (hover: hover) {
-  .cz-more:hover {
-    box-shadow: inset 0 0 0 1px var(--border-strong);
-  }
-}
-
-.cz-more__text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  line-height: 1.3;
-}
-
-.cz-more__text strong {
-  font-size: var(--fs-sm);
-  font-weight: 800;
-}
-
-.cz-more__text small {
-  overflow: hidden;
-  color: var(--text-2);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cz-more > svg {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  color: var(--text-2);
-  transition: transform var(--t-med) var(--ease);
-}
-
-.cz-more[aria-expanded="true"] > svg {
-  transform: rotate(180deg);
-}
-
-.cz-morebody,
 .cz-adjust {
   margin-top: 8px;
   padding: 12px 14px 14px;
@@ -3475,13 +3037,11 @@ button.st-row:active .st-row__icon {
   box-shadow: inset 0 0 0 1px var(--border);
 }
 
-.cz-morebody .cz-sub__label:not(:first-child),
 .cz-adjust .cz-sub__label:not(:first-child),
 .cz-sub .cz-sub__label:not(:first-child) {
   margin-top: 14px;
 }
 
-.cz-morebody .cz-seg,
 .cz-adjust .cz-seg {
   background: var(--fill);
 }
@@ -3558,47 +3118,6 @@ button.st-row:active .st-row__icon {
   box-shadow: 0 0 0 1.5px var(--surface), inset 0 0 0 1px var(--border-strong);
 }
 
-/* Estilos de cobertura: cada ficha mostra o efeito nas cores do bolo */
-.cz-fins {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.cz-fin {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  min-height: 92px;
-  padding: 8px 2px 6px;
-  border-radius: var(--r-md);
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--border);
-  color: var(--text);
-  font-size: var(--fs-2xs);
-  font-weight: 800;
-  line-height: 1.2;
-  text-align: center;
-  transition: box-shadow var(--t-fast), background var(--t-fast);
-}
-
-.cz-fin small {
-  color: var(--text-2);
-  font-size: var(--fs-2xs);
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.cz-fin.is-on {
-  background: var(--action-soft);
-  box-shadow: inset 0 0 0 1.5px var(--action);
-}
-
-.cz-fin.is-off {
-  opacity: 0.38;
-}
-
 .cz-fin__art {
   flex: none;
   width: 40px;
@@ -3637,10 +3156,11 @@ button.st-row:active .st-row__icon {
   background: radial-gradient(#d4a23a 1.5px, transparent 2px) 0 0 / 9px 9px, radial-gradient(#d4a23a 1px, transparent 1.5px) 4px 5px / 11px 11px, var(--c);
 }
 
-/* ───────── Rodada 5 (estrutura): listas grandes, regras de confeiteiro, formatos e tamanhos em fileira ───────── */
+/* ───────── Rodada 5 (estrutura): listas grandes,
+regras de confeiteiro,
+formatos e tamanhos em fileira ───────── */
 
-/* Formatos e tamanhos: uma fileira que desliza no celular (tudo numa linha só, sem empurrar o resto para baixo) */
-.cz-rail {
+/* Formatos e tamanhos: uma fileira que desliza no celular (tudo numa linha só {
   display: flex;
   gap: 8px;
   margin-inline: -16px;
@@ -3652,164 +3172,16 @@ button.st-row:active .st-row__icon {
   contain: inline-size;
 }
 
-.cz-rail::-webkit-scrollbar {
-  display: none;
-}
-
-.cz-rail > .cz-opt {
-  flex: none;
-  width: 78px;
-  scroll-snap-align: start;
-}
-
-.cz-rail--sizes > .cz-opt {
-  width: 102px;
-  min-height: 104px;
-}
-
-.cz-rail .cz-opt__name {
-  font-size: var(--fs-xs);
-}
-
-.cz-rail .cz-opt__price {
-  font-size: var(--fs-2xs);
-}
-
-.cz-rail--sizes .cz-opt__desc {
-  font-size: var(--fs-2xs);
-}
-
-/* "Bentô" e "GG" no lugar da letra grande do tamanho */
-.cz-opt__big--word {
-  font-size: 1.0625rem;
-  line-height: 1.4;
-}
-
-@media (min-width: 900px) {
-  .cz-rail {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    margin-inline: 0;
-    padding: 6px 0 0;
-    overflow: visible;
-  }
-
-  .cz-rail--sizes {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
-
-  .cz-rail > .cz-opt,
-  .cz-rail--sizes > .cz-opt {
-    width: auto;
-  }
-}
-
 /* Amostra em duas cores (massa mesclada; recheio de creme com geleia) */
 .cz-swatch--duo {
   background: linear-gradient(135deg, var(--c) 0 52%, var(--c2) 52% 100%);
 }
 
-/* Busca das listas grandes */
-.cz-find {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  margin-bottom: 8px;
-  padding: 0 12px;
-  border-radius: var(--r-md);
-  background: var(--fill);
-  color: var(--text-2);
-}
-
-.cz-find svg {
-  flex: none;
-  width: 18px;
-  height: 18px;
-}
-
-.cz-find input {
-  flex: 1;
-  min-width: 0;
-  height: 44px;
-  border: 0;
-  background: none;
-  color: var(--text);
-  font: inherit;
-  font-size: var(--fs-md);
-  outline: none;
-}
-
-.cz-find input::placeholder {
-  color: var(--text-3);
-}
-
-.cz-find:focus-within {
-  box-shadow: inset 0 0 0 1.5px var(--action);
-}
-
-.cz-find input::-webkit-search-cancel-button {
-  display: none;
-}
-
-.cz-find__x {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 44px;
-  height: 44px;
-  margin-right: -12px;
-  color: var(--text-2);
-}
-
-.cz-find__x svg {
-  width: 18px;
-  height: 18px;
-}
-
-/* a lupa que abre a busca, no começo das abas */
-.cz-chip--icon {
+/* a lupa que abre a busca {
   width: 36px;
   padding: 0;
   justify-content: center;
   color: var(--text-2);
-}
-
-/* Abas (grupos) das listas grandes */
-.cz-tabs {
-  margin-bottom: 8px;
-}
-
-.cz-tabs .cz-chip {
-  min-height: 36px;
-  padding: 0 12px;
-}
-
-/* Título de grupo dentro de "Todos" */
-.cz-grouphead {
-  grid-column: 1 / -1;
-  margin: 8px 0 0;
-  color: var(--text-2);
-  font-family: var(--font-body);
-  font-size: var(--fs-xs);
-  font-weight: 800;
-  letter-spacing: 0;
-}
-
-.cz-grouphead:first-child {
-  margin-top: 0;
-}
-
-.cz-all {
-  width: 100%;
-  justify-content: center;
-  min-height: 44px;
-  margin-top: 8px;
-}
-
-.cz-none {
-  padding: 12px 0 4px;
-  text-align: center;
 }
 
 /* Regras de confeiteiro: alertas e dicas da etapa */
@@ -3879,10 +3251,6 @@ button.st-row:active .st-row__icon {
 /* Opções da calda */
 .cz-sub .cz-sub__label:not(:first-child) {
   margin-top: 14px;
-}
-
-.cz-sub--flat {
-  margin-top: 0;
 }
 
 .cz-chips--toggles {
@@ -4081,12 +3449,6 @@ button.st-row:active .st-row__icon {
   scrollbar-width: none;
 }
 
-.cz-picked__empty {
-  color: var(--text-2);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-}
-
 .cz-pick {
   display: inline-flex;
   align-items: center;
@@ -4165,54 +3527,8 @@ button.st-row:active .st-row__icon {
   background: var(--surface);
 }
 
-.cz-adjust--below {
-  margin: 10px 0 0;
-}
-
-.cz-grid[hidden] {
-  display: none;
-}
-
-.cz-tabs {
-  margin-bottom: 8px;
-}
-
-.cz-field--inline {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 10px;
-}
-
-.cz-field--inline label {
-  font-size: var(--fs-sm);
-  font-weight: 800;
-}
-
-.cz-field--inline .input {
-  width: 108px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-
 .cz-field .cz-seg {
   margin-bottom: 2px;
-}
-
-/* "Outra cor": a roda de cores abre o seletor livre */
-.cz-color--free::before {
-  background: conic-gradient(#ff5a5a, #ffd24a, #6fdc6f, #4ad2e6, #6a7dff, #e66ad8, #ff5a5a);
-}
-
-.cz-color--free svg {
-  width: 18px;
-  height: 18px;
-  padding: 2px;
-  border-radius: 50%;
-  background: var(--surface);
-  color: var(--text);
-  opacity: 1;
 }
 
 /* Seletor de cor livre (diálogo) */
@@ -4422,28 +3738,6 @@ button.st-row:active .st-row__icon {
     padding-inline: 28px;
   }
 
-  .cz-occ {
-    margin-bottom: 10px;
-  }
-
-  .cz-grid--5 {
-    gap: 8px;
-  }
-
-  .cz-grid--5 .cz-opt__name,
-  .cz-grid--5 .cz-opt__price {
-    font-size: var(--fs-xs);
-  }
-
-  .cz-fins {
-    gap: 8px;
-  }
-
-  .cz-fin {
-    min-height: 104px;
-    font-size: var(--fs-xs);
-  }
-
   .cz-fin__art {
     width: 48px;
     height: 48px;
@@ -4456,12 +3750,6 @@ button.st-row:active .st-row__icon {
 
   .cz-measure__tag {
     font-size: var(--fs-sm);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cz-more > svg {
-    transition: none;
   }
 }
 
@@ -4493,140 +3781,11 @@ button.st-row:active .st-row__icon {
   object-fit: cover;
 }
 
-.cz-opt--tile .cz-opt__art--pic {
-  width: 100%;
-  height: auto;
-  aspect-ratio: 4 / 3;
-}
-
-/* cartão de decoração: foto à esquerda, nome, descrição e preço; alvo de toque folgado */
-.cz-opt--pic {
+/* cartão de decoração: foto à esquerda,
+nome {
   min-height: 76px;
   align-items: center;
   gap: 10px;
-}
-
-.cz-opt--pic .cz-opt__desc {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-/* temas prontos: fileira que desliza (não alarga o painel) */
-.cz-themes {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  contain: inline-size;
-  scroll-snap-type: x proximity;
-  scroll-padding-inline: var(--pn-gutter);
-  scrollbar-width: none;
-  margin: 0 calc(-1 * var(--s-4, 16px));
-  padding: 2px var(--s-4, 16px) 4px;
-}
-
-.cz-themes::-webkit-scrollbar {
-  display: none;
-}
-
-.cz-theme {
-  flex: none;
-  display: grid;
-  gap: 6px;
-  width: 92px;
-  padding: 6px 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  text-align: center;
-  cursor: pointer;
-  scroll-snap-align: start;
-  transition: border-color var(--t-fast), background-color var(--t-fast);
-}
-
-.cz-theme.is-on {
-  border-color: var(--action);
-  background: var(--rose-50);
-  box-shadow: inset 0 0 0 1px var(--action);
-}
-
-.cz-theme:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-
-.cz-theme__pic {
-  position: relative;
-  display: block;
-  aspect-ratio: 1;
-  border-radius: var(--r-md);
-  background: var(--fill);
-  overflow: hidden;
-}
-
-/* reserva sem foto: as três cores do tema */
-.cz-theme__pic i {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, var(--a) 0 34%, var(--b) 34% 67%, var(--c) 67%);
-  opacity: 0.85;
-}
-
-.cz-theme__pic img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.cz-theme__name {
-  font-size: var(--fs-xs);
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-/* busca entre as decorações */
-.cz-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  margin: 12px 0 10px;
-  padding: 0 12px;
-  border-radius: var(--r-md);
-  background: var(--fill);
-  color: var(--text-2);
-}
-
-.cz-search:focus-within {
-  box-shadow: inset 0 0 0 2px var(--action);
-}
-
-.cz-search__icon {
-  display: grid;
-  flex: none;
-  width: 20px;
-  height: 20px;
-}
-
-.cz-search__input {
-  flex: 1;
-  min-width: 0;
-  height: 44px;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 16px;
-  outline: none;
-}
-
-.cz-search__input::placeholder {
-  color: var(--text-3);
 }
 
 /* folha de ajuste da peça: diz qual peça está aberta e como ela é feita */
@@ -4649,25 +3808,1175 @@ button.st-row:active .st-row__icon {
   color: var(--text-2);
 }
 
-@media (hover: hover) {
-  .cz-theme:hover {
-    border-color: var(--border-strong);
+/* ═════════ r7-criar: uma pergunta por vez ═════════
+   O painel mostra UMA pergunta: a faixa de perguntas da etapa (onde a pessoa está e o que falta), a pergunta, uma
+   linha de apoio e as opções em cartões grandes. A mesma régua em todas as etapas:
+     faixa de perguntas  36 px no ritmo (44 de alvo de toque), rola de lado quando não cabe
+     pergunta            --fs-xl / 800, até duas linhas
+     linha de apoio      --fs-meta, sempre duas linhas reservadas (a grade não pula quando o texto muda)
+     grade               3 colunas (2 nos textos compridos e em tela muito estreita), 8 px entre cartões
+     cartão              imagem em cima (60 px; foto do 3D: 72 px), nome, uma linha de explicação, preço discreto
+     segundo nível       .cq-extra: rótulo de 14 px e os controles, 20 px abaixo da grade                              */
+.cq-head {
+  padding-top: 2px;
+}
+
+.cq-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  /* a faixa tem 44 px (o alvo de toque inteiro cabe dentro dela: uma faixa que rola corta o que passa da borda);
+     as margens negativas devolvem os 8 px ao ritmo — na tela ela ocupa 36 */
+  height: 44px;
+  margin: -4px calc(var(--pn-gutter) * -1);
+  padding: 0 var(--pn-gutter);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  scroll-padding-inline: var(--pn-gutter);
+}
+
+.cq-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.cq-nav__btn {
+  position: relative;
+  flex: none;
+  height: 32px;
+  padding: 0 3px;
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  font-weight: 700;
+  white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: color var(--t-fast);
+}
+
+/* alvo de toque de 44 px de altura; para os lados, até o meio do separador */
+.cq-nav__btn::after {
+  content: "";
+  position: absolute;
+  inset: -6px -9px;
+}
+
+.cq-nav__btn.is-done {
+  color: var(--text-2);
+}
+
+.cq-nav__btn.is-on {
+  box-shadow: inset 0 -2px 0 var(--action);
+  color: var(--text);
+  font-weight: 800;
+}
+
+.cq-nav__btn:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.cq-nav__sep {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  color: var(--border-strong);
+}
+
+.cq-nav__sep svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cq-title {
+  margin-top: 4px;
+  font-size: var(--fs-xl);
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.cq-legend {
+  min-height: 2.7em;
+  margin: 2px 0 8px;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  line-height: 1.35;
+  text-wrap: pretty;
+}
+
+/* linha de apoio fixa e curta (o começo): sem a segunda linha reservada */
+.cq-head--tight .cq-legend {
+  min-height: 0;
+  margin-bottom: 12px;
+}
+
+.cq-body {
+  display: block;
+}
+
+/* ── a grade e o cartão de escolha ── */
+.cq-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cq-grid--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cq-grid--4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.cq-grid + .cq-grid {
+  margin-top: 8px;
+}
+
+.cq-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  min-height: 112px;
+  padding: 8px 6px 9px;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+  text-align: center;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: transform 140ms var(--st-ease), box-shadow var(--t-fast), background var(--t-fast);
+}
+
+.cq-card:active {
+  transform: scale(0.97);
+}
+
+.cq-card:focus-visible {
+  outline: 2.5px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cq-card:hover {
+    box-shadow: inset 0 0 0 1px var(--border-strong);
+  }
+}
+
+.cq-card.is-on,
+.cq-card.is-on:hover {
+  background: var(--action-soft);
+  box-shadow: inset 0 0 0 2px var(--action);
+}
+
+.cq-card__art {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 60px;
+  margin-bottom: 5px;
+}
+
+.cq-card__name {
+  max-width: 100%;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.cq-card__hint {
+  margin-top: 2px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.cq-card__price {
+  margin-top: auto;
+  padding-top: 3px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cq-card__price.is-free {
+  color: var(--text-3);
+  font-weight: 600;
+}
+
+.cq-card__check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--action);
+  color: var(--white);
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity var(--t-fast), transform 180ms var(--st-ease);
+}
+
+.cq-card__check svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 3.2;
+}
+
+.cq-card.is-on .cq-card__check {
+  opacity: 1;
+  transform: none;
+}
+
+/* a cozinha não faz essa combinação: o cartão fica apagado e diz que não combina (o toque explica o motivo) */
+.cq-card.is-blocked {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+
+.cq-card.is-blocked .cq-card__art {
+  filter: grayscale(1);
+  opacity: 0.4;
+}
+
+.cq-card.is-blocked .cq-card__name,
+.cq-card.is-blocked .cq-card__hint {
+  color: var(--text-3);
+}
+
+.cq-card__lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: auto;
+  padding-top: 3px;
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.cq-card__lock svg {
+  width: 11px;
+  height: 11px;
+}
+
+.cz-seg button.is-blocked {
+  color: var(--text-3);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+/* ── as imagens do cartão ── */
+.cq-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+}
+
+.cq-art--line {
+  color: var(--text-2);
+}
+
+.cq-art--line svg {
+  width: 50px;
+  height: 50px;
+}
+
+.cq-art--none {
+  color: var(--border-strong);
+}
+
+.cq-art--none svg {
+  width: 40px;
+  height: 40px;
+}
+
+.cq-card.is-on .cq-art--line {
+  color: var(--action);
+}
+
+.cq-art--letter b {
+  color: var(--text);
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.cq-art--letter b.is-word {
+  font-size: 1.25rem;
+}
+
+.cq-card.is-on .cq-art--letter b {
+  color: var(--action-hover);
+}
+
+/* amostra de cor ou de creme: uma bolinha sobre um ladrilho cinza (o creme branco não some no cartão branco) */
+.cq-art--swatch {
+  border-radius: var(--r-lg);
+  background: var(--fill);
+}
+
+.cq-card.is-on .cq-art--swatch {
+  background: var(--surface);
+}
+
+.cq-art--swatch .cz-swatch {
+  width: 42px;
+  height: 42px;
+}
+
+/* cartões largos (duas colunas): o desenho cresce junto */
+.cq-grid--2 .cq-art--line svg,
+.cq-grid--4 .cq-art--line svg {
+  width: 58px;
+  height: 58px;
+}
+
+/* a base, vista de lado: um disco na cor do material */
+.cq-art--base i {
+  width: 56px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--c, #ddd);
+  box-shadow: inset 0 -5px 6px rgba(42, 18, 16, 0.2), inset 0 2px 3px rgba(255, 255, 255, 0.6), 0 0 0 1px rgba(42, 18, 16, 0.14), 0 5px 0 -1px color-mix(in srgb, var(--c, #ddd) 70%, #5a4a40);
+}
+
+.cq-art--fin .cz-fin__art {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+}
+
+/* foto do próprio 3D (72 px de altura; a foto inteira, sem cortar o alto do bolo) */
+.cq-art--pic {
+  width: 100%;
+  height: 72px;
+  border-radius: var(--r-md);
+  background: var(--fill);
+  overflow: hidden;
+}
+
+.cq-art--pic svg {
+  width: 30px;
+  height: 30px;
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
+.cq-art--pic img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* tema e inspiração: o bolo inteiro (sem cortar o alto), sobre o mesmo cinza do fundo da foto */
+.cq-art--whole {
+  background: #f0f0f0;
+}
+
+.cq-art--whole img {
+  object-fit: contain;
+}
+
+.cq-art--preset {
+  height: 84px;
+}
+
+/* conjunto pronto: duas fotos lado a lado */
+.cq-art--duo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  background: var(--surface);
+}
+
+.cq-art--duo img {
+  position: static;
+  width: 100%;
+  height: 72px;
+  border-radius: 0;
+}
+
+/* ── "Ver todas": busca, grupos, e o botão que abre e fecha ── */
+.cq-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 48px;
+  margin-top: 10px;
+  padding: 0 12px;
+  border-radius: var(--r-md);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  touch-action: manipulation;
+  transition: background var(--t-fast), transform 140ms var(--st-ease);
+}
+
+.cq-more:active {
+  transform: scale(0.98);
+}
+
+.cq-more svg {
+  width: 16px;
+  height: 16px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cq-more:hover {
+    background: var(--fill);
+  }
+}
+
+.cq-find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.cq-find__box {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: var(--r-md);
+  background: var(--fill);
+  color: var(--text-2);
+}
+
+.cq-find__box:focus-within {
+  box-shadow: inset 0 0 0 2px var(--action);
+}
+
+.cq-find__box svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.cq-find__box input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 1rem; /* 16 px: o iPhone não aproxima a tela ao focar */
+}
+
+.cq-find__count {
+  flex: 1;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+
+.cq-find__less {
+  flex: none;
+  min-height: 44px;
+  padding: 0 6px;
+  color: var(--action-hover);
+  font-size: var(--fs-sm);
+  font-weight: 800;
+}
+
+.cq-groups {
+  margin-bottom: 8px;
+}
+
+.cq-grouphead {
+  grid-column: 1 / -1;
+  margin: 8px 0 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+}
+
+.cq-grouphead:first-child {
+  margin-top: 0;
+}
+
+.cq-none {
+  margin-top: 10px;
+}
+
+/* ── cores: a paleta pronta, grande; "outra cor" por último ── */
+.cq-colors {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
+  gap: 10px;
+}
+
+.cq-color {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  min-width: 44px;
+  border-radius: 50%;
+  touch-action: manipulation;
+  transition: transform 140ms var(--st-ease);
+}
+
+.cq-color::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: inset 0 -6px 10px rgba(42, 18, 16, 0.16), inset 0 3px 5px rgba(255, 255, 255, 0.5), 0 0 0 1px rgba(42, 18, 16, 0.16);
+  transition: transform 160ms var(--st-ease);
+}
+
+.cq-color:active {
+  transform: scale(0.94);
+}
+
+.cq-color svg {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  color: var(--white);
+  stroke-width: 3.2;
+  opacity: 0;
+}
+
+.cq-color.is-light svg {
+  color: var(--text);
+}
+
+.cq-color.is-on {
+  box-shadow: 0 0 0 2.5px var(--action);
+}
+
+.cq-color.is-on::before {
+  transform: scale(0.8);
+}
+
+.cq-color.is-on svg {
+  opacity: 1;
+}
+
+.cq-color:focus-visible {
+  outline: 2.5px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.cq-color--free::before {
+  background: conic-gradient(#ff5d6c, #ffb347, #ffe66d, #7bd88f, #58c4f6, #9b7bf0, #f06bc0, #ff5d6c);
+}
+
+.cq-color--free svg {
+  width: 26px;
+  height: 26px;
+  padding: 4px;
+  border-radius: 50%;
+  background: var(--white);
+  color: var(--text);
+  opacity: 1;
+  stroke-width: 2.6;
+}
+
+/* ── segundo nível: o que aparece depois da escolha principal ── */
+.cq-extra {
+  margin-top: 20px;
+}
+
+.cq-extra__label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 800;
+}
+
+.cq-extra__note {
+  margin: -4px 0 8px;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+
+.cq-extra .cz-seg + .cz-note,
+.cq-extra .cz-switch + .cz-sub {
+  margin-top: 8px;
+}
+
+.cq-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  text-align: left;
+  touch-action: manipulation;
+}
+
+.cq-toggle--top {
+  margin: 0 0 10px;
+}
+
+.cq-toggle__text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.cq-toggle__text strong {
+  font-size: var(--fs-sm);
+  font-weight: 800;
+}
+
+.cq-toggle__text small {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+.cq-toggle .cz-switch__knob {
+  flex: none;
+}
+
+.cq-toggle[aria-checked="true"] {
+  background: var(--action-soft);
+  box-shadow: inset 0 0 0 1.5px var(--action);
+}
+
+.cq-toggle[aria-checked="true"] .cz-switch__knob {
+  background: var(--action);
+}
+
+.cq-toggle[aria-checked="true"] .cz-switch__knob::after {
+  transform: translateX(18px);
+}
+
+.cq-toggle:focus-visible {
+  outline: 2.5px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.cq-tiers {
+  margin-bottom: 12px;
+}
+
+.cq-tiers .cz-stack {
+  margin-top: 8px;
+}
+
+.cq-body > .cz-stack {
+  margin-bottom: 12px;
+}
+
+.cq-field {
+  margin-top: 2px;
+}
+
+/* ── a opção apagada em que a pessoa tocou: o motivo e a saída ── */
+.cq-why {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 10px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: var(--r-md);
+  background: var(--amber-soft);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  animation: cq-pop 220ms var(--st-ease) both;
+}
+
+.cq-why__plan {
+  display: block;
+  margin-top: 4px;
+  font-weight: 700;
+}
+
+.cq-why__icon {
+  color: var(--amber);
+}
+
+.cq-why__icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.cq-why__acts {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 2;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.cq-why__acts .cz-linkbtn {
+  min-height: 44px;
+  color: var(--text);
+}
+
+@keyframes cq-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+/* ── o começo: três jeitos de começar, em linhas grandes ── */
+.cq-starts {
+  display: grid;
+  gap: 8px;
+}
+
+.cq-start {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 76px;
+  padding: 8px 10px 8px 12px;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+  text-align: left;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: transform 140ms var(--st-ease), box-shadow var(--t-fast);
+}
+
+.cq-start:active {
+  transform: scale(0.98);
+}
+
+.cq-start:focus-visible {
+  outline: 2.5px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.cq-start.is-on {
+  background: var(--action-soft);
+  box-shadow: inset 0 0 0 2px var(--action);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cq-start:not(.is-on):hover {
+    box-shadow: inset 0 0 0 1px var(--border-strong);
+  }
+}
+
+.cq-start__art {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  border-radius: var(--r-md);
+  background: var(--fill);
+}
+
+.cq-start.is-on .cq-start__art {
+  background: var(--surface);
+}
+
+.cq-start__ico {
+  display: grid;
+  color: var(--text-2);
+}
+
+.cq-start.is-on .cq-start__ico {
+  color: var(--action);
+}
+
+.cq-start__ico svg {
+  width: 40px;
+  height: 40px;
+}
+
+.cq-start__pics {
+  width: 60px;
+  height: 60px;
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+/* quatro inspirações em mosaico: "tem vários bolos prontos aqui" */
+.cq-start__pics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  background: var(--surface);
+}
+
+.cq-start__pics img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--fill);
+  object-fit: cover;
+}
+
+.cq-start__text {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cq-start__text strong {
+  font-size: var(--fs-md);
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.cq-start__text span {
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  line-height: 1.3;
+}
+
+.cq-start__go {
+  flex: none;
+  color: var(--text-3);
+}
+
+.cq-start__go svg {
+  width: 20px;
+  height: 20px;
+}
+
+.cq-grid--presets .cq-card {
+  min-height: 0;
+}
+
+/* de onde o bolo partiu (inspiração, surpresa): aviso curto, com a saída rápida */
+.cq-from {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 8px;
+  margin-bottom: 4px;
+  padding: 4px 4px 4px 12px;
+  border-radius: var(--r-md);
+  background: var(--fill);
+}
+
+.cq-from p {
+  flex: 1 1 150px;
+  padding: 6px 0;
+  font-size: var(--fs-meta);
+  line-height: 1.3;
+}
+
+.cq-from .cz-linkbtn {
+  min-height: 44px;
+}
+
+/* outros jeitos de começar, à mão depois do começo: links discretos embaixo da primeira pergunta */
+.cq-alts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+  margin: 10px 0 0 -12px;
+}
+
+.cq-alts .cz-linkbtn {
+  min-height: 44px;
+}
+
+.cq-tip {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+}
+
+.cq-tip strong {
+  color: var(--text);
+}
+
+/* ── resumo: as duas saídas (mostrar para um adulto, revelar) e o título da lista ── */
+.cq-ends {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  margin-top: 12px;
+}
+
+.cq-ends .at-revealbtn {
+  margin: 0;
+}
+
+.cq-end--show {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 12px;
+  border-radius: var(--r-lg);
+  background: var(--action-soft);
+  box-shadow: inset 0 0 0 1.5px var(--action);
+  color: var(--text);
+  text-align: left;
+  touch-action: manipulation;
+  transition: transform 140ms var(--st-ease), background var(--t-fast);
+}
+
+.cq-end--show:active {
+  transform: scale(0.98);
+}
+
+.cq-end--show:focus-visible {
+  outline: 2.5px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.cq-end--show .cq-end__icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--action);
+  color: var(--white);
+}
+
+.cq-end--show .cq-end__icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.cq-end--show .cq-end__text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.cq-end--show .cq-end__text strong {
+  font-size: var(--fs-md);
+  font-weight: 800;
+}
+
+.cq-end--show .cq-end__text small {
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+
+.cq-end--show > svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--action-hover);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cq-end--show:hover {
+    background: var(--brand-soft);
+  }
+}
+
+.cq-linked {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--action-soft);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.cq-linked svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--action);
+}
+
+.cq-sumhead {
+  margin: 20px 0 8px;
+  font-size: var(--fs-sm);
+  font-weight: 800;
+}
+
+/* a pergunta entra pelo lado para onde a pessoa foi (só o corpo; o palco não se mexe) */
+.cz[data-dir="fwd"] .cz-body:not(.is-still) > * {
+  animation: cq-in-fwd 260ms var(--st-ease) both;
+}
+
+.cz[data-dir="back"] .cz-body:not(.is-still) > * {
+  animation: cq-in-back 260ms var(--st-ease) both;
+}
+
+@keyframes cq-in-fwd {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+}
+
+@keyframes cq-in-back {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+}
+
+/* tela muito estreita: os cartões passam a duas colunas (três ficariam com menos de 92 px) */
+@media (max-width: 339px) {
+  .cq-grid,
+  .cq-grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cq-colors {
+    gap: 8px;
+  }
+}
+
+@media (max-width: 420px) {
+  .cq-grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* celular baixo: a linha de apoio cede uma linha e o cartão encolhe um pouco — mais opções na primeira tela */
+@media (max-height: 720px) and (max-width: 899px) {
+  .cq-legend {
+    min-height: 1.35em;
+    margin-bottom: 8px;
+  }
+
+  .cq-card {
+    min-height: 100px;
+  }
+
+  .cq-card__art {
+    min-height: 52px;
+  }
+
+  .cq-art {
+    width: 52px;
+    height: 52px;
+  }
+
+  .cq-art--pic {
+    width: 100%;
+    height: 60px;
+  }
+
+  .cq-art--duo img {
+    height: 60px;
+  }
+
+  .cq-art--line svg {
+    width: 44px;
+    height: 44px;
+  }
+
+  .cq-art--swatch .cz-swatch {
+    width: 36px;
+    height: 36px;
+  }
+
+  .cq-art--fin .cz-fin__art {
+    width: 48px;
+    height: 48px;
+  }
+
+  .cq-start {
+    min-height: 68px;
+  }
+
+  .cq-start__art,
+  .cq-start__pics {
+    width: 52px;
+    height: 52px;
   }
 }
 
 @media (min-width: 900px) {
-  .cz-themes {
-    margin: 0;
-    padding: 2px 0 4px;
+  .cq-title {
+    font-size: var(--fs-2xl);
   }
 
-  .cz-theme {
-    width: 104px;
+  .cq-legend {
+    font-size: var(--fs-sm);
+  }
+
+  .cq-card {
+    min-height: 124px;
+  }
+
+  .cq-art--pic {
+    height: 84px;
+  }
+
+  .cq-art--duo img {
+    height: 84px;
+  }
+
+  .cq-colors {
+    grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cz-theme {
+  .cq-card,
+  .cq-card__check,
+  .cq-color,
+  .cq-color::before,
+  .cq-start,
+  .cq-more,
+  .cq-end--show {
     transition: none;
+  }
+
+  .cq-why,
+  .cz[data-dir] .cz-body:not(.is-still) > * {
+    animation: none;
   }
 }

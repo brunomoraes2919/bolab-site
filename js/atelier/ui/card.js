@@ -7,9 +7,17 @@
 //   info = { name, serves, backdrop, shot({ width, height }) → canvas | null, flat(canvas), link,
 //            maker, setMaker(nome), tell(id, valor), video? }
 //
+//   openShow(info) → r7-criar: "Mostrar para um adulto" — o bolo com nome (a criança batiza), preço, QR feito aqui
+//                    mesmo (./qr.js), a mensagem pronta e os botões de enviar. Nada é enviado nem aberto sozinho:
+//                    cada saída é um toque da própria pessoa. Quem abre o link vê o MESMO bolo, com "Pedir este bolo".
+//
+//   info (openShow) = { name, named, autoName, price, serves, thumb() → url, link, setName(nome) → link novo,
+//                       keep() (guarda o bolo no aparelho), order() (pede daqui mesmo), tell(id, valor) }
+//
 // O nome digitado só é desenhado no <canvas> e posto no campo pelo html`` (escapado): nunca vira HTML.
 // No app Android, "Baixar" é atendido pela casca do app (ela intercepta o download de data:image).
-import { html, raw, openDialog, toast, copyText, debounce } from '../../ui.js';
+import { html, raw, openDialog, toast, copyText, debounce, money } from '../../ui.js';
+import { qrMatrix, qrPath } from './qr.js';
 
 const W = 1080;
 const H = 1350;
@@ -19,6 +27,10 @@ const ICON = {
   share: svg('<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.600 13.500 6.800 4M15.400 6.500l-6.800 4"/>'),
   link: svg('<path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>'),
   film: svg('<rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 9 5 3-5 3Z"/>'),
+  copy: svg('<rect x="9" y="9" width="12" height="12" rx="2.500"/><path d="M5 15V5.500A2.500 2.500 0 0 1 7.500 3H15"/>'),
+  chat: svg('<path d="M20.500 11.500a8.500 8.500 0 0 1-12.600 7.400L3.500 20.500l1.600-4.300A8.500 8.500 0 1 1 20.500 11.500Z"/>'),
+  check: svg('<path d="m5 12.500 4.500 4.500L19 7.500"/>'),
+  bag: svg('<path d="M5 8h14l-1 12H6Z"/><path d="M9 8V6.500a3 3 0 0 1 6 0V8"/>'),
 };
 
 /** Sem "<", ">" nem espaços repetidos; no máximo 24 letras. */
@@ -211,6 +223,120 @@ export async function openCard(info) {
     } else if (what === 'video') {
       dlg.close();
       info.video();
+    }
+  });
+  return dlg;
+}
+
+/** Sem "<", ">" nem espaços repetidos; no máximo 40 letras (o mesmo limite do nome do bolo na tela). */
+export const cleanCakeName = (v) =>
+  String(v ?? '')
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^\s+/, '')
+    .slice(0, 40);
+
+/** A mensagem pronta que acompanha o link (é a que vai no "Enviar", no WhatsApp e no "Copiar"). */
+export const showMessage = (name, price, link) => `Olha o bolo que eu montei na BOLAB! É o “${name}”, por ${money(price)}. Dá para ver e pedir aqui: ${link}`.trim();
+
+/** O QR do link, pronto para a tela — ou '' quando o endereço é comprido demais para um código fácil de ler. */
+function qrMarkup(link) {
+  const qr = qrMatrix(link);
+  if (!qr || qr.version > 24) return '';
+  const pad = 4; // a margem branca que os leitores pedem
+  const side = qr.size + pad * 2;
+  // cada módulo com 3 px inteiros (no computador, de 1 px por ponto, um módulo de tamanho quebrado sai borrado);
+  // em tela estreita o CSS encolhe o desenho, e a densidade do celular dá conta
+  // só números e letras de comando de caminho: o desenho é feito aqui, nada vem de fora
+  return String(html`<svg class="at-show__qrpic" width="${side * 3}" height="${side * 3}" viewBox="0 0 ${side} ${side}" role="img" aria-label="Código QR com o endereço deste bolo" shape-rendering="crispEdges"><rect width="${side}" height="${side}" fill="#fff"/><path transform="translate(${pad} ${pad})" fill="#000" d="${raw(qrPath(qr))}"/></svg>`);
+}
+
+/**
+ * "Mostrar para um adulto": o cartão do bolo (foto, nome, preço) e as saídas — QR para quem está perto, mensagem
+ * com link para quem está longe, e "pedir este bolo" para quando o adulto pega o aparelho na mão.
+ */
+export function openShow(info) {
+  let name = info.named ? cleanCakeName(info.name) : '';
+  let link = info.link;
+  const canShare = typeof navigator.share === 'function';
+  const shown = () => name || info.autoName;
+  info.tell('show', 'open');
+  const dlg = openDialog({
+    title: 'Mostrar para um adulto',
+    body: html`<div class="at-show">
+      <div class="at-show__card">
+        <img class="at-show__pic" src="${info.thumb()}" alt="O bolo que você montou" width="112" height="112" />
+        <div class="at-show__info">
+          <label for="at-cakename">Nome do bolo</label>
+          <input class="input" id="at-cakename" type="text" maxlength="40" placeholder="${info.autoName}" value="${name}" autocomplete="off" enterkeyhint="done" data-cakename />
+          <p class="at-show__price"><strong>${money(info.price)}</strong><span>${info.serves}</span></p>
+        </div>
+      </div>
+      <div class="at-show__far">
+        <p class="at-show__lead"><strong>Está longe?</strong> Mande esta mensagem:</p>
+        <p class="at-show__msg"><span data-msg>${showMessage(shown(), info.price, '')}</span> <span class="at-show__link" data-link>${link}</span></p>
+        <div class="at-show__ways">
+          ${canShare ? html`<button type="button" class="btn cz-fit" data-do="share">${ICON.share} Enviar</button>` : ''}
+          <a class="btn ${canShare ? 'btn--secondary' : ''} cz-fit" data-do="whats" href="https://wa.me/?text=${encodeURIComponent(showMessage(shown(), info.price, link))}" target="_blank" rel="noopener">${ICON.chat} WhatsApp</a>
+          <button type="button" class="btn btn--secondary cz-fit" data-do="copy">${ICON.copy} Copiar</button>
+        </div>
+      </div>
+      <div class="at-show__near" data-near>
+        <div class="at-show__qr" data-qr>${raw(qrMarkup(link))}</div>
+        <p><strong>O adulto está perto?</strong> É só apontar a câmera do celular dele para este código. O bolo abre lá, com o botão de pedir.</p>
+      </div>
+      <p class="at-show__keep">${ICON.check}<span>Seu bolo fica guardado neste aparelho. Dá para continuar depois.</span></p>
+    </div>`,
+    footer: html`<button type="button" class="btn btn--secondary btn--block at-show__order" data-do="order">${ICON.bag} O adulto está aqui: pedir este bolo</button>`,
+  });
+  const q = (sel) => dlg.el.querySelector(sel);
+  const near = q('[data-near]');
+  if (!q('[data-qr]').firstChild) near.hidden = true; // endereço comprido demais: ficam a mensagem e o link
+  info.keep?.();
+  const refresh = debounce(() => {
+    if (!dlg.el.isConnected) return;
+    link = info.setName(name) || link;
+    q('[data-msg]').textContent = showMessage(shown(), info.price, '');
+    q('[data-link]').textContent = link;
+    q('[data-do="whats"]').href = `https://wa.me/?text=${encodeURIComponent(showMessage(shown(), info.price, link))}`;
+    const markup = qrMarkup(link);
+    q('[data-qr]').innerHTML = markup;
+    near.hidden = !markup;
+  }, 320);
+  dlg.el.addEventListener('input', (ev) => {
+    const input = ev.target.closest('[data-cakename]');
+    if (!input) return;
+    if (input.value !== cleanCakeName(input.value)) input.value = cleanCakeName(input.value);
+    name = input.value.trim();
+    refresh();
+  });
+  dlg.el.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && ev.target.closest('[data-cakename]')) ev.target.blur();
+  });
+  dlg.el.addEventListener('click', async (ev) => {
+    const what = ev.target.closest('[data-do]')?.dataset.do;
+    if (!what) return;
+    const text = showMessage(shown(), info.price, link);
+    if (what === 'share') {
+      info.tell('show', 'share');
+      info.keep?.();
+      try {
+        await navigator.share({ title: shown(), text });
+      } catch {
+        // a pessoa fechou a janela de enviar: tudo bem
+      }
+    } else if (what === 'copy') {
+      const ok = await copyText(text);
+      info.tell('show', 'copy');
+      info.keep?.();
+      toast(ok === false ? 'Não deu para copiar aqui. Use o código ou o WhatsApp.' : 'Mensagem copiada, com o link do bolo. Agora é só colar para o adulto.', { type: ok === false ? 'info' : 'success', duration: 4500 });
+    } else if (what === 'whats') {
+      info.tell('show', 'whatsapp'); // o próprio link abre o WhatsApp (toque da pessoa); aqui só fica o registro
+      info.keep?.();
+    } else if (what === 'order') {
+      info.tell('show', 'order');
+      dlg.close();
+      info.order();
     }
   });
   return dlg;

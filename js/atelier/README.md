@@ -133,3 +133,57 @@ export const ORDERS, STICKERS
 - Ganchos do teste de ponta a ponta continuam: `[data-act="cutaway"]`, `.cz-next[data-act="next"]`, `[data-act="add"]`.
 - Nada confeccionável só no computador: o que o simulador mostra a cozinha consegue fazer (`rules.js`).
 - Sem personagens ou marcas de terceiros; sem conteúdo de restrição alimentar.
+
+## Rodada 7 — o que mudou no contrato (frente "criar": fluxo e escolhas)
+
+**As etapas continuam as mesmas sete** (`formato`, `massa`, `recheio`, `cobertura`, `acabamento`, `decoracao`, `resumo`) e os
+eventos `step` e `change` saem como sempre saíram (a Bô e o jogo não precisam mudar nada). O que é novo:
+
+| O quê | Onde | Detalhe |
+|---|---|---|
+| Evento `question` | Tela → barramento | `{ step, id, index, total, config }` — a pergunta em cartaz dentro da etapa. Sai ao abrir a tela, a cada troca de etapa (logo depois de `step`) e a cada troca de pergunta. Não sai no começo ("como você quer começar?") nem no resumo |
+| `host.question()` | `mountAtelier(host)` | id da pergunta em cartaz (`''` no começo e no resumo). `host.step()` continua devolvendo a etapa |
+| `.cz[data-ask]` | marcação | a pergunta em cartaz, ao lado de `.cz[data-step]` (para CSS e roteiros) |
+| `tool` com `id: 'show'` | Tela → barramento | "Mostrar para um adulto": `value` = `'open' \| 'share' \| 'copy' \| 'whatsapp' \| 'order'` |
+| `host.goto(id)` / `host.setConfig()` | Tela | chamados com o começo em cartaz, tiram o começo de cena e abrem as perguntas (uma encomenda do jogo pode começar a qualquer hora) |
+
+**Perguntas por etapa** (`QUESTIONS` em `js/views/customizer.js`; `show` = só existe para alguns bolos):
+
+| Etapa | Perguntas (id) |
+|---|---|
+| `formato` | `formato` · `tamanho` · `andares` · `altura` · `base` |
+| `massa` | `sabor` · `calda` (a de molhar) |
+| `recheio` | `sabor` · `adicional` (pedaços e chá revelação; só com recheio) |
+| `cobertura` | `tipo` · `cor` · `estilo` (ou `transborda`, no vulcão) · `calda` (a que escorre; fora do vulcão) |
+| `acabamento` | `bico` · `onde` (bicos de borda) · `cor` (com bico) |
+| `decoracao` | `tema` · `enfeites` (conjuntos, um por um, com o dedo) · `velas` · `mensagem` · `topo` |
+
+**Onde ficam os controles de gesto** (a frente "mãos" decide o que acontece; o lugar é este):
+
+- o controle do gesto em curso continua na faixa de avisos do palco (`host.notes.control(…)`), um por vez, nunca sobre o bolo;
+- a ferramenta da etapa (acender / soprar as velas) continua em `host.toolSlot`;
+- **calda** (tocar na borda para pingar): a pergunta é `cobertura` › `calda`; o cartão "Com calda" liga, e o gesto vale enquanto
+  `host.step() === 'cobertura'`. Se a frente "mãos" quiser restringir à pergunta, use `host.question() === 'calda'`;
+- **espalhar a cobertura** (girar o prato): continua ligado à troca do tipo de cobertura (`change` de `covering.type`), agora na
+  pergunta `cobertura` › `tipo`;
+- **colocar com o dedo**: `decoracao` › `enfeites`, interruptor "Colocar com o dedo" (`[data-set="decorHow"]`, valores
+  `mao` / `arranjo` como antes). Com ele ligado a lista inteira de peças abre, o interruptor sobe para o alto dela e, ao pôr
+  uma peça na mão (`[data-act="decor"]` → `hands.arm(id)`), o painel volta ao alto: ali ficam a frase da peça na mão,
+  "Colocar onde couber" (`place-auto`), "Soltar a peça" (`place-done`), "Tirar uma" (`place-remove`) e "Tirar todas" (`place-clear`);
+- **velas**: `decoracao` › `velas` (os cartões usam `[data-set="candle"]`: `''` tira, um estilo põe as velas já com ele).
+
+**O bolo de partida.** Quem chega sem bolo começa do bolo EM BRANCO: `blankConfig()` (`js/customizer/pricing.js`).
+`defaultConfig()` não mudou de propósito: ele é a referência do formato — o link de um bolo (`share.js`) guarda só o que difere
+dele e `normalizeConfig()` completa com ele o que faltar numa inspiração. Trocar o padrão mudaria, sem aviso, todo link já
+compartilhado. A cena não precisa saber disso: recebe o bolo pelo `setConfig()` de sempre (o primeiro é o bolo em branco).
+
+**Palco.** No celular, nas perguntas, o palco tem 43% da altura da tela (eram 48%): `--cz-stage-to` em `css/customizer.css`.
+No resumo ele cresce como antes. `stageInsets()` não mudou.
+
+**Ganchos de teste** (`?czdebug`): `__cz.goto(i, 'pergunta')`, `__cz.ask('pergunta')`, `__cz.question()` → `{ step, id }`.
+`__cz.goto(5)` abre a Decoração na pergunta `enfeites` (é onde ficam as etiquetas `.cz-pick`, usadas por `tools/cz_bill.mjs`).
+Os ganchos do teste de ponta a ponta continuam (`[data-act="cutaway"]`, `.cz-next[data-act="next"]`, `[data-act="add"]`), mas
+agora "avançar" é um toque por PERGUNTA: `tools/e2e.mjs` segue o botão até o resumo aparecer (vale para as duas versões).
+
+**Curadoria e textos** da tela guiada: `js/data/customizer-guia.js` (o que abre cada pergunta, explicações de uma linha,
+conjuntos de enfeite, grupos dos temas). Não há preço, id novo nem regra lá.

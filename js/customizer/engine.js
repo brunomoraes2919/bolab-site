@@ -19,6 +19,41 @@
 // giratório), curva de tom neutra, sombra macia, oclusão no pé de cada andar e acabamento dos materiais das
 // peças — ver prepareShaders(), studioScene() e looks.js → MATERIAL_LOOK.
 //
+// ───────── r7-motor: o pipeline de render (blocos marcados "r7-motor") ─────────
+// Quadro: mapa de sombras → CENA num alvo com antisserrilhado (MSAA 4×) e profundidade → OCLUSÃO de ambiente
+// em espaço de tela (meia resolução, desfoque que respeita bordas) → BRILHO só das altas luzes (chama, ouro,
+// verniz) → COMPOSIÇÃO na tela (fundo transparente preservado). Os passes moram em fx/post.js; as receitas
+// por nível (desktop · mobile · eco · copia · foto) em quality.js → POST. Sem WebGL2, no nível leve ou com
+// ?czpost=0 nada disso existe: o bolo vai direto para a tela, como sempre.
+//   · renderer.render(scene, camera) já devolve o quadro acabado (o motor troca o render por um que passa pelo
+//     pós): gravação de vídeo, testes e ferramentas não precisam saber dele. cake.debug.drawFrame() desenha um
+//     quadro inteiro; cake.debug.post → info() (receita, alvos, memória), set(receita), tune({...}), view(0|1|2).
+//   · snapshot() / snapshotCanvas() / thumbOf() passam pelo pós com a receita 'foto' (mais amostras), em alvos
+//     próprios do tamanho da foto, soltos 4 s depois; o fundo transparente das miniaturas continua transparente
+//     (no fundo simples a oclusão desenha no alfa a sombra de contato da base com o chão).
+//   · Qualidade em uso: o custo medido por quadro inclui o pós. Ordem quando falta fôlego: a resolução desce
+//     até o piso → o pós encolhe ('eco': sai a oclusão) → último recurso da resolução → o nível cai para o
+//     leve (do pós fica só o antisserrilhado do alvo). cake.quality() informa { post, webgl }.
+//   · Luz: estúdio refletido com caixas de luz de queda suave e bandeiras (fx/studio.js; cubo de 512 no
+//     computador, 256 no celular); a sombra da luz principal também tira a parte dela da luz do ambiente
+//     (prepareShaders, item 4): sombra projetada com peso, sem mexer nas áreas iluminadas.
+//
+// Recursos de material para as outras frentes (fx/materials.js — usar, não copiar):
+//   import { subsurface, foodLook, foodMaterial, FOOD } from './fx/materials.js';
+//   subsurface(mat, { color, wrap, back, power, shadow })   espalhamento barato: a luz dá a volta no terminador
+//        (creme, fruta, cera) e atravessa peças finas contra a luz (pétala, fatia, gelatina). Sem passe extra.
+//   foodLook(tipo, tier) / foodMaterial(tipo, tier, extra)  receitas físicas por alimento — creme, ganache, calda,
+//        geleia, gelatina, fruta, casca, cera, acucar, vidro, chocolate — já graduadas pelo nível (`tier` é o
+//        que toda peça recebe em ctx.tier): verniz e acetinado saem no nível leve; transmissão de verdade
+//        (gelatina, vidro) só com tier.transmission (computador), porque redesenha a cena opaca.
+//   Peças da biblioteca (lib.mat.*): basta pôr `subsurface: { ... }` (ou `subsurface: false`) no acabamento
+//        da peça em looks.js → MATERIAL_LOOK; sem isso valem os padrões do motor (fx/materials.js → ENGINE_SSS:
+//        creme de bico, frutas, pétalas, folhas, velas). As coberturas com acetinado (cremes) já usam.
+//   Para a oclusão e as sombras funcionarem numa peça nova: malha opaca grava profundidade (padrão) e
+//        castShadow/receiveShadow ligados; material transparente (depthWrite: false) não recebe oclusão própria.
+//   Brilho: só passa do limiar o que a luz deixou mais forte que um branco bem iluminado. Um material que deva
+//        "acender" (chama, néon, vela de faísca) usa toneMapped: false com cor perto de 1, ou emissive forte.
+//
 // createCakeScene lança erro se o aparelho não tiver WebGL: a tela trata e segue sem o 3D.
 //
 // ───────── Para a rodada de imersão (animações de preparo): as partes do bolo têm nome ─────────
@@ -75,7 +110,10 @@ import { createDecorLibrary, decorLayout, buildPiping, buildDecor, decorHeight, 
 import { EXTRA_DECOR, extraDecorHeight } from './decor2.js';
 import { PARTY_DECOR, partyHeight } from './party.js';
 import { getFlavor, getFilling, getRevealColor, getTrim, TRIMS, PIPINGS, DECORS } from '../data/customizer.js';
-import { detectTier, createResolutionGovernor, TIERS, rememberLite } from './quality.js';
+import { detectTier, createResolutionGovernor, TIERS, rememberLite, POST, forcedPost, forcedWebGL1 } from './quality.js';
+import { createPost } from './fx/post.js'; // r7-motor
+import { buildStudio } from './fx/studio.js'; // r7-motor
+import { subsurface, ENGINE_SSS } from './fx/materials.js'; // r7-motor
 import { getBackdrop, resolveBackdrop, paintBackdrop } from './backdrop.js';
 // r5-decor: chave do bico, aviso de módulo de peças carregado e ids das peças colocadas à mão
 import { pipingKey, onDecorReady } from './decor.js';
@@ -118,6 +156,7 @@ const HEART_VIEW = {
       de um seletor). Um metal de verdade reflete bem mais do que isso em todos os canais — por isso o ouro saía
       laranja-escuro. A refletância do metal passa a ser a raiz da cor escolhida (o dourado #dcae52 vira o
       ouro 0,85 · 0,65 · 0,29; branco continua branco). Só vale para a parte metálica do material. */
+const AMBIENT_SHADE = 0.5; // r7-motor: parte da luz difusa do ambiente que a sombra da luz principal leva junto
 let shadersReady = false;
 function prepareShaders() {
   if (shadersReady) return;
@@ -154,48 +193,26 @@ function prepareShaders() {
     chunk.envmap_physical_pars_fragment
       .replace('inverseTransformDirection( normal, viewMatrix )', 'bolabStudio( inverseTransformDirection( normal, viewMatrix ) )')
       .replace('inverseTransformDirection( reflectVec, viewMatrix )', 'bolabStudio( inverseTransformDirection( reflectVec, viewMatrix ) )');
-}
-
-/**
- * O estúdio: o que o bolo "enxerga" à sua volta e reflete. Tudo no referencial de quem olha (a câmera fica em
- * +Z; esquerda = −X): uma cúpula clara e neutra (brancos saem brancos), a caixa de luz principal no alto à
- * esquerda, uma luz de teto larga, um rebatedor de preenchimento à direita e duas tiras de contraluz atrás, que
- * desenham a borda de tudo o que brilha (ganache, calda, ouro, vidro, porcelana). Valores acima de 1 são luz de
- * verdade (o mapa é de alta faixa dinâmica).
- */
-function studioScene() {
-  const scene = new THREE.Scene();
-  // cúpula: degradê do teto ao chão, pintado nos vértices
-  const dome = new THREE.SphereGeometry(30, 48, 24);
-  const pos = dome.attributes.position;
-  const col = new Float32Array(pos.count * 3);
-  const top = [0.21, 0.207, 0.204];
-  const mid = [0.275, 0.27, 0.265];
-  const low = [0.14, 0.126, 0.12]; // o chão devolve uma luz quente e fraca
-  for (let i = 0; i < pos.count; i++) {
-    const y = pos.getY(i) / 30;
-    const a = y >= 0 ? mid : low;
-    const b = y >= 0 ? top : mid;
-    const k = y >= 0 ? Math.pow(y, 0.6) : 1 + Math.max(-1, y * 2.2);
-    for (let c = 0; c < 3; c++) col[i * 3 + c] = a[c] + (b[c] - a[c]) * k;
-  }
-  dome.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  scene.add(new THREE.Mesh(dome, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide })));
-  const plane = new THREE.PlaneGeometry(1, 1);
-  const box = (hex, power, x, y, z, w, h) => {
-    const light = new THREE.Mesh(plane, new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(power), side: THREE.DoubleSide }));
-    light.position.set(x, y, z);
-    light.scale.set(w, h, 1);
-    light.lookAt(0, 0.4, 0);
-    scene.add(light);
-  };
-  box(0xfff8f0, 15, -2.75, 4.75, 2.5, 1.7, 1.25); // principal: alto, à esquerda, um pouco à frente
-  box(0xffffff, 3.2, 0.5, 7, -0.8, 3.1, 3.1); // teto: enche o topo do bolo e as curvas de cima
-  box(0xffeef0, 1.0, 6, 1.4, 1.6, 4.2, 4.4); // preenchimento: grande e fraco, à direita
-  box(0xffffff, 9, 3.3, 2.6, -5.4, 0.7, 5.2); // contraluz da direita (a mais forte)
-  box(0xfff6ee, 5.5, -4.6, 2.2, -4.6, 0.6, 4.6); // contraluz da esquerda
-  box(0xffffff, 0.55, 0, 1.2, 7.5, 7, 3.4); // parede clara atrás de quem olha: nada brilhante reflete "preto"
-  return scene;
+  /* r7-motor — 4. A sombra projetada também tira luz do AMBIENTE. A caixa de luz principal existe duas vezes: como
+     luz direta (a que projeta a sombra) e no mapa de ambiente (de onde vem o grosso da luz difusa). Só a primeira
+     era barrada por quem está na frente — por isso as sombras saíam ralas: debaixo da fruta, do andar de cima
+     ou do prato, a "mesma" caixa continuava iluminando pelo ambiente. Agora, onde a luz principal está tapada
+     e a superfície olha para ela, a luz difusa do ambiente perde a parte que vinha daquela caixa (AMBIENT_SHADE).
+     Superfície de costas ou de lado para a luz não muda (a luz difusa dela já quase não inclui a caixa, e a
+     meia-sombra do próprio terminador riscaria uma faixa na lateral do bolo); área iluminada não
+     muda; sem mapa de sombras (nível leve) nada muda. Custa uma multiplicação. */
+  chunk.lights_pars_begin = `float bolabShadow = 1.0;\nfloat bolabKeyShade = 1.0;\n${chunk.lights_pars_begin}`;
+  const dirShadow =
+    'directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;';
+  chunk.lights_fragment_begin = chunk.lights_fragment_begin.replace(
+    dirShadow,
+    `bolabShadow = ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;
+		#if UNROLLED_LOOP_INDEX == 0
+		bolabKeyShade = mix( 1.0, smoothstep( 0.0, 0.9, bolabShadow ), ${AMBIENT_SHADE.toFixed(2)} * smoothstep( 0.2, 0.7, dot( geometryNormal, directLight.direction ) ) );
+		#endif
+		directLight.color *= bolabShadow;`,
+  );
+  chunk.lights_fragment_maps = chunk.lights_fragment_maps.replace('iblIrradiance += getIBLIrradiance( geometryNormal );', 'iblIrradiance += getIBLIrradiance( geometryNormal ) * bolabKeyShade;');
 }
 
 const easeOut = (t) => 1 - (1 - t) ** 3;
@@ -269,10 +286,24 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   const gov = createResolutionGovernor({ max: stillRatio(), dpr: deviceRatio() });
   let curRatio = stillRatio();
 
-  /* ───────── Renderizador ───────── */
+  /* ───────── Renderizador ─────────
+     r7-motor: com pós-processamento (WebGL2 + nível com receita de pós) o bolo é desenhado num alvo próprio, com
+     antisserrilhado, e a tela só recebe o quadro composto — a tela não precisa do antisserrilhado dela. Isso é
+     decidido ao criar o contexto (não dá para trocar depois): por isso o contexto é pedido aqui, e não pelo
+     Three.js. Sem WebGL2 (ou com ?czgl=1) vale o caminho de sempre: direto na tela, antisserrilhado da tela. */
+  const postWish = forcedPost();
+  let postName = postWish === undefined ? tier.post : postWish; // receita em uso (null = sem pós)
+  const glAttrs = (antialias) => ({ alpha: true, depth: true, stencil: false, antialias, premultipliedAlpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance', failIfMajorPerformanceCaveat: false });
+  let glContext = null;
+  try {
+    if (postName && !forcedWebGL1()) glContext = canvas.getContext('webgl2', glAttrs(false));
+    if (!glContext && (forcedWebGL1() || postName)) glContext = canvas.getContext('webgl', glAttrs(tier.antialias)) || null;
+  } catch {
+    glContext = null;
+  }
   let renderer;
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: tier.antialias, alpha: true, stencil: false, powerPreference: 'high-performance' });
+    renderer = new THREE.WebGLRenderer({ canvas, ...(glContext ? { context: glContext } : {}), antialias: tier.antialias, alpha: true, stencil: false, powerPreference: 'high-performance' });
   } catch (err) {
     throw new Error('WebGL indisponível');
   }
@@ -289,6 +320,33 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 60);
+
+  /* ───────── r7-motor: pós-processamento ─────────
+     post = o encadeamento da tela (oclusão, brilho, antisserrilhado: fx/post.js) · shotPost = o das fotos e
+     miniaturas (receita 'foto', criado na hora e solto alguns segundos depois da última foto).
+     O renderer.render é trocado por um que manda o quadro do bolo pelo pós: quem chamar
+     renderer.render(scene, camera) — o laço daqui, a gravação de vídeo, um teste — recebe o quadro acabado. */
+  if (!renderer.capabilities.isWebGL2) postName = null;
+  let post = postName ? createPost(renderer, POST[postName]) : null;
+  let shotPost = null;
+  let shotTimer = 0;
+  let activePost = post;
+  const rawRender = renderer.render.bind(renderer);
+  if (post) {
+    renderer.render = (s, c) => {
+      if (activePost && s === scene && c === camera && renderer.getRenderTarget() === null) activePost.render(s, c, rawRender);
+      else rawRender(s, c);
+    };
+  }
+  /** Troca a receita do pós em uso (regulador, rebaixamento, testes). Devolve false se não há pós. */
+  function setPost(name) {
+    if (!post || !POST[name]) return false;
+    postName = name;
+    post.setQuality(POST[name]);
+    skipUntil = clock() + 0.6; // alvos e programas novos: esse quadro não conta
+    invalidate();
+    return true;
+  }
   const tex = createTextureKit({ aniso: Math.min(tier.aniso || 4, renderer.capabilities.getMaxAnisotropy()), size: tier.texSize });
   const lib = createDecorLibrary(tex, tier);
   // r6-luz: cada material das peças passa pelo acabamento do estúdio novo na primeira vez que é usado
@@ -317,6 +375,12 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       };
       mat.customProgramCacheKey = () => 'bolab-bico';
     }
+    // r7-motor: espalhamento subsuperficial (a luz dá a volta no terminador; fruta, pétala e cera deixam passar
+    // um pouco): o acabamento da peça pode trazer `subsurface: { ... }` (ou false); sem isso, vale o do motor.
+    if (tier.physical) {
+      const sss = look && 'subsurface' in look ? look.subsurface : ENGINE_SSS[name];
+      if (sss) subsurface(mat, sss);
+    }
     return mat;
   };
   Object.keys(lib.mat).forEach((name) => {
@@ -326,19 +390,12 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   const customOf = lib.custom;
   lib.custom = (name, make) => dress(name, customOf(name, make));
 
-  let pmrem = null;
-  let envTarget = null;
+  // r7-motor: o estúdio (caixas de luz de queda suave, bandeiras) mora em fx/studio.js
+  let env = null;
   function buildEnvironment() {
-    envTarget?.dispose();
-    pmrem?.dispose();
-    pmrem = new THREE.PMREMGenerator(renderer);
-    const studio = studioScene();
-    envTarget = pmrem.fromScene(studio, 0.018);
-    studio.traverse((o) => {
-      o.geometry?.dispose();
-      o.material?.dispose();
-    });
-    scene.environment = envTarget.texture;
+    env?.dispose();
+    env = buildStudio(renderer, { size: tier.envSize || 256 });
+    scene.environment = env.texture;
   }
   buildEnvironment();
 
@@ -358,8 +415,10 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   // desvio grande as empurrava para trás de si mesmas, na própria sombra; a sombra macia dispensa mais que isso)
   key.shadow.bias = -0.0006;
   key.shadow.normalBias = 0.003;
-  key.shadow.radius = (5 * tier.shadowSize) / 1024; // a mesma penumbra (~1,5 cm) em qualquer tamanho de mapa
-  key.shadow.blurSamples = tier.shadowSize >= 1024 ? 10 : 8;
+  // r7-motor: penumbra mais larga (~2 cm; era ~1,5): com a sombra pesando também na luz do ambiente, a borda
+  // dela aparece mais — luz de estúdio não risca linha. A mesma penumbra em qualquer tamanho de mapa.
+  key.shadow.radius = (6.5 * tier.shadowSize) / 1024;
+  key.shadow.blurSamples = tier.shadowSize >= 1024 ? 12 : 10;
   scene.add(key, key.target);
   const fill = new THREE.DirectionalLight(0xfdf2f6, LIGHT.fill);
   if (tier.fillLight) scene.add(fill, fill.target);
@@ -396,10 +455,32 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   plateShade.rotation.x = -Math.PI / 2;
   scene.add(plateShade);
 
+  /* r7-motor: o chão do fundo simples não existe (o fundo é CSS, por trás da tela transparente). Para a oclusão
+     de ambiente assentar a base no chão, um disco que só grava profundidade fica na altura do chão: o passe de
+     oclusão o enxerga, e a composição transforma a oclusão desses pontos em sombra sobre o fundo (alfa).
+     Com o cenário do ateliê à vista quem faz esse papel é o tampo do próprio cenário: o disco some. */
+  const groundDepth = new THREE.Mesh(new THREE.CircleGeometry(7, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2 }));
+  groundDepth.raycast = () => {};
+  groundDepth.renderOrder = -3;
+  groundDepth.visible = false;
+  groundDepth.userData.engine = 'chao-oclusao';
+  scene.add(groundDepth);
+
   /* r6-luz: com o cenário do ateliê à vista, o tampo dele recebe a sombra de verdade do bolo e da base (o desenho
      exato da tábua, da boleira com pé, das velas) no lugar da mancha: um disco invisível rente ao tampo que só
      mostra a sombra do mapa de sombras. No nível leve (sem mapa) o cenário pinta a dele, como antes. */
   const catcher = new THREE.Mesh(new THREE.CircleGeometry(1, 48).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({ color: backdrop.shadow.color, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
+  // r7-motor: a sombra de verdade no tampo é mais firme junto da base e vai ficando rala ao se afastar (a
+  // penumbra de uma luz larga), e some antes da borda do disco — nunca aparece cortada.
+  const catchFall = { value: 0.3 }; // raio da base, como fração do disco
+  catcher.material.onBeforeCompile = (shader) => {
+    shader.uniforms.bolabInner = catchFall;
+    shader.vertexShader = shader.vertexShader.replace('void main() {', 'varying vec2 vCatch;\nvoid main() {\n\tvCatch = position.xz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('void main() {', 'varying vec2 vCatch;\nuniform float bolabInner;\nvoid main() {')
+      .replace('opacity * ( 1.0 - getShadowMask() )', 'opacity * ( 1.0 - getShadowMask() ) * mix( 1.0, 0.5, smoothstep( bolabInner, 1.0, length( vCatch ) ) ) * ( 1.0 - smoothstep( 0.82, 1.0, length( vCatch ) ) )');
+  };
+  catcher.material.customProgramCacheKey = () => 'bolab-tampo';
   catcher.receiveShadow = true;
   catcher.visible = false;
   catcher.renderOrder = 2;
@@ -480,10 +561,26 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       const top = new THREE.MeshPhysicalMaterial({ color: 0xffffff, sheenColor: 0xffffff, sheenRoughness: 0.55, ...clipped });
       const cut = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72, emissiveIntensity: 0.06 });
       cut.emissive = cut.color;
+      // r7-motor: espalhamento do creme (a força acompanha o acetinado de cada cobertura: ver frostGlow())
+      if (tier.physical) [side, top].forEach((mt) => subsurface(mt, { color: '#ffe2c8', wrap: 0, back: 0, shadow: 0.9 }));
       frostTiers[i] = { side, top, cut, scrape: null, canvas: null, map: null, mapKey: '', mapped: false, topRustic: null };
     }
     return frostTiers[i];
   };
+  /** r7-motor: cremes (os que têm acetinado) deixam a luz dar a volta; ganache e glacê (verniz) não. */
+  function frostGlow() {
+    if (!tier.physical) return;
+    for (let i = 0; i < frostTiers.length; i++) {
+      const f = frostTiers[i];
+      if (!f) continue;
+      const k = Math.min(1, (f.side.sheen || 0) / 0.3);
+      if (f.glow === k) continue;
+      f.glow = k;
+      // (contido, e quase todo sujeito à sombra: num cilindro grande, luz envolvida fora da sombra risca uma faixa)
+      subsurface(f.side, { wrap: 0.2 * k });
+      subsurface(f.top, { wrap: 0.2 * k });
+    }
+  }
   const frostSide = frostOf(0).side;
   const frostTop = frostOf(0).top;
   const cutFrost = frostOf(0).cut;
@@ -493,6 +590,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   dripMat.emissive = dripMat.color;
   cutDrip.emissive = cutDrip.color;
   dripMat.emissiveIntensity = cutDrip.emissiveIntensity = 0;
+  if (tier.physical) subsurface(dripMat, { color: '#ffd9c0', wrap: 0.22, back: 0.1, power: 4, shadow: 0.5 }); // r7-motor
   /** Véu de creme raspado do andar i (naked: ralo; semi-naked: bem mais cheio). */
   const scrapeOf = (i) => {
     const f = frostOf(i);
@@ -812,6 +910,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   function placeGround() {
     if (!stand) return;
     contact.position.y = stand.floorY - ground.drop + 0.002;
+    groundDepth.position.y = stand.floorY - ground.drop; // r7-motor
     const footR = ground.contact || stand.plateRadius * 0.5;
     contact.scale.set(footR * 3.6, footR * 3.6, 1);
   }
@@ -828,6 +927,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     catcherReach = Math.max(stand.plateRadius + -groundY * kk, m.base.bounds.maxR + (top - groundY) * kk) + 0.25;
     catcher.position.set(0, groundY + 0.002, 0);
     catcher.scale.setScalar(catcherReach);
+    catchFall.value = Math.min(0.8, stand.plateRadius / catcherReach); // r7-motor
     catcher.visible = catching();
     if (catcher.visible) rb = Math.max(rb, Math.hypot(catcherReach, shadowCenter.y - groundY));
     // (a tampa aberta da caixinha do bentô sai desse volume: o mapa de sombras cresce para pegá-la inteira)
@@ -1971,6 +2071,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
   /** Desenha um quadro e devolve o tempo de render na CPU (ms). measure = este quadro entra na medição da placa de vídeo. */
   function draw(measure = false) {
     placeLights();
+    // r7-motor: o chão da oclusão só existe no fundo simples (sem cenário) e com a oclusão ligada
+    groundDepth.visible = Boolean(stand && floor.visible && activePost && !activePost.failed && activePost.quality.ao);
+    frostGlow();
     if (measure && gpuExt && !gpuQuery && !lost) {
       try {
         gpuQuery = gl.createQuery();
@@ -2040,7 +2143,8 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
 
   /** Estado da qualidade em uso (só leitura; exposto no gancho ?czdebug). */
   function quality() {
-    return { tier: tier.name, downgraded, devicePixelRatio: deviceRatio(), ratio: curRatio, stillRatio: stillRatio(), sharp, gpuTimer: Boolean(gpuExt), gpuProbe: !gpuExt, governor: gov.state() };
+    // r7-motor: post = receita de pós em uso (null = direto na tela) · webgl = versão do contexto
+    return { tier: tier.name, downgraded, devicePixelRatio: deviceRatio(), ratio: curRatio, stillRatio: stillRatio(), sharp, gpuTimer: Boolean(gpuExt), gpuProbe: !gpuExt, governor: gov.state(), post: post && !post.failed ? postName : null, webgl: renderer.capabilities.isWebGL2 ? 2 : 1 };
   }
 
   /**
@@ -2055,7 +2159,9 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     const to = tier.fallback ? TIERS[tier.fallback] : null;
     if (!to || disposed || lost) return false;
     downgraded = true;
-    Object.assign(tier, { name: to.name, maxRatio: to.maxRatio, shadows: false, softShadow: false, physical: false, fillLight: false, pointLight: false, smallCastShadow: false, wedgeEvery: to.wedgeEvery, fallback: null });
+    Object.assign(tier, { name: to.name, maxRatio: to.maxRatio, shadows: false, softShadow: false, physical: false, fillLight: false, pointLight: false, smallCastShadow: false, wedgeEvery: to.wedgeEvery, fallback: null, post: post ? 'copia' : null, postFallback: null });
+    // r7-motor: do pós fica só o antisserrilhado do alvo (a tela foi criada sem o dela)
+    setPost('copia');
     renderer.shadowMap.enabled = false;
     key.castShadow = false;
     key.shadow.map?.dispose();
@@ -2214,8 +2320,18 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       if (clock() >= skipUntil) {
         const gpuNow = gpuMs != null && t - gpuAt < 0.5 ? gpuMs : null;
         gov.sample(Math.max(cpuMs, gpuNow || 0), 750 / (fps || 60), { cpuMs, gpuMs: gpuNow });
+        // r7-motor: o custo medido já inclui o pós (draw() é o quadro inteiro). Antes do último recurso da
+        // resolução (1 ponto por ponto) e antes de rebaixar o nível, o pós encolhe: sai a oclusão.
+        const canShrink = Boolean(post && tier.postFallback && postName && postName !== tier.postFallback && postName !== 'copia');
+        if (gov.strained) {
+          if (canShrink) setPost(tier.postFallback);
+          gov.relief();
+        } else if (gov.exhausted && canShrink) {
+          setPost(tier.postFallback);
+          gov.reset(stillRatio(), deviceRatio());
+        }
         // nem a menor resolução bastou: o nível cai (uma vez só; ver downgrade())
-        if (gov.exhausted && tier.fallback) downgrade();
+        else if (gov.exhausted && tier.fallback) downgrade();
       }
     } else if (!active && !ambient && !sharp && since > 0.22) {
       // parou de mexer: um quadro na resolução máxima, para o bolo parado ficar nítido
@@ -2335,7 +2451,19 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       const fit = computeFit(width / height, v, { fill });
       applySpherical({ az: v.az, polar: v.polar, dist: fit.dist, ty: fit.ty, tz: fit.tz });
       candleLight.intensity = candleLight.userData.base || 0;
+      // r7-motor: a foto passa pelo pós com a receita de catálogo (alvos próprios, do tamanho da foto: os da
+      // tela não são refeitos). O fundo transparente das miniaturas é preservado pela composição.
+      if (post && !post.failed) {
+        shotPost ||= createPost(renderer, POST.foto);
+        activePost = shotPost;
+        clearTimeout(shotTimer);
+        shotTimer = setTimeout(() => {
+          shotPost?.dispose();
+          shotPost = null;
+        }, 4000);
+      }
       draw();
+      activePost = post;
       const out = document.createElement('canvas');
       out.width = width;
       out.height = height;
@@ -2345,6 +2473,7 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       ctx.drawImage(renderer.domElement, 0, 0, width, height);
       return out;
     } finally {
+      activePost = post; // r7-motor
       if (hidStage) stage.shot(false);
       applyBackdropLook(backdrop);
       renderer.setPixelRatio(curRatio);
@@ -2578,12 +2707,13 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     });
     key.shadow.map?.dispose();
     key.shadow.map = null;
+    // r7-motor: os alvos e programas do pós voltam sozinhos no primeiro quadro depois da restauração
+    post?.release();
+    shotPost?.release();
     gpuQuery = null;
     gpuOpen = false;
-    envTarget?.dispose();
-    pmrem?.dispose();
-    envTarget = null;
-    pmrem = null;
+    env?.dispose();
+    env = null;
     scene.environment = null;
     onContextLost?.();
   };
@@ -2918,6 +3048,8 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     plateShade.material.dispose();
     catcher.geometry.dispose();
     catcher.material.dispose();
+    groundDepth.geometry.dispose(); // r7-motor
+    groundDepth.material.dispose();
     contactMat.dispose();
     floor.material.dispose();
     contact.material.dispose();
@@ -2925,8 +3057,12 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
     [porcelain, gold, dripMat, cutDrip, bundtMat, ...Object.values(standMats), ...frostTiers.flatMap((f) => (f ? [f.side, f.top, f.cut, f.scrape, f.map, f.tmap, f.tnormal, f.marble, f.coat, f.topRustic, ...Object.values(f.topTex || {})] : [])), ...crustMats, ...crumbMats, ...bandMats, ...cutFillMats, ...jamMats, ...cutJamMats, fruitMat].forEach((mt) => mt?.dispose());
     lib.dispose();
     tex.dispose();
-    envTarget?.dispose();
-    pmrem?.dispose();
+    env?.dispose();
+    // r7-motor: alvos de render e programas do pós
+    clearTimeout(shotTimer);
+    post?.dispose();
+    shotPost?.dispose();
+    post = shotPost = activePost = null;
     renderer.dispose();
     // devolve o contexto gráfico na hora (o navegador limita quantos podem existir)
     renderer.forceContextLoss();
@@ -2990,6 +3126,17 @@ export function createCakeScene(canvas, { onContextLost, onContextRestored, onIn
       tier,
       /** r6-luz: força o rebaixamento de nível (teste). */
       downgrade,
+      /** r7-motor: desenha um quadro inteiro (com o pós) · o pós em uso: info(), set(receita), view(0|1|2). */
+      drawFrame: () => draw(),
+      get post() {
+        if (!post) return null;
+        const tune = (o) => {
+          const cur = post.quality;
+          post.setQuality({ ...cur, ...o, ao: o.ao === undefined ? cur.ao : o.ao && { ...(cur.ao || {}), ...o.ao }, bloom: o.bloom === undefined ? cur.bloom : o.bloom && { ...(cur.bloom || {}), ...o.bloom } });
+          invalidate();
+        };
+        return { info: () => ({ recipe: postName, ...post.info() }), set: setPost, tune, view: (v) => (post.setView(v), invalidate()), shot: () => shotPost?.info() || null };
+      },
       get ratio() {
         return curRatio;
       },
